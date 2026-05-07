@@ -1,0 +1,68 @@
+{
+  "identity": {
+    "agentName": "stock_sim_consumer_python",
+    "displayName": "stock-sim-consumer",
+    "description": "Consumer agent that submits a pipe task to stock-sim and consumes the resulting stock-price stream.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "config",
+        "description": "Optional stock request parameters.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {
+          "symbols": "AAPL,MSFT,NVDA",
+          "durationMinutes": 1
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "symbols": {
+              "type": "string",
+              "title": "Stock Symbols",
+              "description": "Comma-separated symbols to request from stock-sim.",
+              "default": "AAPL,MSFT,NVDA"
+            },
+            "durationMinutes": {
+              "type": "number",
+              "title": "Duration (minutes)",
+              "description": "How long the provider should stream prices.",
+              "default": 1
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "summary",
+        "description": "Summary of the streamed stock quotes.",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "consume-stock-stream",
+      "name": "Consume Stock Stream",
+      "description": "Submits a pipe task to stock-sim and returns a summary of the streamed quotes."
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.py",
+    "handlerExport": "handler",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxPendingBacklog": 10,
+    "maxRunningTimeSec": 3600
+  }
+}

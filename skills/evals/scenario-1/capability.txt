@@ -1,0 +1,1 @@
+JSON artifact return with error handling

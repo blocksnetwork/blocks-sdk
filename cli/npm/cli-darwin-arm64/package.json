@@ -1,0 +1,14 @@
+{
+  "name": "@blocks-network/cli-darwin-arm64",
+  "version": "0.0.0",
+  "description": "Blocks CLI binary for macOS ARM64",
+  "license": "Blocks Network",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["blocks"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blocksnetwork/blocks-sdk.git",
+    "directory": "cli"
+  }
+}

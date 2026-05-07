@@ -1,0 +1,84 @@
+# Node Examples
+
+Self-contained example agents for Blocks Network, using the Node SDK
+(`@blocks-network/sdk`).
+
+Each subfolder is a complete, runnable agent with its own handler,
+configuration, and dependencies.
+
+## Canonical Examples
+
+These are the primary teaching examples. Each demonstrates one core
+SDK concept and uses current APIs.
+
+| Example | Concept | Description |
+|---------|---------|-------------|
+| [echo](./echo/) | Request/response | Simplest handler: parse input, return text |
+| [adder](./adder/) | Request/response | Structured JSON input validation and output |
+| [echo-stream](./echo-stream/) | Request streaming | Stream output chunk-by-chunk, then return artifact |
+| [orchestrator](./orchestrator/) | Orchestration | Fan out sub-tasks to other agents, collect results |
+| [stock-sim](./stock-sim/) | Pipe streaming (provider) | Long-running stream of events |
+| [stock-sim-consumer](./stock-sim-consumer/) | Pipe streaming (consumer) | Submit pipe task, consume stream in real time |
+
+## Advanced Examples
+
+These demonstrate more complex integrations. They use the same SDK
+surface but wrap external tools or services.
+
+| Example | Description |
+|---------|-------------|
+| [claude-code](./claude-code/) | Wraps the Claude Code CLI with real-time streaming |
+
+## Quick Start
+
+1. Install dependencies (from the `blocks-sdk/` root):
+
+```bash
+npm install
+```
+
+This installs all workspace dependencies, including each example.
+
+2. Run an example:
+
+```bash
+cd examples/node/echo
+blocks publish         # first time only -- authenticates and publishes agent
+blocks run
+```
+
+3. Press Ctrl+C for graceful shutdown.
+
+## Structure
+
+Each example contains:
+
+- `handler.ts` -- the agent handler function
+- `agent-card.json` -- agent metadata (type, description, capabilities)
+- `.env.example` -- environment variable placeholders
+- `package.json` -- dependencies and scripts
+- `README.md` -- local documentation
+
+Some examples also include:
+- Consumer scripts (e.g., `echo-consumer.ts`)
+- `Dockerfile` for containerized deployment
+
+## Creating Your Own
+
+Copy any canonical example folder as a starting point. Edit
+`handler.ts` with your logic and update `agent-card.json` with your
+agent's metadata. Run with `blocks run`.
+
+### Agent card authoring contract
+
+`agent-card.json` is validated at registration time against the
+canonical schema. Before authoring a card, read:
+
+- [`dev_docs/SUPPORTED_CONTENT_TYPES.md`](../../../dev_docs/SUPPORTED_CONTENT_TYPES.md) — accepted `io.inputs[].contentType` / `io.outputs[].contentType` values, classifier, per-class invariants.
+- [`skills/references/io-schema-reference.md`](../../../skills/references/io-schema-reference.md) — form / text / file transport classes, form-class `schema` keyword allow-list, default values.
+
+Summary rules: every `io.inputs[]` entry MUST declare `description`;
+`contentType` MUST be lowercase canonical form; form-class inputs MUST
+declare `schema` + `example`; file-class inputs MAY declare `accept`
++ `maxSizeBytes` (≤ `BLOCKS_MAX_UPLOAD_BYTES` = 26 MB). Run
+`blocks check` locally to catch violations before registration.

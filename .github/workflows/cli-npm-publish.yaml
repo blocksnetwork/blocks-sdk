@@ -1,0 +1,107 @@
+name: Publish CLI to public npm
+
+on:
+  push:
+    tags:
+      - 'cli-npm-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish CLI npm packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: cli/go.sum
+
+      - name: Strip tag prefix
+        id: tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#cli-npm-v}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::Invalid semver: ${VERSION}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile CLI binaries
+        working-directory: cli
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          LDFLAGS="-s -w -X github.com/pubnub/blocks-sdk/cli/cmd.Version=${VERSION}"
+          LDFLAGS="${LDFLAGS} -X github.com/pubnub/blocks-sdk/cli/cmd.defaultBackendURL=${BLOCKS_BACKEND_URL}"
+          LDFLAGS="${LDFLAGS} -X github.com/pubnub/blocks-sdk/cli/cmd.defaultCliClientID=${BLOCKS_CLI_CLIENT_ID}"
+
+          mkdir -p dist
+
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            EXT=""
+            [ "$GOOS" = "windows" ] && EXT=".exe"
+
+            echo "Building ${GOOS}/${GOARCH}..."
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -ldflags "${LDFLAGS}" -o "dist/blocks_${GOOS}_${GOARCH}${EXT}" .
+          done
+        env:
+          BLOCKS_BACKEND_URL: ${{ secrets.BLOCKS_BACKEND_URL }}
+          BLOCKS_CLI_CLIENT_ID: ${{ secrets.BLOCKS_CLI_CLIENT_ID }}
+
+      - name: Package npm platform packages
+        working-directory: cli
+        shell: bash
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+
+          declare -A TARGETS=(
+            ["cli-darwin-arm64"]="darwin arm64 blocks"
+            ["cli-darwin-x64"]="darwin amd64 blocks"
+            ["cli-linux-arm64"]="linux arm64 blocks"
+            ["cli-linux-x64"]="linux amd64 blocks"
+            ["cli-win32-x64"]="windows amd64 blocks.exe"
+          )
+
+          for pkg_dir in "${!TARGETS[@]}"; do
+            read -r goos goarch binary_name <<< "${TARGETS[$pkg_dir]}"
+            ext=""
+            [ "$goos" = "windows" ] && ext=".exe"
+
+            cp "dist/blocks_${goos}_${goarch}${ext}" "npm/${pkg_dir}/${binary_name}"
+            chmod +x "npm/${pkg_dir}/${binary_name}"
+
+            sed -i "s/\"version\": \"0.0.0\"/\"version\": \"${VERSION}\"/" "npm/${pkg_dir}/package.json"
+          done
+
+          sed -i "s/\"0.0.0\"/\"${VERSION}\"/g" npm/cli/package.json
+
+      - name: Publish platform packages to npm
+        working-directory: cli
+        run: |
+          for pkg_dir in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-win32-x64; do
+            echo "Publishing @blocks-network/${pkg_dir}..."
+            npm publish "./npm/${pkg_dir}" --access public
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish wrapper package to npm
+        working-directory: cli
+        run: |
+          echo "Publishing @blocks-network/cli..."
+          npm publish ./npm/cli --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

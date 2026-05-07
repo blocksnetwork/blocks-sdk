@@ -1,0 +1,8 @@
+[project]
+name = "stock-sim-agent-example"
+version = "1.0.0"
+description = "Stock price simulator agent for Blocks Network (Python)"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+]

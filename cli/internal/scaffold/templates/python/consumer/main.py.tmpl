@@ -1,0 +1,85 @@
+"""{{.Name}} — Blocks Network consumer.
+
+Sends a task to a target agent and prints progress, artifacts, and the
+terminal result.
+
+Usage:
+    python main.py
+
+Environment variables:
+    BLOCKS_API_KEY  -- Blocks API key (required)
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+api_key = os.environ.get("BLOCKS_API_KEY")
+if not api_key:
+    print(
+        "BLOCKS_API_KEY not set. Run 'blocks login --write-env' "
+        "or set it in .env before running this script.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+from blocks_network import SendMessageRequestPart, TaskClient
+
+# TODO: replace with an agent you have published (see 'blocks publish').
+AGENT_NAME = "my_target_agent"
+
+
+def main() -> None:
+    client = TaskClient.create(billing_mode="free", api_key=api_key)
+
+    session = client.send_message(
+        agent_name=AGENT_NAME,
+        request_parts=[SendMessageRequestPart(part_id="request", text="Hello from {{.Name}}!")],
+    )
+
+    print(f"Task created: {session.task_id}")
+
+    def on_progress(event):
+        print("[progress]", event.get("message") or event.get("progress") or "")
+
+    def on_artifact(event):
+        # Log arrival only; download happens after terminal so the list is authoritative.
+        ref = event.artifact_ref
+        if ref is not None:
+            print("[artifact-ref]", ref.file_name or ref.mime_type)
+
+    session.on_progress(on_progress)
+    session.on_artifact(on_artifact)
+
+    try:
+        terminal = session.wait_for_terminal(timeout=60)
+        print("[done]", terminal)
+    except TimeoutError:
+        print("Timed out waiting for terminal event.", file=sys.stderr)
+        session.close()
+        client.destroy()
+        sys.exit(1)
+
+    try:
+        for ref in session.list_artifacts():
+            try:
+                downloaded = session.download_artifact(ref)
+                print("[artifact]", downloaded.data.decode("utf-8", errors="replace"))
+            except Exception as err:
+                print(f"[artifact] download failed: {err}", file=sys.stderr)
+    finally:
+        session.close()
+        client.destroy()
+
+    if terminal.state != "completed":
+        print(f"Task ended in state {terminal.state!r}.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

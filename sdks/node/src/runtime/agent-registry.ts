@@ -1,0 +1,590 @@
+/**
+ * Agent Registry - REST-based agent card storage and discovery.
+ *
+ * All registry operations (register, fetch, get, remove) use the server-side
+ * REST endpoints at /api/v1/registry/agents which handle App Context operations,
+ * membership indexing, and audit events server-side.
+ */
+
+import os from 'node:os';
+import {
+  registryAllChannel,
+  registrySkillChannel,
+  registryVisibilityChannel,
+  registryLogChannel,
+  normalizeSkillSlug,
+} from './channel-manager.js';
+import { getEnv } from '../env.js';
+import type { AgentAuth, RegistrationPayload } from './agent-auth.js';
+import {
+  CURRENT_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  SDK_VERSION,
+  PROTOCOL_VERSION_HEADER,
+} from './protocol-version.js';
+import { captureAffinity, injectAffinity } from './write-affinity.js';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/**
+ * Scaling configuration for multi-instance support.
+ */
+export interface AgentScaling {
+  expectedInstances: number;
+  concurrency: number;
+  maxPendingBacklog?: number;    // Default: 10 (applied at read time by On Interval function)
+  maxRunningTimeSec?: number;    // No default (if unset, stuck-running detection is skipped)
+}
+
+/**
+ * Skill object within an AgentCard.
+ */
+export interface AgentSkill {
+  id: string;
+  name: string;
+  description?: string;
+  examples?: string[];
+}
+
+/**
+ * Agent card payload (input schema) — authored by developers in agent-card.json.
+ *
+ * Uses the 9-section structure: identity, capabilities, io, streams,
+ * security, services, skills, extensions, runtime.
+ */
+export interface AgentCard {
+  identity: {
+    agentName: string;
+    displayName: string;
+    description: string;
+    version: string;
+    provider: { organization: string; url?: string };
+    documentationUrl?: string;
+    repositoryUrl?: string;
+    iconUrl?: string;
+  };
+  capabilities: {
+    taskKinds: Array<'request' | 'pipe'>;
+  };
+  io?: {
+    inputs?: Array<{
+      id: string;
+      description?: string;
+      contentType: string;
+      required: boolean;
+      example?: unknown;
+      schema?: unknown;
+    }>;
+    outputs?: Array<{
+      id: string;
+      description?: string;
+      contentType: string;
+      guaranteed: boolean;
+      example?: unknown;
+      schema?: unknown;
+    }>;
+  };
+  streams?: Record<string, {
+    direction: string;
+    format: string;
+    description?: string;
+    affinity?: string;
+    schema?: unknown;
+    outboundSchema?: unknown;
+    inboundSchema?: unknown;
+    contentType?: string;
+  }>;
+  security?: {
+    encryption?: {
+      required: boolean;
+      algorithm: string;
+      consumerKeyRequired: boolean;
+      agentPublicKey?: string;
+      agentKeyUrl?: string;
+      documentationUrl?: string;
+    };
+  };
+  services?: {
+    webhooks?: boolean;
+  };
+  skills: AgentSkill[];
+  extensions?: Record<string, unknown>;
+  runtime?: {
+    handler?: string;
+    handlerExport?: string;
+    concurrency?: number;
+    expectedInstances?: number;
+    maxPendingBacklog?: number;
+    maxRunningTimeSec?: number;
+  };
+}
+
+/**
+ * Agent card payload (output/public schema) — served by the API.
+ * Same as AgentCard minus the `runtime` section.
+ */
+export interface OutputAgentCard {
+  identity: {
+    agentName: string;
+    displayName: string;
+    description: string;
+    version: string;
+    provider: { organization: string; url?: string };
+    documentationUrl?: string;
+    repositoryUrl?: string;
+    iconUrl?: string;
+  };
+  capabilities: {
+    taskKinds: Array<'request' | 'pipe'>;
+  };
+  io?: AgentCard['io'];
+  streams?: AgentCard['streams'];
+  security?: AgentCard['security'];
+  services?: AgentCard['services'];
+  skills: AgentSkill[];
+  extensions?: Record<string, unknown>;
+}
+
+/**
+ * Agent entry returned from registry queries.
+ */
+export interface AgentEntry {
+  /** Agent name identifier */
+  agentName: string;
+  /** Display name */
+  displayName: string;
+  /** Human-readable description */
+  description?: string;
+  /** Skill objects from agent card */
+  skills?: AgentSkill[];
+  /** Multi-instance scaling configuration */
+  scaling?: AgentScaling;
+  /** Full agent card payload */
+  card?: AgentCard;
+  /** Optional card reference (PubNub File ID or URL) */
+  cardRef?: string;
+  /** Optional short summary for list views */
+  cardSummary?: string;
+  /** Listing visibility */
+  listing: 'private' | 'public';
+  /** Server-derived billing tier. 'paid' when any pricing field > 0, else 'free'. */
+  billingMode?: 'free' | 'paid';
+  /** Creation timestamp (ISO string) */
+  createdAt?: string;
+  /** Last update timestamp (ISO string) */
+  updatedAt?: string;
+}
+
+/**
+ * Options for registering an agent.
+ */
+export interface ConnectAgentOptions {
+  /** @internal Agent instance identifier — auto-generated by startAgentInstance, not caller-supplied. */
+  instanceId: string;
+  /**
+   * @internal Billing mode — resolved by `startAgentInstance` from the registry
+   * GET at boot. NOT a caller-supplied override. To change billing mode,
+   * update the agent in the registry and restart the process.
+   */
+  billingMode: 'free' | 'paid';
+  /** Human-readable description */
+  description?: string;
+  /** Skill objects advertised by this agent */
+  skills?: AgentSkill[];
+  /** Multi-instance scaling configuration */
+  scaling?: AgentScaling;
+  /** Full agent card payload */
+  card?: AgentCard;
+  /** Optional card reference (PubNub File ID or URL) */
+  cardRef?: string;
+  /** Optional short summary for list views */
+  cardSummary?: string;
+  /** Listing visibility */
+  listing?: 'private' | 'public';
+  /** Actor identifier for audit log */
+  actor?: string;
+  /** Request ID for audit log correlation */
+  requestId?: string;
+  baseUrl?: string;
+  /** AgentAuth instance for API key-based authentication */
+  agentAuth?: AgentAuth;
+}
+
+/**
+ * Result of fetching the agent registry.
+ */
+export interface AgentRegistryResult {
+  agents: AgentEntry[];
+  next?: string;
+  totalCount?: number;
+}
+
+/**
+ * Audit log event for registry changes.
+ */
+export interface RegistryAuditEvent {
+  event:
+    | 'registry.agent.upsert'
+    | 'registry.agent.delete'
+    | 'registry.membership.add'
+    | 'registry.membership.remove'
+    | 'registry.bootstrap'
+    | 'registry.clear';
+  ts: number;
+  source: string;
+  agentName?: string;
+  visibility?: 'public' | 'private';
+  skills?: string[];
+  cardHash?: string;
+  cardRef?: string;
+  summaryHash?: string;
+  channel?: string;
+  action?: string;
+  requestId?: string;
+  actor?: string;
+  etags?: { user?: string; memberships?: string };
+  note?: string;
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Detect the host operating system via Node.js os.platform().
+ * Returns the raw platform string (e.g. "linux", "darwin", "win32")
+ * or "unknown" if detection fails.
+ */
+function detectDeviceOs(): string {
+  try {
+    return os.platform();
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Retry helper for transient network errors (DNS failures, timeouts, etc.)
+ */
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 500): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      const errorStr = String(err);
+      const isTransient =
+        errorStr.includes('ENOTFOUND') ||
+        errorStr.includes('ETIMEDOUT') ||
+        errorStr.includes('ECONNRESET') ||
+        errorStr.includes('NetworkIssues');
+      if (!isTransient || attempt === maxRetries - 1) {
+        throw err;
+      }
+      const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 100;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
+// ============================================================================
+// REST Helpers
+// ============================================================================
+
+function getBaseUrl(overrideUrl?: string): string {
+  if (overrideUrl) return overrideUrl.replace(/\/+$/, '');
+  throw new Error('[AgentRegistry] baseUrl is required: provide it via options or CDM config');
+}
+
+function registryUrl(query?: Record<string, string>, baseUrl?: string): string {
+  let url = `${getBaseUrl(baseUrl)}/api/v1/registry/agents`;
+  if (query) {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined && v !== '') params.set(k, v);
+    }
+    const qs = params.toString();
+    if (qs) url += '?' + qs;
+  }
+  return url;
+}
+
+async function registryFetch<T>(url: string, init?: RequestInit): Promise<{ data: T; status: number } | null> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has(PROTOCOL_VERSION_HEADER)) {
+    headers.set(PROTOCOL_VERSION_HEADER, CURRENT_PROTOCOL_VERSION);
+  }
+  const affinity: Record<string, string> = {};
+  injectAffinity(affinity);
+  for (const [k, v] of Object.entries(affinity)) {
+    headers.set(k, v);
+  }
+  const response = await fetch(url, { ...init, headers });
+  captureAffinity(response.headers);
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const json = (await response.json().catch(() => ({}))) as {
+      code?: string;
+      message?: string;
+    };
+    const message = json.message ?? `HTTP ${response.status}`;
+    throw new Error(`[AgentRegistry] Request failed: ${message}`);
+  }
+
+  const data = (await response.json()) as T;
+  return { data, status: response.status };
+}
+
+// ============================================================================
+// Response Mapping
+// ============================================================================
+
+interface ServerAgent {
+  agentName: string;
+  name?: string;
+  description?: string;
+  skills?: AgentSkill[];
+  listing?: 'private' | 'public';
+  billingMode?: 'free' | 'paid';
+  card?: AgentCard;
+  cardRef?: string;
+  cardSummary?: string;
+  scaling?: AgentScaling;
+  registeredAt?: string;
+}
+
+function mapServerAgentToEntry(agent: ServerAgent): AgentEntry {
+  return {
+    agentName: agent.agentName,
+    displayName: agent.name ?? agent.agentName,
+    description: agent.description,
+    skills: agent.skills,
+    scaling: agent.scaling,
+    card: agent.card,
+    cardRef: agent.cardRef,
+    cardSummary: agent.cardSummary,
+    listing: agent.listing ?? 'public',
+    billingMode: agent.billingMode,
+    createdAt: agent.registeredAt,
+  };
+}
+
+// ============================================================================
+// Registry Operations
+// ============================================================================
+
+/**
+ * Register or update an agent in the registry via REST.
+ *
+ * Sends a POST request to the dedicated registry endpoint which handles
+ * all App Context operations (UUID metadata, memberships, audit events)
+ * server-side.
+ */
+export async function connectAgent(
+  agentName: string,
+  options: ConnectAgentOptions,
+): Promise<{ pamToken?: string; agentId?: string; controlChannel?: string }> {
+  if (!/^[a-zA-Z0-9_]+$/.test(agentName)) {
+    throw new Error(
+      'agentName must contain only alphanumeric characters and underscores (no hyphens)',
+    );
+  }
+
+  const url = registryUrl(undefined, options.baseUrl);
+
+  const cliVersion = getEnv('BLOCKS_CLI_VERSION');
+
+  const payload: RegistrationPayload = {
+    agentName,
+    instanceId: options.instanceId,
+    billingMode: options.billingMode,
+    listing: options.listing,
+    expectedInstances: options.scaling?.expectedInstances,
+    concurrency: options.scaling?.concurrency,
+    maxPendingBacklog: options.scaling?.maxPendingBacklog,
+    maxRunningTimeSec: options.scaling?.maxRunningTimeSec,
+    deviceOs: detectDeviceOs(),
+    sdkLanguage: 'Node',
+    sdkVersion: SDK_VERSION,
+    protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS],
+    preferredProtocolVersion: CURRENT_PROTOCOL_VERSION,
+  };
+
+  if (cliVersion) {
+    payload.cliVersion = cliVersion;
+  }
+
+  let pamToken: string | undefined;
+
+  // When AgentAuth is available, delegate registration to AgentAuth.init().
+  // Registration is the auth entry point — AgentAuth.init() sends the
+  // registration payload with the API key and stores the resulting tokens.
+  if (!options.agentAuth) {
+    throw new Error(
+      '[AgentRegistry] agentAuth is required. Set BLOCKS_API_KEY and pass agentAuth to connectAgent.',
+    );
+  }
+
+  const result = await withRetry(async () =>
+    options.agentAuth!.init(payload),
+  );
+  pamToken = result.pamToken ?? undefined;
+  return {
+    pamToken,
+    agentId: result.agentId as string | undefined,
+    controlChannel: result.controlChannel as string | undefined,
+  };
+}
+
+/**
+ * Get a single agent by name.
+ *
+ * Pass `apiKey` to authenticate the lookup. Without it, the registry endpoint
+ * returns 404 for private agents (existence-privacy) and the SDK cannot
+ * resolve its own published record — leaving keyset routing stranded on the
+ * playground default while connect mints a PAM token for the network keyset.
+ */
+export async function getAgent(
+  agentName: string,
+  options?: { baseUrl?: string; apiKey?: string },
+): Promise<AgentEntry | null> {
+  const url = registryUrl({ agentName }, options?.baseUrl);
+
+  const init: RequestInit | undefined = options?.apiKey
+    ? { headers: { Authorization: `Bearer ${options.apiKey}` } }
+    : undefined;
+
+  const result = await withRetry(async () =>
+    registryFetch<{ agent: ServerAgent }>(url, init),
+  );
+
+  if (!result) return null;
+  return mapServerAgentToEntry(result.data.agent);
+}
+
+/**
+ * Fetch the agent registry (all agents).
+ */
+export async function fetchAgentRegistry(
+  options?: { limit?: number; cursor?: string; baseUrl?: string },
+): Promise<AgentRegistryResult> {
+  const query: Record<string, string> = { include: 'full' };
+  if (options?.limit) query.limit = String(options.limit);
+  if (options?.cursor) query.cursor = options.cursor;
+
+  const url = registryUrl(query, options?.baseUrl);
+
+  const result = await withRetry(async () =>
+    registryFetch<{ agents: ServerAgent[]; next?: string | null; totalCount?: number }>(url),
+  );
+
+  if (!result) return { agents: [], totalCount: 0 };
+
+  return {
+    agents: result.data.agents.map(mapServerAgentToEntry),
+    next: result.data.next ?? undefined,
+    totalCount: result.data.totalCount,
+  };
+}
+
+/**
+ * Fetch agents filtered by skill.
+ */
+export async function fetchAgentsBySkill(
+  skill: string,
+  options?: { limit?: number; cursor?: string; baseUrl?: string },
+): Promise<AgentRegistryResult> {
+  const query: Record<string, string> = { include: 'full', skill };
+  if (options?.limit) query.limit = String(options.limit);
+  if (options?.cursor) query.cursor = options.cursor;
+
+  const url = registryUrl(query, options?.baseUrl);
+
+  const result = await withRetry(async () =>
+    registryFetch<{ agents: ServerAgent[]; next?: string | null; totalCount?: number }>(url),
+  );
+
+  if (!result) return { agents: [], totalCount: 0 };
+
+  return {
+    agents: result.data.agents.map(mapServerAgentToEntry),
+    next: result.data.next ?? undefined,
+    totalCount: result.data.totalCount,
+  };
+}
+
+/**
+ * Fetch agents filtered by listing type.
+ */
+export async function fetchAgentsByListing(
+  listing: 'private' | 'public',
+  options?: { limit?: number; cursor?: string; baseUrl?: string },
+): Promise<AgentRegistryResult> {
+  const query: Record<string, string> = { include: 'full', listing };
+  if (options?.limit) query.limit = String(options.limit);
+  if (options?.cursor) query.cursor = options.cursor;
+
+  const url = registryUrl(query, options?.baseUrl);
+
+  const result = await withRetry(async () =>
+    registryFetch<{ agents: ServerAgent[]; next?: string | null; totalCount?: number }>(url),
+  );
+
+  if (!result) return { agents: [], totalCount: 0 };
+
+  return {
+    agents: result.data.agents.map(mapServerAgentToEntry),
+    next: result.data.next ?? undefined,
+    totalCount: result.data.totalCount,
+  };
+}
+
+/**
+ * Remove an agent from the registry.
+ */
+export async function removeAgent(
+  agentName: string,
+  options?: { baseUrl?: string; agentAuth?: AgentAuth },
+): Promise<boolean> {
+  const url = registryUrl({ agentName }, options?.baseUrl);
+
+  if (options?.agentAuth) {
+    const response = await withRetry(() =>
+      options.agentAuth!.authenticatedFetch(url, { method: 'DELETE' }),
+    );
+    return response.status !== 404;
+  }
+
+  const afToken = getEnv('BLOCKS_API_KEY');
+  const result = await withRetry(async () =>
+    registryFetch<{ agentName: string; status: string }>(url, {
+      method: 'DELETE',
+      headers: {
+        ...(afToken ? { Authorization: `Bearer ${afToken}` } : {}),
+      },
+    }),
+  );
+
+  return result !== null;
+}
+
+// ============================================================================
+// Re-exports for convenience
+// ============================================================================
+
+export {
+  detectDeviceOs,
+  registryAllChannel,
+  registrySkillChannel,
+  registryVisibilityChannel,
+  registryLogChannel,
+  normalizeSkillSlug,
+};

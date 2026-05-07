@@ -1,0 +1,4 @@
+{
+  "blocksBackendUrl": "http://localhost:3001",
+  "subscribeKey": "sub-c-YOUR-KEY"
+}

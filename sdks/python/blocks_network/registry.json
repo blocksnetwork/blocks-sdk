@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1.0",
+  "handlers": [
+    {
+      "name": "echo",
+      "agentName": "acme-echo",
+      "runtime": "python",
+      "description": "Echoes back input text (smoke tests)",
+      "skills": ["echo"],
+      "entrypoint": {
+        "path": "./handlers/echo.py",
+        "symbol": "echo_handler"
+      },
+      "requiresEnv": [],
+      "defaults": {
+        "maxThreads": 1,
+        "expectedInstances": 1
+      }
+    },
+    {
+      "name": "adder",
+      "agentName": "acme-adder",
+      "runtime": "python",
+      "description": "Adds two integers and returns the sum",
+      "skills": ["math"],
+      "entrypoint": {
+        "path": "./handlers/adder.py",
+        "symbol": "adder_handler"
+      },
+      "requiresEnv": [],
+      "defaults": {
+        "maxThreads": 1,
+        "expectedInstances": 1
+      }
+    }
+  ]
+}

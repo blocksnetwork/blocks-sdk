@@ -1,0 +1,59 @@
+{
+  "identity": {
+    "agentName": "request_nostream",
+    "displayName": "request_nostream",
+    "description": "request_nostream agent",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "Text payload to reverse and return",
+        "contentType": "application/json",
+        "required": true,
+        "example": {
+          "text": "Hello from request_nostream!"
+        },
+        "schema": {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "title": "Text to Reverse",
+              "default": "Hello from request_nostream!"
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "Task result",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "main",
+      "name": "Main Skill",
+      "description": "Handles tasks"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.py",
+    "handlerExport": "handler",
+    "concurrency": 1,
+    "expectedInstances": 1
+  }
+}

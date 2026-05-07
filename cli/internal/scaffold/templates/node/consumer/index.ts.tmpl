@@ -1,0 +1,70 @@
+import 'dotenv/config';
+import { TaskClient, textPart } from '@blocks-network/sdk';
+import type { ProgressEvent, ArtifactEvent } from '@blocks-network/sdk';
+
+/**
+ * {{.Name}} — Blocks Network consumer.
+ * Sends a task to a target agent and prints progress, artifacts, and the
+ * terminal result.
+ *
+ * Usage: npm run start
+ */
+
+const apiKey = process.env.BLOCKS_API_KEY;
+if (!apiKey) {
+  console.error(
+    "BLOCKS_API_KEY not set. Run 'blocks login --write-env' or set it in .env before running this script.",
+  );
+  process.exit(1);
+}
+
+// TODO: replace with an agent you have published (see 'blocks publish').
+const AGENT_NAME = 'my_target_agent';
+
+async function main() {
+  const client = await TaskClient.create({
+    billingMode: 'free',
+    apiKey,
+  });
+
+  const session = await client.sendMessage({
+    agentName: AGENT_NAME,
+    requestParts: [textPart('Hello from {{.Name}}!', 'request')],
+  });
+
+  console.log('Task created:', session.taskId);
+
+  session.onProgress((event: ProgressEvent) => {
+    console.log('[progress]', event.message ?? event.progress ?? '');
+  });
+  session.onArtifact((event: ArtifactEvent) => {
+    // Log arrival only; download happens after terminal so the list is authoritative.
+    console.log('[artifact-ref]', event.artifactRef.fileName ?? event.artifactRef.mimeType);
+  });
+
+  // waitForTerminal (not onTerminal) resolves immediately for tasks that
+  // are already terminal by the time we subscribe, so fast / idempotent
+  // hits don't hang.
+  const terminal = await session.waitForTerminal(60_000);
+  try {
+    console.log('[done]', terminal);
+    for (const ref of session.listArtifacts()) {
+      try {
+        const downloaded = await session.downloadArtifact(ref);
+        console.log('[artifact]', new TextDecoder().decode(downloaded.data));
+      } catch (err) {
+        console.error('[artifact] download failed:', err);
+      }
+    }
+  } finally {
+    session.close();
+    client.destroy();
+  }
+
+  process.exit(terminal.state === 'completed' ? 0 : 1);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

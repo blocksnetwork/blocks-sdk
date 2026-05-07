@@ -1,0 +1,69 @@
+{
+  "identity": {
+    "agentName": "adder",
+    "displayName": "adder",
+    "description": "Adds two numbers and returns the sum",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "numbers",
+        "description": "Two numbers to add",
+        "contentType": "application/json",
+        "required": true,
+        "example": {
+          "kind": "math_add",
+          "a": 5,
+          "b": 3
+        },
+        "schema": {
+          "type": "object",
+          "required": ["kind", "a", "b"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "math_add"
+            },
+            "a": {
+              "type": "number",
+              "title": "Number A",
+              "default": 5
+            },
+            "b": {
+              "type": "number",
+              "title": "Number B",
+              "default": 3
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "sum",
+        "description": "Sum result with ok, a, b, sum fields",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "math_add",
+      "name": "Addition",
+      "description": "Adds two numbers (a + b)"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1
+  }
+}

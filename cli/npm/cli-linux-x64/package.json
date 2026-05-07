@@ -1,0 +1,14 @@
+{
+  "name": "@blocks-network/cli-linux-x64",
+  "version": "0.0.0",
+  "description": "Blocks CLI binary for Linux x64",
+  "license": "Blocks Network",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["blocks"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blocksnetwork/blocks-sdk.git",
+    "directory": "cli"
+  }
+}

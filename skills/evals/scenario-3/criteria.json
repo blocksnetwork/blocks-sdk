@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent correctly implements agent-to-agent communication using ctx.taskClient.sendMessage(), proper subscription to sub-agent results, error handling for unreachable agents, and separate agent-card.json configurations for each agent.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "taskClient.sendMessage usage",
+      "description": "Translator handler uses ctx.taskClient.sendMessage() to send a task to the reviewer agent",
+      "max_score": 10
+    },
+    {
+      "name": "Correct sendMessage params",
+      "description": "sendMessage call includes agentName, ownerId (from task.ownerId), and requestParts",
+      "max_score": 10
+    },
+    {
+      "name": "Subscribe to sub-agent result",
+      "description": "Uses session.onArtifact() and/or session.onTerminal() callbacks to receive reviewer output",
+      "max_score": 10
+    },
+    {
+      "name": "Both handlers have correct signature",
+      "description": "Both translator and reviewer handlers use default async export with proper types",
+      "max_score": 8
+    },
+    {
+      "name": "Separate agent cards",
+      "description": "Each agent has its own agent-card.json with distinct agentName values",
+      "max_score": 8
+    },
+    {
+      "name": "Error handling for unreachable agent",
+      "description": "Translator handles the case where the reviewer agent is not reachable (try/catch or timeout)",
+      "max_score": 8
+    },
+    {
+      "name": "Combined JSON result",
+      "description": "Translator returns both translation and review as a combined JSON artifact",
+      "max_score": 8
+    },
+    {
+      "name": "Reviewer reads requestParts",
+      "description": "Reviewer handler reads input from task.requestParts?.[0] properly",
+      "max_score": 8
+    },
+    {
+      "name": "reportStatus in both handlers",
+      "description": "Both handlers use ctx?.reportStatus() for progress updates",
+      "max_score": 6
+    },
+    {
+      "name": "Setup includes running both agents",
+      "description": "Setup instructions explain how to start both agents (two separate blocks run commands)",
+      "max_score": 6
+    }
+  ]
+}

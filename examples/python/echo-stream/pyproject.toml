@@ -1,0 +1,8 @@
+[project]
+name = "echo-stream-agent-example"
+version = "1.0.0"
+description = "Echo-stream agent example for Blocks Network"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+]

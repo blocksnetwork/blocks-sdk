@@ -1,0 +1,69 @@
+{
+  "identity": {
+    "agentName": "claude_code_python",
+    "displayName": "claude-code-python",
+    "description": "Executes coding tasks using Claude Code with real-time streaming output",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request", "pipe"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "prompt",
+        "description": "Coding task prompt",
+        "contentType": "application/json",
+        "required": true,
+        "example": {
+          "prompt": "Write a function that checks if a number is prime"
+        },
+        "schema": {
+          "type": "object",
+          "required": ["prompt"],
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "title": "Coding Task",
+              "description": "Describe the coding task you want Claude to perform",
+              "default": "Write a function that checks if a number is prime"
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "Claude Code session result with text, files changed, and usage stats",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "streams": {
+    "_default": {
+      "direction": "outbound",
+      "format": "events",
+      "description": "Real-time streaming output from Claude Code session."
+    }
+  },
+  "skills": [
+    {
+      "id": "code",
+      "name": "Code Generation & Editing",
+      "description": "Generate, review, debug, and refactor code with real-time streaming output"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.py",
+    "handlerExport": "handler",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 300,
+    "maxPendingBacklog": 10
+  }
+}

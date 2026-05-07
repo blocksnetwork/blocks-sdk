@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "@blocks-network/sdk": "latest",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.4.5"
+  },
+  "name": "symmetry_consumer",
+  "private": true,
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "type": "module",
+  "version": "1.0.0"
+}

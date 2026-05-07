@@ -1,0 +1,66 @@
+{
+  "context": "Tests whether the agent correctly scaffolds and implements a basic Blocks Network handler with proper types, input handling, status reporting, artifact return format, and a trigger script with correct channel topology.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Default async export",
+      "description": "Handler uses 'export default async function handler' with correct signature (task: StartTaskMessage, ctx?: TaskContext): Promise<HandlerResult>",
+      "max_score": 8
+    },
+    {
+      "name": "Type imports from @blocks-network/sdk",
+      "description": "Imports StartTaskMessage, TaskContext, and HandlerResult from '@blocks-network/sdk'",
+      "max_score": 8
+    },
+    {
+      "name": "requestParts input access",
+      "description": "Accesses input via task.requestParts?.[0] with proper undefined/type checking",
+      "max_score": 10
+    },
+    {
+      "name": "reportStatus with optional chaining",
+      "description": "Uses ctx?.reportStatus() (not ctx.reportStatus()) to handle undefined ctx",
+      "max_score": 8
+    },
+    {
+      "name": "Correct artifact return",
+      "description": "Returns { artifacts: [{ data: string, mimeType: 'text/plain' }] } from the handler",
+      "max_score": 10
+    },
+    {
+      "name": "Agent card capabilities",
+      "description": "agent-card.json includes capabilities.taskKinds: ['request']",
+      "max_score": 8
+    },
+    {
+      "name": "Agent card runtime config",
+      "description": "agent-card.json has identity.agentName, runtime with handler: './handler.ts', handlerExport: 'default'",
+      "max_score": 8
+    },
+    {
+      "name": "TaskClient.create() usage",
+      "description": "Trigger script uses TaskClient.create() with billingMode and apiKey for auth",
+      "max_score": 10
+    },
+    {
+      "name": "sendMessage with agentName",
+      "description": "Trigger script uses client.sendMessage({ agentName, requestParts }) to send a task",
+      "max_score": 10
+    },
+    {
+      "name": "waitForTerminal or artifact handling",
+      "description": "Trigger script awaits session.waitForTerminal() or uses onArtifact/onTerminal callbacks",
+      "max_score": 8
+    },
+    {
+      "name": "Graceful empty input handling",
+      "description": "Handler handles missing or empty requestParts without throwing an error",
+      "max_score": 6
+    },
+    {
+      "name": "Setup instructions include blocks run",
+      "description": "Setup docs mention blocks run for local testing",
+      "max_score": 6
+    }
+  ]
+}

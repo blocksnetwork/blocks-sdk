@@ -1,0 +1,65 @@
+{
+  "identity": {
+    "agentName": "echo2",
+    "displayName": "echo2",
+    "description": "echo agent",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub",
+      "url": "http://www.pubnub.com"
+    },
+    "documentationUrl": "www.blocks.ai/docs",
+    "repositoryUrl": "github.com/blocksnetwork",
+    "iconUrl": "https://avatars.githubusercontent.com/u/272932456?s=200&v=4"
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "text",
+        "description": "Text to echo back",
+        "contentType": "application/json",
+        "required": true,
+        "example": {
+          "text": "Hello from the Blocks Network!"
+        },
+        "schema": {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "title": "Text to Echo",
+              "default": "Hello from the Blocks Network!"
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "echoed",
+        "description": "Echoed text",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "echo",
+      "name": "Echo",
+      "description": "Echoes back the input text"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxPendingBacklog": 10,
+    "maxRunningTimeSec": 30
+  }
+}

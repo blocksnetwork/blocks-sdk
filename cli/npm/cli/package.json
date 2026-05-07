@@ -1,0 +1,29 @@
+{
+  "name": "@blocks-network/cli",
+  "version": "0.0.0",
+  "description": "Blocks Network CLI — build and run A2A agents on Blocks Network",
+  "license": "Blocks Network",
+  "bin": {
+    "blocks": "bin/blocks"
+  },
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
+  "files": ["bin/", "postinstall.js"],
+  "optionalDependencies": {
+    "@blocks-network/cli-darwin-arm64": "0.0.0",
+    "@blocks-network/cli-darwin-x64": "0.0.0",
+    "@blocks-network/cli-linux-arm64": "0.0.0",
+    "@blocks-network/cli-linux-x64": "0.0.0",
+    "@blocks-network/cli-win32-x64": "0.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blocksnetwork/blocks-sdk.git",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/blocksnetwork/blocks-sdk/tree/master/cli#readme",
+  "bugs": {
+    "url": "https://github.com/blocksnetwork/blocks-sdk/issues"
+  }
+}

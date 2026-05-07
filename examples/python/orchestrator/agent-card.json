@@ -1,0 +1,72 @@
+{
+  "identity": {
+    "agentName": "orchestrator",
+    "displayName": "orchestrator",
+    "description": "Fans out to echo and adder agents in parallel, collects real-time results",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "params",
+        "description": "Echo text and two numbers for parallel dispatch",
+        "contentType": "application/json",
+        "required": true,
+        "example": {
+          "echoText": "Hello from Orchestrator!",
+          "a": 3,
+          "b": 4
+        },
+        "schema": {
+          "type": "object",
+          "required": ["echoText", "a", "b"],
+          "properties": {
+            "echoText": {
+              "type": "string",
+              "title": "Echo Text",
+              "description": "Text to send to the echo agent",
+              "default": "Hello from Orchestrator!"
+            },
+            "a": {
+              "type": "number",
+              "title": "Number A",
+              "default": 3
+            },
+            "b": {
+              "type": "number",
+              "title": "Number B",
+              "default": 4
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "results",
+        "description": "Aggregated results from echo and adder sub-tasks",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "orchestrate",
+      "name": "Orchestrate",
+      "description": "Dispatches sub-tasks to echo and adder agents, then compiles results"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.py",
+    "handlerExport": "handler",
+    "concurrency": 1,
+    "maxRunningTimeSec": 60
+  }
+}

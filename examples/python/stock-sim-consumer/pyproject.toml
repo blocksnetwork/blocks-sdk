@@ -1,0 +1,10 @@
+[project]
+name = "stock-sim-consumer-agent-example"
+version = "1.0.0"
+description = "Stock price stream consumer agent for Blocks Network (Python)"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+    "pubnub>=10.6.0,<11",
+    "python-dotenv>=1.0",
+]

@@ -1,0 +1,74 @@
+{
+  "name": "@blocks-network/sdk",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Blocks Network SDK — build and run A2A agents on PubNub",
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./stream": {
+      "browser": {
+        "types": "./dist/stream/index.d.ts",
+        "default": "./dist/stream/index.js"
+      },
+      "types": "./dist/stream/index.d.ts",
+      "default": "./dist/stream/index.js"
+    }
+  },
+  "bin": {
+    "blocks-run": "dist/cli/run.js"
+  },
+  "files": [
+    "dist/",
+    "schemas/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:release": "tsc && npm run minify",
+    "minify": "find dist -name '*.js' -exec terser {} --module --compress --mangle --output {} \\;",
+    "lint": "eslint src/ tests/ --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0",
+    "pubnub": "~10.2.3",
+    "tsx": "~4.21.0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "ajv": "^8.17.1",
+    "eslint": "^8.57.1",
+    "jsdom": "^29.0.2",
+    "terser": "^5.46.1",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^1.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pubnub/blocksnetwork.git",
+    "directory": "blocks-sdk/sdks/node"
+  },
+  "homepage": "https://github.com/pubnub/blocksnetwork/tree/main/blocks-sdk/sdks/node#readme",
+  "bugs": {
+    "url": "https://github.com/pubnub/blocksnetwork/issues"
+  },
+  "license": "PubNub",
+  "overrides": {
+    "pubnub": {
+      "react-native-url-polyfill": "npm:empty-npm-package@1.0.0"
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent correctly implements streaming output using ctx.createStream(), proper stream options, write/end lifecycle, and a trigger script that subscribes to the stream channel in addition to the task channel.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Default async handler",
+      "description": "Uses export default async function handler with correct typed signature",
+      "max_score": 8
+    },
+    {
+      "name": "createStream with options",
+      "description": "Calls ctx.createStream() with bundleSizeBytes and/or maxLatencyMs options for low-latency streaming",
+      "max_score": 10
+    },
+    {
+      "name": "Stream write calls",
+      "description": "Calls stream.write() for each chunk/word of the output",
+      "max_score": 10
+    },
+    {
+      "name": "Stream end call",
+      "description": "Calls await stream.end() to finalize the stream",
+      "max_score": 10
+    },
+    {
+      "name": "Guard ctx existence",
+      "description": "Checks that ctx exists before calling createStream (e.g., if (ctx) { ... })",
+      "max_score": 8
+    },
+    {
+      "name": "Final artifact return",
+      "description": "Returns the complete text as artifact with mimeType after streaming completes",
+      "max_score": 8
+    },
+    {
+      "name": "reportStatus at milestones",
+      "description": "Uses ctx.reportStatus() to report streaming start and completion",
+      "max_score": 6
+    },
+    {
+      "name": "Streaming capability in agent card",
+      "description": "agent-card.json includes capabilities.streaming: true",
+      "max_score": 8
+    },
+    {
+      "name": "Stream channel in trigger",
+      "description": "Trigger script subscribes to stream.{agentName}.{taskId} channel for real-time chunks",
+      "max_score": 10
+    },
+    {
+      "name": "Task channel in trigger",
+      "description": "Trigger script also subscribes to u.{ownerId}.{taskId} for terminal events",
+      "max_score": 8
+    }
+  ]
+}

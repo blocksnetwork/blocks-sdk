@@ -1,0 +1,124 @@
+{
+  "instructions": [
+    {
+      "instruction": "Use blocks init <name> --yes --language node to scaffold a Node.js/TypeScript agent project non-interactively",
+      "original_snippets": "blocks init my-agent --yes --language node",
+      "relevant_when": "When creating a new Blocks Network agent project",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Handler must be a default async export with signature (task: StartTaskMessage, ctx?: TaskContext) => Promise<HandlerResult>",
+      "original_snippets": "export default async function handler(\n  task: StartTaskMessage,\n  ctx?: TaskContext,\n): Promise<HandlerResult>",
+      "relevant_when": "When implementing any Blocks Network handler",
+      "why_given": "reminder"
+    },
+    {
+      "instruction": "Access primary task input via task.requestParts?.[0] and always check for undefined",
+      "original_snippets": "const input = task.requestParts?.[0];\nconst text = typeof input === 'string' ? input : JSON.stringify(input ?? 'Hello from Blocks Network!');",
+      "relevant_when": "When reading user input in a handler function",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Return { artifacts: [{ data: string|Buffer, mimeType: string, fileName?, outputId? }] } from the handler",
+      "original_snippets": "return { artifacts: [{ data: result, mimeType: 'text/plain' }] }; ... type HandlerResult = { artifacts?: ArtifactEntry[] }",
+      "relevant_when": "When returning results from a handler function",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Use ctx?.reportStatus() with optional chaining since ctx may be undefined in testing",
+      "original_snippets": "ctx?.reportStatus('Processing...'); ... Always use optional chaining (ctx?.reportStatus()) since ctx may be undefined",
+      "relevant_when": "When providing progress updates during task execution",
+      "why_given": "preference"
+    },
+    {
+      "instruction": "Import types from @blocks-network/sdk: StartTaskMessage, TaskContext, HandlerResult",
+      "original_snippets": "import type { StartTaskMessage, TaskContext, HandlerResult } from '@blocks-network/sdk';",
+      "relevant_when": "When writing the import section of handler.ts",
+      "why_given": "reminder"
+    },
+    {
+      "instruction": "Configure agent-card.json with capabilities.taskKinds and required identity, skills, and runtime sections",
+      "original_snippets": "\"capabilities\": { \"taskKinds\": [\"request\"] }",
+      "relevant_when": "When configuring agent-card.json",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Set identity.agentName in agent-card.json to match the agent name used in channels",
+      "original_snippets": "\"identity\": { \"agentName\": \"my-agent\", \"displayName\": \"My Agent\", \"description\": \"...\", \"version\": \"1.0.0\" }",
+      "relevant_when": "When configuring agent-card.json runtime section",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Trigger agents using TaskClient.create() with billingMode and apiKey, then client.sendMessage({ agentName, requestParts })",
+      "original_snippets": "const client = await TaskClient.create({ billingMode: 'free', apiKey: process.env.BLOCKS_API_KEY! });\nconst session = await client.sendMessage({ agentName, requestParts: [textPart('Hello')] });",
+      "relevant_when": "When writing a trigger script to send tasks to an agent",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Use session.waitForTerminal() to block until the task completes, then list/download artifacts",
+      "original_snippets": "const terminal = await session.waitForTerminal(60_000);\nconst artifacts = session.listArtifacts();",
+      "relevant_when": "When writing a trigger script to monitor agent responses",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Use blocks run to start the agent locally, which reads agent-card.json and imports the handler",
+      "original_snippets": "blocks run ... Reads agent-card.json from current directory",
+      "relevant_when": "When testing an agent locally",
+      "why_given": "reminder"
+    },
+    {
+      "instruction": "Deploy agents locally with npm install && npm start (blocks run), or containerize with the scaffolded Dockerfile",
+      "original_snippets": "cd my-agent && npm install && npm start",
+      "relevant_when": "When deploying an agent",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Artifacts under 16 KB are inlined as base64; larger artifacts are uploaded to Blocks Files",
+      "original_snippets": "Inline (< 16 KB): Base64-encoded in message ... File (>= 16 KB): Uploaded to Blocks Files, returns fileId + fileUrl",
+      "relevant_when": "When working with large handler results or file artifacts",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Use ctx.createStream() for real-time streaming output with write() and end() methods",
+      "original_snippets": "const stream = ctx.createStream({ bundleSizeBytes: 2048, maxLatencyMs: 50 }); stream.write('chunk'); await stream.end();",
+      "relevant_when": "When implementing streaming output from an agent",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Use ctx.taskClient.sendMessage() for agent-to-agent communication",
+      "original_snippets": "const result = await ctx.taskClient.sendMessage({ agentName: 'another-agent', ownerId: task.ownerId, requestParts: [...] });",
+      "relevant_when": "When delegating work to another agent",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Check ctx.isCancelled or listen to ctx.cancelSignal for graceful task cancellation",
+      "original_snippets": "if (ctx.isCancelled) { return { artifact: 'Task cancelled', mimeType: 'text/plain' }; }",
+      "relevant_when": "When implementing long-running tasks that should support cancellation",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Blocks keys fall back to demo keys if not set in .env — no keys required for local development",
+      "original_snippets": "# Blocks keys (optional — falls back to demo keys)",
+      "relevant_when": "When setting up environment configuration",
+      "why_given": "new knowledge"
+    },
+    {
+      "instruction": "Never hardcode secret keys in client-side trigger scripts",
+      "original_snippets": "Never hardcode secret keys in client-side trigger scripts",
+      "relevant_when": "When writing trigger scripts or client-side code",
+      "why_given": "preference"
+    },
+    {
+      "instruction": "Include complete handler.ts, agent-card.json, trigger script, and .env.example in deliverables",
+      "original_snippets": "When providing implementations:\n1. Include complete handler.ts with proper imports and types\n2. Include agent-card.json with correct runtime configuration\n3. Provide a trigger script\n4. Show .env.example\n5. Include instructions for blocks run",
+      "relevant_when": "When delivering any Blocks Network implementation",
+      "why_given": "preference"
+    },
+    {
+      "instruction": "Set package.json type to module and include @blocks-network/sdk and tsx as dependencies",
+      "original_snippets": "\"type\": \"module\" ... \"dependencies\": { \"@blocks-network/sdk\": \"^0.1.0\", \"tsx\": \"^4.15.7\" }",
+      "relevant_when": "When configuring package.json for a Blocks Network project",
+      "why_given": "new knowledge"
+    }
+  ]
+}

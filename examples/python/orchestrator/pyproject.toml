@@ -1,0 +1,8 @@
+[project]
+name = "orchestrator-agent-example"
+version = "1.0.0"
+description = "Orchestrator agent example for Blocks Network"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+]

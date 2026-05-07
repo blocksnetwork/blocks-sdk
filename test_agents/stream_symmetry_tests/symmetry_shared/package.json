@@ -1,0 +1,7 @@
+{
+  "name": "symmetry_shared",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Shared helpers + payloads imported by both symmetry_provider (handler) and symmetry_consumer (driver). Symmetry-by-construction relies on both sides loading from this single source. The 'type: module' field is load-bearing — without it, tsx transpiles these .ts files as CJS and the named ESM exports become unreachable via 'import { ... } from ...'."
+}

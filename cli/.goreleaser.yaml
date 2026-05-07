@@ -1,0 +1,58 @@
+version: 2
+
+project_name: blocks
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: .
+    binary: blocks
+    ldflags:
+      - -s -w
+      - -X github.com/pubnub/blocks-sdk/cli/cmd.Version={{.Version}}
+      - -X github.com/pubnub/blocks-sdk/cli/cmd.defaultBackendURL={{ .Env.BLOCKS_BACKEND_URL }}
+      - -X github.com/pubnub/blocks-sdk/cli/cmd.defaultCliClientID={{ .Env.BLOCKS_CLI_CLIENT_ID }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: pubnub
+    name: blocksnetwork
+  draft: false
+  prerelease: auto
+  extra_files:
+    - glob: install.sh
+    - glob: install.ps1

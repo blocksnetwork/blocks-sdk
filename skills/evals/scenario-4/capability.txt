@@ -1,0 +1,1 @@
+Cancellation handling with partial results

@@ -1,0 +1,8 @@
+[project]
+name = "claude-code-agent-example"
+version = "1.0.0"
+description = "Claude Code agent example for Blocks Network"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+]

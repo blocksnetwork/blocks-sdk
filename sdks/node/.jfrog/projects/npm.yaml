@@ -1,0 +1,8 @@
+version: 1
+type: npm
+resolver:
+    repo: npm-local
+    serverId: PubNub
+deployer:
+    repo: npm-local
+    serverId: PubNub

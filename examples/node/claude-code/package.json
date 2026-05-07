@@ -1,0 +1,20 @@
+{
+  "name": "claude-code-node",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "blocks run",
+    "build": "tsc",
+    "check": "tsc --noEmit && blocks check"
+  },
+  "dependencies": {
+    "@blocks-network/sdk": "*",
+    "dotenv": "^16.4.5",
+    "which": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/which": "^3.0.0"
+  }
+}

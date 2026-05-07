@@ -1,0 +1,58 @@
+name: Publish Node SDK to Artifactory
+
+on:
+  push:
+    tags:
+      - 'node-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish Node SDK
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACTORY_NPM_REGISTRY: https://artifactnub1.jfrog.io/artifactnub1/api/npm/npm-local/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Strip tag prefix
+        id: tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#node-v}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::Invalid semver: ${VERSION}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp version from tag
+        run: npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version
+        working-directory: sdks/node
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build:release
+        working-directory: sdks/node
+
+      - name: Configure npm for Artifactory
+        run: |
+          AUTH=$(echo -n "${ARTIFACTORY_USERNAME}:${ARTIFACTORY_TOKEN}" | base64 -w 0)
+          REGISTRY_HOST="${ARTIFACTORY_NPM_REGISTRY#https://}"
+          echo "@blocks-network:registry=${ARTIFACTORY_NPM_REGISTRY}" >> ~/.npmrc
+          echo "//${REGISTRY_HOST}:_auth=${AUTH}" >> ~/.npmrc
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+
+      - name: Publish to Artifactory
+        run: npm publish --registry="${ARTIFACTORY_NPM_REGISTRY}"
+        working-directory: sdks/node

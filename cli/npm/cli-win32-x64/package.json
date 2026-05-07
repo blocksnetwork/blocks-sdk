@@ -1,0 +1,14 @@
+{
+  "name": "@blocks-network/cli-win32-x64",
+  "version": "0.0.0",
+  "description": "Blocks CLI binary for Windows x64",
+  "license": "Blocks Network",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["blocks.exe"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blocksnetwork/blocks-sdk.git",
+    "directory": "cli"
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "package_name": "blocks-network",
+  "total_capabilities": 12,
+  "capabilities": [
+    {
+      "id": 0,
+      "name": "CLI scaffolding",
+      "description": "Uses blocks init to scaffold a new agent project with correct flags (--yes, --language node)",
+      "complexity": "basic",
+      "api_elements": ["blocks init", "--yes", "--language node"]
+    },
+    {
+      "id": 1,
+      "name": "Default async handler export",
+      "description": "Handler uses default async export with correct signature (task: StartTaskMessage, ctx?: TaskContext) => Promise<HandlerResult>",
+      "complexity": "basic",
+      "api_elements": ["export default async function handler", "StartTaskMessage", "TaskContext", "HandlerResult"]
+    },
+    {
+      "id": 2,
+      "name": "requestParts input access",
+      "description": "Accesses task input via task.requestParts?.[0] with proper undefined checking",
+      "complexity": "basic",
+      "api_elements": ["task.requestParts?.[0]"]
+    },
+    {
+      "id": 3,
+      "name": "Artifact return format",
+      "description": "Returns { artifacts: [{ data: string|Buffer, mimeType: string }] } from handler with appropriate MIME type",
+      "complexity": "basic",
+      "api_elements": ["artifacts", "data", "mimeType", "text/plain", "application/json"]
+    },
+    {
+      "id": 4,
+      "name": "reportStatus usage",
+      "description": "Uses ctx?.reportStatus() with optional chaining for progress updates during task execution",
+      "complexity": "basic",
+      "api_elements": ["ctx?.reportStatus()"]
+    },
+    {
+      "id": 5,
+      "name": "Agent card configuration",
+      "description": "Correctly configures agent-card.json with name, description, protocolVersions, url, skills, and runtime settings",
+      "complexity": "intermediate",
+      "api_elements": ["agent-card.json", "identity.agentName", "runtime.handler", "protocolVersions"]
+    },
+    {
+      "id": 6,
+      "name": "Control channel format",
+      "description": "Uses correct channel format agent.{agentName}.control for task submission",
+      "complexity": "intermediate",
+      "api_elements": ["agent.{agentName}.control"]
+    },
+    {
+      "id": 7,
+      "name": "Task channel subscription",
+      "description": "Subscribes to u.{ownerId}.{taskId} for task updates before publishing the StartTask message",
+      "complexity": "intermediate",
+      "api_elements": ["u.{ownerId}.{taskId}", "client.subscribe()"]
+    },
+    {
+      "id": 8,
+      "name": "Trigger script with broadcast meta",
+      "description": "Publishes StartTask with meta: { broadcast: 'true' } so agent instances receive the task",
+      "complexity": "intermediate",
+      "api_elements": ["meta.broadcast", "client.publish()", "StartTask"]
+    },
+    {
+      "id": 9,
+      "name": "Streaming output",
+      "description": "Uses ctx.createStream() with appropriate options and writes chunks followed by stream.end()",
+      "complexity": "advanced",
+      "api_elements": ["ctx.createStream()", "stream.write()", "stream.end()"]
+    },
+    {
+      "id": 10,
+      "name": "Agent-to-agent communication",
+      "description": "Uses ctx.taskClient.sendMessage() to delegate tasks to other agents and subscribes to results",
+      "complexity": "advanced",
+      "api_elements": ["ctx.taskClient.sendMessage()", "session.onArtifact()", "session.onTerminal()", "session.onProgress()"]
+    },
+    {
+      "id": 11,
+      "name": "Cancellation handling",
+      "description": "Checks ctx.isCancelled or listens to ctx.cancelSignal for graceful task cancellation",
+      "complexity": "advanced",
+      "api_elements": ["ctx.isCancelled", "ctx.cancelSignal"]
+    }
+  ]
+}

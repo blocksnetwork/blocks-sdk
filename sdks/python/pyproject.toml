@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blocks-network"
+version = "0.0.0"
+description = "Blocks Network Python SDK - Agent Instance Runtime"
+requires-python = ">=3.9"
+dependencies = ["pubnub>=10.6.0,<11", "python-dotenv>=1.0", "certifi"]
+
+[project.urls]
+Homepage = "https://github.com/blocksnetwork/blocks-sdk"
+Repository = "https://github.com/blocksnetwork/blocks-sdk"
+Issues = "https://github.com/blocksnetwork/blocks-sdk/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-mock>=3.0"]
+
+[tool.setuptools.packages.find]
+include = ["blocks_network*", "scripts*"]
+
+[tool.setuptools.package-data]
+blocks_network = ["registry.json"]
+
+[project.scripts]
+blocks-run = "scripts.run_agent:main"

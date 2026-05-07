@@ -1,0 +1,61 @@
+{
+  "context": "Tests whether the agent correctly implements a JSON-processing handler with proper type imports, error handling via return values instead of throws, JSON artifact mimeType, and well-configured agent-card.json with skill metadata.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Default async handler export",
+      "description": "Handler uses correct export default async function signature with proper types",
+      "max_score": 8
+    },
+    {
+      "name": "Type imports",
+      "description": "Imports StartTaskMessage, TaskContext, HandlerResult from '@blocks-network/sdk'",
+      "max_score": 8
+    },
+    {
+      "name": "requestParts access with safety",
+      "description": "Accesses task.requestParts?.[0] with undefined checking before processing",
+      "max_score": 8
+    },
+    {
+      "name": "JSON mimeType return",
+      "description": "Returns mimeType: 'application/json' for the artifact",
+      "max_score": 10
+    },
+    {
+      "name": "JSON.stringify for artifact",
+      "description": "Uses JSON.stringify() to serialize the artifact value (not returning a raw object)",
+      "max_score": 8
+    },
+    {
+      "name": "Error as return not throw",
+      "description": "Returns an error result object (e.g., { ok: false, error: 'message' }) instead of throwing on invalid input",
+      "max_score": 10
+    },
+    {
+      "name": "reportStatus at stages",
+      "description": "Uses ctx?.reportStatus() at multiple processing stages (e.g., 'Validating...', 'Transforming...')",
+      "max_score": 8
+    },
+    {
+      "name": "Package.json type module",
+      "description": "package.json has \"type\": \"module\" for ESM support",
+      "max_score": 8
+    },
+    {
+      "name": "Blocks Network dependency",
+      "description": "package.json includes @blocks-network/sdk in dependencies",
+      "max_score": 8
+    },
+    {
+      "name": "Skill tags and examples",
+      "description": "agent-card.json skills array includes tags and/or examples for the skill",
+      "max_score": 6
+    },
+    {
+      "name": "capabilities.taskKinds present",
+      "description": "agent-card.json includes capabilities.taskKinds: ['request']",
+      "max_score": 6
+    }
+  ]
+}

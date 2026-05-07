@@ -1,0 +1,5 @@
+{
+  "name": "blocks-sdk",
+  "private": true,
+  "workspaces": ["sdks/node", "examples/node/*"]
+}

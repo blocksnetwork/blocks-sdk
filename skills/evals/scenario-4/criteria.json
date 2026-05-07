@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent correctly implements cancellation checking with ctx.isCancelled, partial result return, maxRunningTimeSec configuration, and a trigger script that can send CancelTask messages.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Default async handler",
+      "description": "Uses export default async function handler with correct typed signature",
+      "max_score": 8
+    },
+    {
+      "name": "isCancelled check",
+      "description": "Checks ctx.isCancelled or ctx.cancelSignal between processing sections",
+      "max_score": 10
+    },
+    {
+      "name": "Partial result on cancel",
+      "description": "Returns the partial report generated so far when cancellation is detected",
+      "max_score": 10
+    },
+    {
+      "name": "Cancellation note in result",
+      "description": "Includes a note in the returned artifact indicating the report was interrupted/incomplete",
+      "max_score": 8
+    },
+    {
+      "name": "reportStatus per section",
+      "description": "Uses ctx?.reportStatus() to report which section is being generated",
+      "max_score": 8
+    },
+    {
+      "name": "maxRunningTimeSec in agent card",
+      "description": "agent-card.json includes runtime.maxRunningTimeSec with an appropriate value",
+      "max_score": 8
+    },
+    {
+      "name": "Sequential section generation",
+      "description": "Generates report sections sequentially with some form of delay or processing between them",
+      "max_score": 6
+    },
+    {
+      "name": "Full report on success",
+      "description": "Returns the complete report as text/plain artifact when not cancelled",
+      "max_score": 8
+    },
+    {
+      "name": "CancelTask in trigger",
+      "description": "Trigger script demonstrates sending a CancelTask message to the control channel after a delay",
+      "max_score": 10
+    },
+    {
+      "name": "Control channel format",
+      "description": "Trigger script uses agent.{agentName}.control for both StartTask and CancelTask",
+      "max_score": 8
+    }
+  ]
+}
