@@ -32,8 +32,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { startAgentInstance } from '../src/runtime/agent-instance.js';
+import { TaskSession, type TaskEvent } from '../src/runtime/task-session.js';
 import { makePipeTestCard } from './helpers/test-card.js';
 import type { AgentCard } from '../src/runtime/agent-registry.js';
+import type { ArtifactRef } from '../src/runtime/artifacts.js';
 
 // ---------------------------------------------------------------------------
 // vi.hoisted — mirrors agent-instance-shared-stream.test.ts so the
@@ -75,9 +77,11 @@ const hoisted = vi.hoisted(() => {
       _configuration: { keySet: { publishKey: 'pub-mock', subscribeKey: 'sub-mock' } },
       _simulateMessage: (channel: string, message: unknown, userMetadata?: Record<string, unknown>) => {
         for (const listener of messageListeners) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          if ((listener as any)?.message) {
-            (listener as any).message({ channel, message, userMetadata });
+          const target = listener as {
+            message?: (event: { channel: string; message: unknown; userMetadata?: Record<string, unknown> }) => void;
+          };
+          if (target.message) {
+            target.message({ channel, message, userMetadata });
           }
         }
       },
@@ -396,5 +400,108 @@ describe('shared-stream parity (§11): two concurrent pipe tasks', () => {
     expect(streamEndMarkers).toHaveLength(0);
 
     handle.stop();
+  });
+});
+
+describe('onArtifact history replay', () => {
+  it('replays preloaded artifacts in order with minimal synthetic event shape', () => {
+    const ref1: ArtifactRef = {
+      kind: 'inline',
+      mimeType: 'text/plain',
+      size: 5,
+      data: 'aGVsbG8=',
+    };
+    const ref2: ArtifactRef = {
+      kind: 'file',
+      mimeType: 'image/png',
+      size: 1000,
+      channel: 'u.alice.task-1',
+      fileId: 'file-2',
+      fileName: 'image.png',
+    };
+    const pubnub = createMockPubNub();
+    const session = new TaskSession({
+      taskId: 'task-1',
+      ownerId: 'alice',
+      readToken: 't4',
+      agentName: 'parity_artifacts',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pubnub: pubnub as any,
+      sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+      preloadedArtifacts: [ref1, ref2],
+    });
+    const events: Array<Record<string, unknown>> = [];
+
+    session.onArtifact((event) => events.push(event));
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: 'artifact', taskId: 'task-1' });
+    expect(events[0].artifactRef).toBe(ref1);
+    expect(events[0]).not.toHaveProperty('outputId');
+    expect(events[0]).not.toHaveProperty('protocolVersion');
+    expect(events[1]).toMatchObject({ type: 'artifact', taskId: 'task-1' });
+    expect(events[1].artifactRef).toBe(ref2);
+    expect(events[1]).not.toHaveProperty('outputId');
+    expect(events[1]).not.toHaveProperty('protocolVersion');
+
+    session.close();
+  });
+});
+
+describe('listEvents history parity', () => {
+  it('returns preloaded history events in insertion order', () => {
+    const events: TaskEvent[] = [
+      { type: 'progress', taskId: 'task-1', message: 'Working' },
+      {
+        type: 'artifact',
+        taskId: 'task-1',
+        artifactRef: {
+          kind: 'inline',
+          mimeType: 'text/plain',
+          size: 5,
+          data: 'aGVsbG8=',
+        },
+      },
+      { type: 'terminal', taskId: 'task-1', state: 'completed' },
+      {
+        type: 'progress',
+        taskId: 'task-1',
+        streamEvent: 'stream_started',
+        streams: {
+          s1: {
+            channel: 'stream.echo.s1',
+            direction: 'outbound',
+            format: 'bytes',
+            affinity: 'dedicated',
+            token: 't7c-1',
+            tokenTtlMinutes: 62,
+          },
+        },
+      },
+    ];
+    const pubnub = hoisted.createMockPubNub();
+    const session = new TaskSession({
+      taskId: 'task-1',
+      ownerId: 'alice',
+      readToken: 't4',
+      agentName: 'parity_events',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pubnub: pubnub as any,
+      sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+      preloadedEvents: events,
+    });
+
+    const listed = session.listEvents();
+
+    expect(listed.map((event) => [event.type, event.streamEvent])).toEqual([
+      ['progress', undefined],
+      ['artifact', undefined],
+      ['terminal', undefined],
+      ['progress', 'stream_started'],
+    ]);
+    expect(listed[0]).toBe(events[0]);
+    expect(listed).not.toBe(events);
+
+    session.close();
   });
 });

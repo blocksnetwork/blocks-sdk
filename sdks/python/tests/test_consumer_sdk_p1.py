@@ -679,10 +679,25 @@ class TestConnect:
 
         mock_pn = _make_mock_pubnub()
 
-        # Set up history with an artifact event
-        hist_msg = MagicMock()
-        hist_msg.timetoken = "16000000000000001"
-        hist_msg.message = {
+        # Set up history with mixed task events, plus one invalid payload.
+        request_msg = MagicMock()
+        request_msg.timetoken = "16000000000000000"
+        request_msg.message = {
+            "type": "request",
+            "taskId": "task-1",
+            "requestParts": [],
+        }
+        progress_msg = MagicMock()
+        progress_msg.timetoken = "16000000000000001"
+        progress_msg.message = {
+            "type": "progress",
+            "taskId": "task-1",
+            "message": "Working",
+            "progress": 50,
+        }
+        artifact_msg = MagicMock()
+        artifact_msg.timetoken = "16000000000000002"
+        artifact_msg.message = {
             "type": "artifact",
             "taskId": "task-1",
             "artifactRef": {
@@ -692,8 +707,42 @@ class TestConnect:
                 "data": base64.b64encode(b"hello").decode("ascii"),
             },
         }
+        system_msg = MagicMock()
+        system_msg.timetoken = "16000000000000003"
+        system_msg.message = {
+            "type": "system",
+            "taskId": "task-1",
+            "status": "paused",
+        }
+        log_msg = MagicMock()
+        log_msg.timetoken = "16000000000000004"
+        log_msg.message = {
+            "type": "log",
+            "taskId": "task-1",
+            "message": "finished",
+        }
+        terminal_msg = MagicMock()
+        terminal_msg.timetoken = "16000000000000005"
+        terminal_msg.message = {
+            "type": "terminal",
+            "taskId": "task-1",
+            "state": "completed",
+        }
+        invalid_msg = MagicMock()
+        invalid_msg.timetoken = "16000000000000006"
+        invalid_msg.message = "ignore-me"
         fm_result = MagicMock()
-        fm_result.result.channels = {"u.org1.task-1": [hist_msg]}
+        fm_result.result.channels = {
+            "u.org1.task-1": [
+                request_msg,
+                progress_msg,
+                artifact_msg,
+                system_msg,
+                log_msg,
+                terminal_msg,
+                invalid_msg,
+            ],
+        }
         fm_chain = MagicMock()
         fm_chain.channels.return_value = fm_chain
         fm_chain.maximum_per_channel.return_value = fm_chain
@@ -711,6 +760,15 @@ class TestConnect:
         artifacts = session.list_artifacts()
         assert len(artifacts) == 1
         assert artifacts[0].kind == "inline"
+        assert [event.type for event in session.list_events()] == [
+            "request",
+            "progress",
+            "artifact",
+            "system",
+            "log",
+            "terminal",
+        ]
+        assert fm_chain.sync.call_count == 1
 
     @patch("blocks_network.task_client.call_rpc")
     def test_connect_terminal_task_list_streams(self, mock_rpc) -> None:
@@ -822,6 +880,49 @@ class TestConnect:
         )
 
         mock_pn = _make_mock_pubnub()
+        request_msg = MagicMock()
+        request_msg.timetoken = "16000000000000000"
+        request_msg.message = {
+            "type": "request",
+            "taskId": "task-1",
+            "requestParts": [],
+        }
+        stream_msg = MagicMock()
+        stream_msg.timetoken = "16000000000000001"
+        stream_msg.message = {
+            "type": "progress",
+            "taskId": "task-1",
+            "streamEvent": "stream_started",
+            "streams": {
+                "s1": {
+                    "channel": "stream.echo.s1",
+                    "direction": "outbound",
+                    "format": "bytes",
+                    "affinity": "dedicated",
+                    "token": "t7c-1",
+                    "tokenTtlMinutes": 62,
+                },
+            },
+        }
+        system_msg = MagicMock()
+        system_msg.timetoken = "16000000000000002"
+        system_msg.message = {
+            "type": "system",
+            "taskId": "task-1",
+            "status": "heartbeat",
+        }
+        invalid_msg = MagicMock()
+        invalid_msg.timetoken = "16000000000000003"
+        invalid_msg.message = None
+        fm_result = MagicMock()
+        fm_result.result.channels = {
+            "u.org1.task-1": [request_msg, stream_msg, system_msg, invalid_msg],
+        }
+        fm_chain = MagicMock()
+        fm_chain.channels.return_value = fm_chain
+        fm_chain.maximum_per_channel.return_value = fm_chain
+        fm_chain.sync.return_value = fm_result
+        mock_pn.fetch_messages.return_value = fm_chain
 
         with patch.object(client, "_create_session_pubnub", return_value=mock_pn), \
              patch.object(client, "_fetch_task_read_token", return_value={
@@ -835,6 +936,12 @@ class TestConnect:
         assert session.state == "running"
         assert session.is_closed is False
         assert session._skip_subscription is False
+        assert [(event.type, event.get("streamEvent")) for event in session.list_events()] == [
+            ("request", None),
+            ("progress", "stream_started"),
+            ("system", None),
+        ]
+        assert fm_chain.sync.call_count == 1
 
     @patch("blocks_network.task_client.call_rpc")
     def test_connect_derives_terminal_from_history_when_rpc_lags(
@@ -1354,3 +1461,71 @@ class TestNonAnonConnectUnchanged:
         assert client._anon_fingerprint is None
         with pytest.raises(RuntimeError, match="requires an authenticated TaskClient"):
             client.connect("task-1")
+
+
+class TestConnectRoleParameter:
+    """connect() passes the role parameter to the read-token endpoint."""
+
+    @patch("blocks_network.task_client.call_rpc")
+    def test_connect_with_provider_role(self, mock_rpc) -> None:
+        """connect(role='provider') sends role:'provider' in the token request."""
+        mock_rpc.return_value = {
+            "task": {
+                "taskId": "task-1",
+                "agentName": "echo",
+                "owner": "other-user",
+                "state": "completed",
+            },
+        }
+
+        client = TaskClient(
+            subscribe_key="sub-key",
+            billing_mode="free",
+            auth_provider=StaticAuthProvider("jwt-token"),
+            base_url="http://localhost:3000",
+        )
+
+        mock_pn = _make_mock_pubnub()
+        with patch.object(client, "_create_session_pubnub", return_value=mock_pn), \
+             patch.object(client, "_fetch_task_read_token", return_value={
+                 "pamToken": "t4-provider",
+                 "channel": "u.org1.task-1",
+                 "ttlMinutes": 60,
+             }) as mock_fetch_token:
+            session = client.connect("task-1", role="provider")
+
+        mock_fetch_token.assert_called_once_with("task-1", "provider")
+        assert session.state == "completed"
+        session.close()
+
+    @patch("blocks_network.task_client.call_rpc")
+    def test_connect_defaults_to_consumer_role(self, mock_rpc) -> None:
+        """connect() without role sends role:'consumer' (default)."""
+        mock_rpc.return_value = {
+            "task": {
+                "taskId": "task-2",
+                "agentName": "echo",
+                "owner": "user-1",
+                "state": "completed",
+            },
+        }
+
+        client = TaskClient(
+            subscribe_key="sub-key",
+            billing_mode="free",
+            auth_provider=StaticAuthProvider("jwt-token"),
+            base_url="http://localhost:3000",
+        )
+
+        mock_pn = _make_mock_pubnub()
+        with patch.object(client, "_create_session_pubnub", return_value=mock_pn), \
+             patch.object(client, "_fetch_task_read_token", return_value={
+                 "pamToken": "t4-consumer",
+                 "channel": "u.org1.task-2",
+                 "ttlMinutes": 60,
+             }) as mock_fetch_token:
+            session = client.connect("task-2")
+
+        mock_fetch_token.assert_called_once_with("task-2", "consumer")
+        assert session.state == "completed"
+        session.close()

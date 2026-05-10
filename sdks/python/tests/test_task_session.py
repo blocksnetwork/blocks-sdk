@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from blocks_network.task_session import TaskSession, TaskEvent
+from blocks_network.types import ArtifactRef
 
 
 def _make_mock_pubnub() -> MagicMock:
@@ -134,6 +135,172 @@ class TestTaskSession:
 
         assert len(events) == 1
 
+    def test_on_artifact_replays_preloaded_artifacts_on_registration(self) -> None:
+        ref1 = ArtifactRef(kind="inline", mime_type="text/plain", size=5, data="aGVsbG8=")
+        ref2 = ArtifactRef(
+            kind="file",
+            mime_type="image/png",
+            size=1000,
+            channel="u.alice.task-1",
+            file_id="file-2",
+            file_name="image.png",
+        )
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_artifacts=[ref1, ref2],
+        )
+        cb = MagicMock()
+
+        unsub = session.on_artifact(cb)
+
+        assert callable(unsub)
+        assert cb.call_count == 2
+        first = cb.call_args_list[0][0][0]
+        second = cb.call_args_list[1][0][0]
+        assert first.type == "artifact"
+        assert first.task_id == "task-1"
+        assert first.artifact_ref == ref1
+        assert second.artifact_ref == ref2
+
+    def test_on_artifact_replays_preloaded_artifacts_when_terminal(self) -> None:
+        ref = ArtifactRef(kind="inline", mime_type="text/plain", size=5, data="aGVsbG8=")
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            state="completed",
+            preloaded_artifacts=[ref],
+        )
+        cb = MagicMock()
+
+        session.on_artifact(cb)
+
+        assert cb.call_count == 1
+        assert cb.call_args_list[0][0][0].artifact_ref == ref
+
+    def test_on_artifact_replays_full_history_for_each_registration(self) -> None:
+        ref = ArtifactRef(kind="inline", mime_type="text/plain", size=5, data="aGVsbG8=")
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_artifacts=[ref],
+        )
+        cb1 = MagicMock()
+        cb2 = MagicMock()
+
+        session.on_artifact(cb1)
+        session.on_artifact(cb2)
+
+        assert cb1.call_count == 1
+        assert cb1.call_args_list[0][0][0].artifact_ref == ref
+        assert cb2.call_count == 1
+        assert cb2.call_args_list[0][0][0].artifact_ref == ref
+
+    def test_on_artifact_live_delivery_after_history_replay(self) -> None:
+        pn = _make_mock_pubnub()
+        ref1 = ArtifactRef(kind="inline", mime_type="text/plain", size=5, data="aGVsbG8=")
+        ref2 = ArtifactRef(
+            kind="file",
+            mime_type="image/png",
+            size=1000,
+            channel="u.alice.task-1",
+            file_id="file-2",
+            file_name="image.png",
+        )
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=pn,
+            sdk_options={},
+            preloaded_artifacts=[ref1],
+        )
+        cb = MagicMock()
+
+        session.on_artifact(cb)
+        _simulate_message(pn, "u.alice.task-1", {
+            "type": "artifact",
+            "taskId": "task-1",
+            "artifactRef": ref2.to_dict(),
+        })
+
+        assert cb.call_count == 2
+        assert cb.call_args_list[0][0][0].artifact_ref == ref1
+        assert cb.call_args_list[1][0][0].artifact_ref == ref2
+
+    def test_on_artifact_replay_errors_route_and_replay_continues(self) -> None:
+        ref1 = ArtifactRef(kind="inline", mime_type="text/plain", size=5, data="aGVsbG8=")
+        ref2 = ArtifactRef(kind="inline", mime_type="text/plain", size=6, data="d29ybGQ=")
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_artifacts=[ref1, ref2],
+        )
+        on_error = MagicMock()
+        seen = []
+        session.on_error(on_error)
+
+        def cb(event: TaskEvent) -> None:
+            seen.append(event.artifact_ref)
+            if len(seen) == 1:
+                raise RuntimeError("boom")
+
+        unsub = session.on_artifact(cb)
+
+        assert callable(unsub)
+        assert seen == [ref1, ref2]
+        assert on_error.call_count == 1
+        ctx = on_error.call_args_list[0][0][1]
+        assert ctx.entry_point == "taskSession"
+        assert ctx.callback_type == "onArtifact"
+
+    def test_on_artifact_replay_event_raw_shape_matches_live(self) -> None:
+        ref = ArtifactRef(
+            kind="file",
+            mime_type="image/png",
+            size=1000,
+            channel="u.alice.task-1",
+            file_id="file-2",
+            file_name="image.png",
+        )
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_artifacts=[ref],
+        )
+        events = []
+        session.on_artifact(lambda e: events.append(e))
+
+        assert len(events) == 1
+        raw_ref = events[0].raw.get("artifactRef")
+        assert isinstance(raw_ref, dict), "replay event.raw['artifactRef'] must be a dict, not an ArtifactRef instance"
+        assert raw_ref["kind"] == "file"
+        assert raw_ref["fileId"] == "file-2"
+        assert raw_ref["fileName"] == "image.png"
+        # dict-style access via event[] must also work
+        assert isinstance(events[0]["artifactRef"], dict)
+
     def test_auto_close_on_terminal(self) -> None:
         pn = _make_mock_pubnub()
         session = TaskSession(
@@ -193,6 +360,167 @@ class TestTaskSession:
         })
 
         assert events == ["progress", "artifact"]
+
+    def test_list_events_returns_preloaded_history_in_order(self) -> None:
+        preloaded_events = [
+            {"type": "progress", "taskId": "task-1", "message": "Working"},
+            {
+                "type": "artifact",
+                "taskId": "task-1",
+                "artifactRef": {
+                    "kind": "inline",
+                    "mimeType": "text/plain",
+                    "size": 5,
+                    "data": "aGVsbG8=",
+                },
+            },
+            {"type": "terminal", "taskId": "task-1", "state": "completed"},
+        ]
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_events=preloaded_events,
+        )
+
+        events = session.list_events()
+
+        assert [event.type for event in events] == ["progress", "artifact", "terminal"]
+        assert events[0].raw is preloaded_events[0]
+
+    def test_list_events_empty_without_preloaded_events(self) -> None:
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+        )
+
+        assert session.list_events() == []
+
+    def test_list_events_returns_shallow_list_copy(self) -> None:
+        progress = {"type": "progress", "taskId": "task-1", "message": "Working"}
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_events=[progress],
+        )
+
+        events = session.list_events()
+        events.append(TaskEvent({"type": "terminal", "taskId": "task-1"}))
+
+        assert [event.type for event in session.list_events()] == ["progress"]
+
+    def test_list_events_includes_supported_event_shapes(self) -> None:
+        preloaded_events = [
+            {"type": "request", "taskId": "task-1", "requestParts": []},
+            {"type": "progress", "taskId": "task-1", "progress": 50},
+            {
+                "type": "artifact",
+                "taskId": "task-1",
+                "artifactRef": {
+                    "kind": "inline",
+                    "mimeType": "text/plain",
+                    "size": 5,
+                    "data": "aGVsbG8=",
+                },
+            },
+            {"type": "terminal", "taskId": "task-1", "state": "completed"},
+            {"type": "system", "taskId": "task-1", "status": "paused"},
+            {"type": "log", "taskId": "task-1", "message": "line"},
+            {
+                "type": "progress",
+                "taskId": "task-1",
+                "streamEvent": "stream_started",
+                "streams": {
+                    "s1": {
+                        "channel": "stream.echo.s1",
+                        "direction": "outbound",
+                        "format": "bytes",
+                        "affinity": "dedicated",
+                        "token": "t7c-1",
+                    },
+                },
+            },
+        ]
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_events=preloaded_events,
+        )
+
+        assert [
+            (event.type, event.get("streamEvent"))
+            for event in session.list_events()
+        ] == [
+            ("request", None),
+            ("progress", None),
+            ("artifact", None),
+            ("terminal", None),
+            ("system", None),
+            ("log", None),
+            ("progress", "stream_started"),
+        ]
+
+    def test_append_history_event_deduplicates_by_timetoken(self) -> None:
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+        )
+        session._append_history_event({"type": "progress", "taskId": "task-1", "message": "first"}, "300")
+        session._append_history_event({"type": "progress", "taskId": "task-1", "message": "duplicate"}, "300")
+        session._append_history_event({"type": "progress", "taskId": "task-1", "message": "second"}, "301")
+        events = session.list_events()
+        assert len(events) == 2
+        assert events[0].raw["message"] == "first"
+        assert events[1].raw["message"] == "second"
+
+    def test_append_history_event_extends_list_events(self) -> None:
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+            preloaded_events=[{"type": "progress", "taskId": "task-1", "message": "from history"}],
+        )
+        session._append_history_event({"type": "progress", "taskId": "task-1", "message": "from buffer"})
+        events = session.list_events()
+        assert len(events) == 2
+        assert events[0].raw["message"] == "from history"
+        assert events[1].raw["message"] == "from buffer"
+
+    def test_append_history_event_list_events_returns_copy(self) -> None:
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={},
+        )
+        session._append_history_event({"type": "progress", "taskId": "task-1", "message": "buf"})
+        snap = session.list_events()
+        snap.append(None)  # type: ignore[arg-type]
+        assert len(session.list_events()) == 1
 
     def test_stream_started_parsing(self) -> None:
         pn = _make_mock_pubnub()

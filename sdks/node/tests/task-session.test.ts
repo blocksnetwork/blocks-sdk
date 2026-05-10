@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TaskSession } from '../src/runtime/task-session.js';
+import { TaskSession, type TaskEvent } from '../src/runtime/task-session.js';
+import type { ArtifactRef } from '../src/runtime/artifacts.js';
 
 // Minimal PubNub mock for task session tests
+interface TaskMessageListener {
+  message?: (event: { channel: string; message: unknown; timetoken?: string }) => void;
+}
+
 function createMockPubNub() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let messageListener: any = null;
+  let messageListener: TaskMessageListener | null = null;
   let simCounter = 0;
 
   return {
-    addListener: vi.fn((listener) => { messageListener = listener; }),
+    addListener: vi.fn((listener: TaskMessageListener) => { messageListener = listener; }),
     removeListener: vi.fn(() => { messageListener = null; }),
     subscribe: vi.fn(),
     unsubscribe: vi.fn(),
@@ -25,6 +29,12 @@ function createMockPubNub() {
     },
     _getListener() { return messageListener; },
   };
+}
+
+type MockPubNub = ReturnType<typeof createMockPubNub>;
+
+function asTaskSessionPubNub(pubnub: MockPubNub): NonNullable<ConstructorParameters<typeof TaskSession>[0]['pubnub']> {
+  return pubnub as unknown as NonNullable<ConstructorParameters<typeof TaskSession>[0]['pubnub']>;
 }
 
 // Helper to create a mock StreamClient with controllable lifecycle
@@ -111,7 +121,7 @@ describe('TaskSession', () => {
       readToken: 't4-token',
       agentName,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pubnub: mockPubNub as any,
+      pubnub: asTaskSessionPubNub(mockPubNub),
       sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
       // Keep the pre-Family-F 2s drain window for auto-drain tests so
       // existing `vi.advanceTimersByTime(2000)` assertions stay fast
@@ -143,7 +153,7 @@ describe('TaskSession', () => {
       ownerId: 'alice',
       readToken: null,
       agentName,
-      pubnub: mockPubNub as any,
+      pubnub: asTaskSessionPubNub(mockPubNub),
       sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
     });
     expect(s.orgId).toBe('alice');
@@ -157,7 +167,7 @@ describe('TaskSession', () => {
       orgId: 'acme-corp',
       readToken: null,
       agentName,
-      pubnub: mockPubNub as any,
+      pubnub: asTaskSessionPubNub(mockPubNub),
       sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
     });
     expect(s.orgId).toBe('acme-corp');
@@ -181,6 +191,116 @@ describe('TaskSession', () => {
       expect(cb).toHaveBeenCalled();
     });
 
+    describe('onArtifact history replay', () => {
+      const ref1: ArtifactRef = {
+        kind: 'inline',
+        mimeType: 'text/plain',
+        size: 5,
+        data: 'aGVsbG8=',
+      };
+      const ref2: ArtifactRef = {
+        kind: 'file',
+        mimeType: 'image/png',
+        size: 1000,
+        channel: 'u.alice.task-1',
+        fileId: 'file-2',
+        fileName: 'image.png',
+      };
+
+      function createSession(preloadedArtifacts: ArtifactRef[], state?: 'completed' | 'failed' | 'canceled') {
+        return new TaskSession({
+          taskId,
+          ownerId,
+          readToken: 't4-token',
+          agentName,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          pubnub: asTaskSessionPubNub(mockPubNub),
+          sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+          preloadedArtifacts,
+          state,
+        });
+      }
+
+      it('replays preloaded artifacts synchronously on registration', () => {
+        const replaySession = createSession([ref1, ref2]);
+        const cb = vi.fn();
+
+        const unsub = replaySession.onArtifact(cb);
+
+        expect(typeof unsub).toBe('function');
+        expect(cb).toHaveBeenCalledTimes(2);
+        expect(cb.mock.calls[0][0]).toMatchObject({ type: 'artifact', taskId, artifactRef: ref1 });
+        expect(cb.mock.calls[0][0].artifactRef).toBe(ref1);
+        expect(cb.mock.calls[1][0]).toMatchObject({ type: 'artifact', taskId, artifactRef: ref2 });
+        expect(cb.mock.calls[1][0].artifactRef).toBe(ref2);
+        replaySession.close();
+      });
+
+      it('replays preloaded artifacts when already terminal', () => {
+        const replaySession = createSession([ref1], 'completed');
+        const cb = vi.fn();
+
+        replaySession.onArtifact(cb);
+
+        expect(cb).toHaveBeenCalledTimes(1);
+        expect(cb.mock.calls[0][0].artifactRef).toBe(ref1);
+        replaySession.close();
+      });
+
+      it('replays full history for each registration', () => {
+        const replaySession = createSession([ref1]);
+        const cb1 = vi.fn();
+        const cb2 = vi.fn();
+
+        replaySession.onArtifact(cb1);
+        replaySession.onArtifact(cb2);
+
+        expect(cb1).toHaveBeenCalledTimes(1);
+        expect(cb1.mock.calls[0][0].artifactRef).toBe(ref1);
+        expect(cb2).toHaveBeenCalledTimes(1);
+        expect(cb2.mock.calls[0][0].artifactRef).toBe(ref1);
+        replaySession.close();
+      });
+
+      it('still delivers live artifacts after history replay', () => {
+        const replaySession = createSession([ref1]);
+        const cb = vi.fn();
+
+        replaySession.onArtifact(cb);
+        mockPubNub._simulateMessage(channel, { type: 'artifact', taskId, artifactRef: ref2 });
+
+        expect(cb).toHaveBeenCalledTimes(2);
+        expect(cb.mock.calls[0][0].artifactRef).toBe(ref1);
+        expect(cb.mock.calls[1][0].artifactRef).toBe(ref2);
+        replaySession.close();
+      });
+
+      it('routes replay callback errors and continues replaying remaining artifacts', () => {
+        const replaySession = createSession([ref1, ref2]);
+        const onError = vi.fn();
+        const seen: ArtifactRef[] = [];
+        replaySession.onError(onError);
+        const cb = vi.fn((event) => {
+          seen.push(event.artifactRef);
+          if (seen.length === 1) {
+            throw new Error('boom');
+          }
+        });
+
+        const unsub = replaySession.onArtifact(cb);
+
+        expect(typeof unsub).toBe('function');
+        expect(cb).toHaveBeenCalledTimes(2);
+        expect(seen).toEqual([ref1, ref2]);
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError.mock.calls[0][1]).toMatchObject({
+          entryPoint: 'taskSession',
+          callbackType: 'onArtifact',
+        });
+        replaySession.close();
+      });
+    });
+
     it('onTerminal fires for terminal events', () => {
       const cb = vi.fn();
       session.onTerminal(cb);
@@ -202,6 +322,156 @@ describe('TaskSession', () => {
       unsub();
       mockPubNub._simulateMessage(channel, { type: 'progress', taskId });
       expect(cb).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listEvents()', () => {
+    const progressEvent: TaskEvent = {
+      type: 'progress',
+      taskId,
+      message: 'Working',
+      progress: 25,
+    };
+    const artifactEvent: TaskEvent = {
+      type: 'artifact',
+      taskId,
+      artifactRef: {
+        kind: 'inline',
+        mimeType: 'text/plain',
+        size: 5,
+        data: 'aGVsbG8=',
+      },
+    };
+    const terminalEvent: TaskEvent = {
+      type: 'terminal',
+      taskId,
+      state: 'completed',
+    };
+    const streamStartedEvent: TaskEvent = {
+      type: 'progress',
+      taskId,
+      streamEvent: 'stream_started',
+      streams: {
+        s1: {
+          channel: 'stream.echo.s1',
+          direction: 'outbound',
+          format: 'bytes',
+          affinity: 'dedicated',
+          token: 't7c-1',
+          tokenTtlMinutes: 62,
+        },
+      },
+    };
+
+    function createSession(preloadedEvents?: TaskEvent[]) {
+      return new TaskSession({
+        taskId,
+        ownerId,
+        readToken: 't4-token',
+        agentName,
+        pubnub: asTaskSessionPubNub(mockPubNub),
+        sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+        preloadedEvents,
+      });
+    }
+
+    it('returns all history events in order', () => {
+      const listSession = createSession([progressEvent, artifactEvent, terminalEvent]);
+
+      expect(listSession.listEvents()).toEqual([progressEvent, artifactEvent, terminalEvent]);
+
+      listSession.close();
+    });
+
+    it('returns empty array for sessions without preloaded events', () => {
+      const listSession = createSession();
+
+      expect(listSession.listEvents()).toEqual([]);
+
+      listSession.close();
+    });
+
+    it('returns a shallow array copy', () => {
+      const listSession = createSession([progressEvent]);
+
+      const events = listSession.listEvents();
+      events.push(terminalEvent);
+
+      expect(listSession.listEvents()).toEqual([progressEvent]);
+
+      listSession.close();
+    });
+
+    it('includes supported task event shapes', () => {
+      const requestEvent: TaskEvent = { type: 'request', taskId, requestParts: [] };
+      const systemEvent: TaskEvent = { type: 'system', taskId, status: 'paused' };
+      const logEvent: TaskEvent = { type: 'log', taskId, message: 'line' };
+      const listSession = createSession([
+        requestEvent,
+        progressEvent,
+        artifactEvent,
+        terminalEvent,
+        systemEvent,
+        logEvent,
+        streamStartedEvent,
+      ]);
+
+      expect(listSession.listEvents().map((event) => [event.type, event.streamEvent])).toEqual([
+        ['request', undefined],
+        ['progress', undefined],
+        ['artifact', undefined],
+        ['terminal', undefined],
+        ['system', undefined],
+        ['log', undefined],
+        ['progress', 'stream_started'],
+      ]);
+
+      listSession.close();
+    });
+  });
+
+  describe('_appendHistoryEvent()', () => {
+    it('extends listEvents() with buffer-drain events', () => {
+      const s = new TaskSession({
+        taskId, ownerId, readToken: 't4', agentName,
+        pubnub: asTaskSessionPubNub(mockPubNub),
+        sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+        preloadedEvents: [{ type: 'progress', taskId, message: 'from history' }],
+      });
+      s._appendHistoryEvent({ type: 'progress', taskId, message: 'from buffer' }, '200');
+      const events = s.listEvents();
+      expect(events).toHaveLength(2);
+      expect(events[0].message).toBe('from history');
+      expect(events[1].message).toBe('from buffer');
+      s.close();
+    });
+
+    it('deduplicates buffer-drain events by timetoken', () => {
+      const s = new TaskSession({
+        taskId, ownerId, readToken: 't4', agentName,
+        pubnub: asTaskSessionPubNub(mockPubNub),
+        sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+      });
+      s._appendHistoryEvent({ type: 'progress', taskId, message: 'first' }, '300');
+      s._appendHistoryEvent({ type: 'progress', taskId, message: 'duplicate' }, '300');
+      s._appendHistoryEvent({ type: 'progress', taskId, message: 'second' }, '301');
+      expect(s.listEvents()).toHaveLength(2);
+      expect(s.listEvents()[0].message).toBe('first');
+      expect(s.listEvents()[1].message).toBe('second');
+      s.close();
+    });
+
+    it('listEvents() returns a copy so appending to the result does not grow the snapshot', () => {
+      const s = new TaskSession({
+        taskId, ownerId, readToken: 't4', agentName,
+        pubnub: asTaskSessionPubNub(mockPubNub),
+        sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+      });
+      s._appendHistoryEvent({ type: 'progress', taskId, message: 'buf' }, '400');
+      const snap1 = s.listEvents();
+      snap1.push({ type: 'terminal', taskId, state: 'completed' });
+      expect(s.listEvents()).toHaveLength(1);
+      s.close();
     });
   });
 
@@ -588,7 +858,7 @@ describe('TaskSession', () => {
         readToken: 't4-token',
         agentName,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pubnub: mockPubNub as any,
+        pubnub: asTaskSessionPubNub(mockPubNub),
         sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
         autoDrain: false,
       });
@@ -631,7 +901,7 @@ describe('TaskSession', () => {
           readToken: 't4-token',
           agentName,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          pubnub: mockPubNub as any,
+          pubnub: asTaskSessionPubNub(mockPubNub),
           sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
         });
 
@@ -670,7 +940,7 @@ describe('TaskSession', () => {
           readToken: 't4-token',
           agentName,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          pubnub: mockPubNub as any,
+          pubnub: asTaskSessionPubNub(mockPubNub),
           sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
           drainWindowMs: 60000,
         });
@@ -704,7 +974,7 @@ describe('TaskSession', () => {
           readToken: 't4-token',
           agentName,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          pubnub: mockPubNub as any,
+          pubnub: asTaskSessionPubNub(mockPubNub),
           sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
           drainWindowMs: 5000,
         });
@@ -941,7 +1211,7 @@ describe('TaskSession', () => {
         ownerId: 'alice',
         readToken: 't4-token',
         agentName: 'echo',
-        pubnub: pn as any,
+        pubnub: asTaskSessionPubNub(pn),
         sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
         idempotent: true,
         state: 'pending',
@@ -964,7 +1234,7 @@ describe('TaskSession', () => {
         ownerId: 'alice',
         readToken: 't4-token',
         agentName: 'echo',
-        pubnub: pn as any,
+        pubnub: asTaskSessionPubNub(pn),
         sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
         idempotent: true,
         state: 'running',
@@ -1053,7 +1323,7 @@ describe('TaskSession', () => {
         ownerId: 'alice',
         readToken: null,
         agentName: 'echo',
-        pubnub: createMockPubNub() as any,
+        pubnub: asTaskSessionPubNub(createMockPubNub()),
         sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
       });
 
@@ -1175,7 +1445,7 @@ describe('TaskSession', () => {
         ownerId,
         readToken: 't4-token',
         agentName,
-        pubnub: pn as any,
+        pubnub: asTaskSessionPubNub(pn),
         sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
         skipSubscription: true,
         state: 'completed',

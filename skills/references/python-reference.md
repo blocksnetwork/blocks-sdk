@@ -196,9 +196,11 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 **send_message(\*, agent_name, request_parts, ...)** -- all keyword-only. `owner_id` is auto-populated from auth (optional override). Optional: `idempotency_key`, `task_kind` (`"request"`|`"pipe"`), `duration`, `consumer_public_key`, `push_notification_config`, `retry_policy`, `auto_drain`, `drain_window_s` (default 30.0; overrides the per-session auto-drain window for already-open streams). Returns `TaskSession`.
 
-**TaskClient.connect(task_id, auto_drain=True, drain_window_s=None)** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`.
+**TaskClient.connect(task_id, auto_drain=True, drain_window_s=None, role="consumer")** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`. `role` defaults to `"consumer"` (task submitter); set to `"provider"` when the caller is the agent owner viewing a received task.
 
-**TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. Artifact helpers: `list_artifacts()`, `download_artifact(ref)`, `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)`. Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
+**TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_artifacts()`, `download_artifact(ref)`, `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)`. Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
+
+`on_artifact(cb)` replays pre-populated artifacts synchronously at registration time, in the same spirit as `on_stream()` and sticky `on_terminal()`. Replay events are minimal synthetic artifact events with `type`, `taskId`, and `artifactRef`; original history-only wire fields such as `outputId` and `protocolVersion` are not retained.
 
 **Part helpers:** `text_part(text, part_id=)`, `file_part(path_or_data, **opts)` -- exported from `blocks_network`.
 
@@ -345,7 +347,7 @@ client = create_task_client(api_key="explicit")            # explicit key
 client = create_task_client(token_endpoint="https://my-backend/token")  # proxy auth
 ```
 
-- `billing_mode` selects the keyset (`"free"` → playground, `"paid"` → network) and must match the target agent's server-derived billing_mode
+- `billing_mode` selects the keyset (`"free"` → playground, `"paid"` → network) and must match the target agent's server-derived billing_mode (exception: authenticated same-org callers are exempt from this check)
 - When no auth mode is provided, falls back to `BLOCKS_API_KEY` from the environment
 - Accepts `token_endpoint` or `token_provider` as alternative auth modes (skips `BLOCKS_API_KEY`)
 - Extra `**kwargs` forwarded to `TaskClient.create()`
@@ -380,17 +382,23 @@ Reconnect to an active or completed task by ID:
 session = client.connect(task_id="task-abc-123")
 
 # For terminal tasks: history is preloaded, no live events
+events = session.list_events()
 artifacts = session.list_artifacts()
 streams = session.list_streams()
 
 # For active tasks: history preloaded + live subscription
 session.on_artifact(lambda event: print("Artifact:", event))
 session.on_stream(lambda ref: print("Stream:", ref))
+
+# Provider (agent owner) viewing a received task:
+provider_session = client.connect(task_id="task-abc-123", role="provider")
 ```
 
 - Requires JWT-based auth (`api_key`, `token_endpoint`, or `token_provider`
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.
-- Terminal tasks: preloads artifacts/streams from history, no live events
+- `role` defaults to `"consumer"` (task submitter). Set to `"provider"`
+  when the caller owns the agent that received the task.
+- Terminal tasks: preloads events/artifacts/streams from history, no live events
 - Active tasks: preloads history, then subscribes from cursor (no gap)
 
 ---

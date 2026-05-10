@@ -177,8 +177,8 @@ class TestSendMessage:
         # statusChannel from response extensions
         assert session.status_channel == "u.user-1.task-123"
 
-        # _create_session_pubnub called with the T4 token
-        mock_create_pn.assert_called_once_with("T4-read-token")
+        # _create_session_pubnub called with T4 token, subscribe key, and publish key
+        mock_create_pn.assert_called_once_with("T4-read-token", "sub-c-test", "")
 
         # Eagerly subscribed to the response-provided channel
         assert "u.user-1.task-123" in fake["subscribed_channels"]
@@ -207,8 +207,8 @@ class TestSendMessage:
         # Falls back to derived channel
         assert session.status_channel == "u.user-1.task-no-ext"
         assert session.read_token is None
-        # Called with None (no T4)
-        mock_create_pn.assert_called_once_with(None)
+        # Called with None (no T4) and fallback subscribe key
+        mock_create_pn.assert_called_once_with(None, "sub-c-test", "")
         assert "u.user-1.task-no-ext" in fake["subscribed_channels"]
 
         session.close()
@@ -1855,6 +1855,194 @@ class TestSendMessageBillingModeOnWire:
         body = json.loads(req.data.decode("utf-8"))
         assert body["params"]["billingMode"] == "paid"
         session.close()
+
+
+class TestCrossBillingModeSubscribeKeyRouting:
+    """Tests for cross-billing-mode subscribeKey routing (BLOCKS-234).
+
+    When the SendMessage RPC response includes ``extensions.blocks.subscribeKey``
+    that differs from the client's own key, the session PubNub is created with
+    the returned key (target agent's keyset). The session factory is skipped in
+    this case because it is wired to the caller's subscribe key.
+    """
+
+    @staticmethod
+    def _response_with_subscribe_key(subscribe_key, publish_key=None, **overrides):
+        """Build response with cross-keyset keys in extensions.blocks."""
+        blocks = {
+            "streamChannels": {"status": "u.user-1.task-cross"},
+            "readToken": "T4-cross",
+            "subscribeKey": subscribe_key,
+        }
+        if publish_key is not None:
+            blocks["publishKey"] = publish_key
+        resp = {
+            "taskId": "task-cross",
+            "idempotent": False,
+            "queued": False,
+            "extensions": {"blocks": blocks},
+        }
+        resp.update(overrides)
+        return resp
+
+    @patch("blocks_network.pubnub_client.create_pubnub_client")
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_uses_response_subscribe_key_when_different_from_client(
+        self, mock_urlopen, mock_create_pn
+    ):
+        """When response subscribeKey differs, _create_session_pubnub skips the
+        factory and creates a fresh PubNub with the target key."""
+        mock_urlopen.return_value = _mock_urlopen_response(
+            self._response_with_subscribe_key("sub-c-target-agent-key", "pub-c-target-agent-key")
+        )
+        fake = create_fake_pubnub()
+        mock_create_pn.return_value = fake["pubnub"]
+
+        # Session factory that should NOT be called
+        session_factory = MagicMock(return_value=MagicMock())
+
+        client = TaskClient(
+            subscribe_key="sub-c-caller-key",
+            publish_key="pub-c-caller-key",
+            billing_mode="paid",
+            create_session_pubnub=session_factory,
+            base_url="http://localhost:3001",
+        )
+        session = client.send_message(
+            agent_name="free-agent",
+            request_parts=[],
+            owner_id="user-1",
+        )
+
+        # Session factory NOT called because keys differ
+        session_factory.assert_not_called()
+
+        # Internal create_pubnub_client was called with target subscribe AND publish keys
+        mock_create_pn.assert_called_once()
+        call_kwargs = mock_create_pn.call_args[1]
+        assert call_kwargs["subscribe_key"] == "sub-c-target-agent-key"
+        assert call_kwargs["publish_key"] == "pub-c-target-agent-key"
+
+        # Token applied
+        fake["pubnub"].set_token.assert_called_once_with("T4-cross")
+
+        # Subscribed to the status channel
+        assert "u.user-1.task-cross" in fake["subscribed_channels"]
+
+        session.close()
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_uses_session_factory_when_response_key_matches_client_key(
+        self, mock_urlopen
+    ):
+        """When response subscribeKey matches client's own key, the session
+        factory IS used (no fresh PubNub needed)."""
+        mock_urlopen.return_value = _mock_urlopen_response(
+            self._response_with_subscribe_key("sub-c-test")
+        )
+        fake = create_fake_pubnub()
+        session_factory = MagicMock(return_value=fake["pubnub"])
+
+        client = TaskClient(
+            subscribe_key="sub-c-test",
+            billing_mode="free",
+            create_session_pubnub=session_factory,
+            base_url="http://localhost:3001",
+        )
+        session = client.send_message(
+            agent_name="agent-b",
+            request_parts=[],
+            owner_id="user-1",
+        )
+
+        # Session factory IS called
+        session_factory.assert_called_once()
+
+        # Token applied via factory-created client
+        fake["pubnub"].set_token.assert_called_once_with("T4-cross")
+
+        session.close()
+
+    @patch("blocks_network.pubnub_client.create_pubnub_client")
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_falls_back_to_client_key_when_response_has_no_subscribe_key(
+        self, mock_urlopen, mock_create_pn
+    ):
+        """When response has no subscribeKey field, falls back to client's own
+        subscribe key and uses the session factory."""
+        resp = {
+            "taskId": "task-nokey",
+            "idempotent": False,
+            "queued": False,
+            "extensions": {
+                "blocks": {
+                    "streamChannels": {"status": "u.user-1.task-nokey"},
+                    "readToken": "T4-nokey",
+                    # No subscribeKey field
+                }
+            },
+        }
+        mock_urlopen.return_value = _mock_urlopen_response(resp)
+        fake = create_fake_pubnub()
+        session_factory = MagicMock(return_value=fake["pubnub"])
+
+        client = TaskClient(
+            subscribe_key="sub-c-test",
+            billing_mode="free",
+            create_session_pubnub=session_factory,
+            base_url="http://localhost:3001",
+        )
+        session = client.send_message(
+            agent_name="agent-b",
+            request_parts=[],
+            owner_id="user-1",
+        )
+
+        # Session factory IS called (key falls back to client's own)
+        session_factory.assert_called_once()
+
+        # Internal create_pubnub_client NOT called
+        mock_create_pn.assert_not_called()
+
+        session.close()
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_terminal_idempotent_hit_carries_cross_keyset_subscribe_key(
+        self, mock_urlopen
+    ):
+        """Terminal idempotent hit with cross-keyset subscribeKey still uses
+        the target key in sdk_options (no PubNub allocated)."""
+        mock_urlopen.return_value = _mock_urlopen_response({
+            "taskId": "task-term-cross",
+            "idempotent": True,
+            "state": "completed",
+            "queued": False,
+            "extensions": {
+                "blocks": {
+                    "streamChannels": {"status": "u.user-1.task-term-cross"},
+                    "readToken": "T4-tc",
+                    "subscribeKey": "sub-c-target-key",
+                }
+            },
+        })
+
+        client = TaskClient(
+            subscribe_key="sub-c-caller-key",
+            billing_mode="paid",
+            base_url="http://localhost:3001",
+        )
+        session = client.send_message(
+            agent_name="free-agent",
+            request_parts=[],
+            owner_id="user-1",
+            idempotency_key="done-cross",
+        )
+
+        assert isinstance(session, TaskSession)
+        assert session.task_id == "task-term-cross"
+        assert session.is_closed
+        assert session.state == "completed"
+        assert session.idempotent is True
 
 
 class TestSendMessageBillingModeMismatch:

@@ -72,12 +72,13 @@ class TestConnectPagination:
         result_obj.result.channels = {"u.org.t1": messages}
         fetch_chain.sync.return_value = result_obj
 
-        streams, artifacts, hwm, _terminal = client._fetch_and_parse_history(
+        streams, artifacts, events, hwm, _terminal = client._fetch_and_parse_history(
             mock_pn, "u.org.t1", "echo", "t1",
             {"subscribe_key": "sub-c-test", "publish_key": ""},
         )
 
         assert len(artifacts) == 1
+        assert [event["type"] for event in events] == ["progress", "progress", "artifact"]
         assert hwm == str(_TT_BASE + 300)
         # fetch_messages called once (no pagination)
         assert mock_pn.fetch_messages.call_count == 1
@@ -128,7 +129,7 @@ class TestConnectPagination:
 
         fetch_chain.sync.side_effect = sync_side_effect
 
-        streams, artifacts, hwm, _terminal = client._fetch_and_parse_history(
+        streams, artifacts, events, hwm, _terminal = client._fetch_and_parse_history(
             mock_pn, "u.org.t1", "echo", "t1",
             {"subscribe_key": "sub-c-test", "publish_key": ""},
         )
@@ -137,6 +138,8 @@ class TestConnectPagination:
         assert fetch_call_count[0] == 2
         # Cursor for page 2 should be oldest timetoken from page 1
         assert captured_starts == [_TT_BASE + 10000]
+        assert len(events) == 105
+        assert events[0]["type"] == "progress"
         # High water mark is the highest timetoken across all pages
         assert hwm == str(_TT_BASE + 10000 + 99 * 100)
 
@@ -160,13 +163,14 @@ class TestConnectPagination:
         result_obj.result.channels = {}
         fetch_chain.sync.return_value = result_obj
 
-        streams, artifacts, hwm, _terminal = client._fetch_and_parse_history(
+        streams, artifacts, events, hwm, _terminal = client._fetch_and_parse_history(
             mock_pn, "u.org.t1", "echo", "t1",
             {"subscribe_key": "sub-c-test", "publish_key": ""},
         )
 
         assert len(streams) == 0
         assert len(artifacts) == 0
+        assert events == []
         assert hwm == "0"
 
     def test_pagination_stops_when_channel_missing(self):
@@ -201,12 +205,13 @@ class TestConnectPagination:
 
         fetch_chain.sync.side_effect = sync_side_effect
 
-        streams, artifacts, hwm, _terminal = client._fetch_and_parse_history(
+        streams, artifacts, events, hwm, _terminal = client._fetch_and_parse_history(
             mock_pn, "u.org.t1", "echo", "t1",
             {"subscribe_key": "sub-c-test", "publish_key": ""},
         )
 
         assert fetch_call_count[0] == 2
+        assert len(events) == 100
         # High water mark is the highest timetoken from page 1
         assert hwm == str(_TT_BASE + 10000 + 99 * 100)
 
@@ -291,13 +296,14 @@ class TestConnectPagination:
 
         fetch_chain.sync.side_effect = sync_side_effect
 
-        streams, artifacts, hwm, _terminal = client._fetch_and_parse_history(
+        streams, artifacts, events, hwm, _terminal = client._fetch_and_parse_history(
             mock_pn, "u.org.t1", "echo", "t1",
             {"subscribe_key": "sub-c-test", "publish_key": ""},
         )
 
         assert "s1" in streams
         assert "s2" in streams
+        assert len(events) == 101
         assert hwm == str(_TT_BASE + 600)
 
     def test_declared_stream_extracted_from_history(self):
@@ -339,12 +345,13 @@ class TestConnectPagination:
         result_obj.result.channels = {"u.org.t1": [stream_msg]}
         fetch_chain.sync.return_value = result_obj
 
-        streams, artifacts, hwm, _terminal = client._fetch_and_parse_history(
+        streams, artifacts, events, hwm, _terminal = client._fetch_and_parse_history(
             mock_pn, "u.org.t1", "echo", "t1",
             {"subscribe_key": "sub-c-test", "publish_key": ""},
         )
 
         assert "s1" in streams
+        assert events == [stream_msg.message]
         assert streams["s1"].descriptor.declared_stream == "chat"
 
     def test_missing_declared_stream_defaults_to_none(self):
@@ -385,10 +392,11 @@ class TestConnectPagination:
         result_obj.result.channels = {"u.org.t1": [stream_msg]}
         fetch_chain.sync.return_value = result_obj
 
-        streams, artifacts, hwm, _terminal = client._fetch_and_parse_history(
+        streams, artifacts, events, hwm, _terminal = client._fetch_and_parse_history(
             mock_pn, "u.org.t1", "echo", "t1",
             {"subscribe_key": "sub-c-test", "publish_key": ""},
         )
 
         assert "s1" in streams
+        assert events == [stream_msg.message]
         assert streams["s1"].descriptor.declared_stream is None

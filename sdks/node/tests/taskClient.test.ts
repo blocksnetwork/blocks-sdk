@@ -1306,4 +1306,212 @@ describe('TaskClient', () => {
       session.close();
     });
   });
+
+  // ==========================================================================
+  // Cross-billing-mode subscribeKey routing (BLOCKS-234)
+  // ==========================================================================
+
+  describe('cross-billing-mode subscribeKey routing', () => {
+    it('uses response subscribeKey and publishKey for session PubNub when it differs from client key', async () => {
+      // Response includes DIFFERENT subscribeKey and publishKey via extensions.blocks
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse({
+        taskId: 'task-cross',
+        extensions: {
+          blocks: {
+            streamChannels: { status: 'u.user-1.task-cross' },
+            readToken: 'T4-cross',
+            subscribeKey: 'sub-c-target-agent-key',
+            publishKey: 'pub-c-target-agent-key',
+          },
+        },
+      }));
+
+      const client = new TaskClient({
+        billingMode: 'paid',
+        subscribeKey: 'sub-c-caller-key',
+        publishKey: 'pub-c-caller-key',
+        baseUrl: 'http://localhost:3001',
+      });
+
+      const session = await client.sendMessage({
+        agentName: 'free-agent',
+        requestParts: [],
+        ownerId: 'user-1',
+      });
+
+      // The PubNub constructor mock was used (not the session factory) because
+      // the subscribe key differs from the client's own key.
+      expect(lastCreatedSessionPubNub).not.toBeNull();
+
+      // Verify the PubNub constructor was called with the target's keys (both subscribe and publish)
+      const { default: PubNubMock } = await import('pubnub');
+      const constructorCalls = (PubNubMock as ReturnType<typeof vi.fn>).mock.calls;
+      const lastCallArgs = constructorCalls[constructorCalls.length - 1][0];
+      expect(lastCallArgs.subscribeKey).toBe('sub-c-target-agent-key');
+      expect(lastCallArgs.publishKey).toBe('pub-c-target-agent-key');
+
+      // Token applied
+      expect(lastCreatedSessionPubNub!.pubnub.setToken).toHaveBeenCalledWith('T4-cross');
+
+      // Subscribed to the status channel
+      expect(lastCreatedSessionPubNub!.subscribedChannels).toContain('u.user-1.task-cross');
+
+      session.close();
+    });
+
+    it('uses session factory when response subscribeKey matches client key', async () => {
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse({
+        taskId: 'task-same',
+        extensions: {
+          blocks: {
+            streamChannels: { status: 'u.user-1.task-same' },
+            readToken: 'T4-same',
+            subscribeKey: 'sub-c-test',
+          },
+        },
+      }));
+
+      const sessionFake = createFakePubNub();
+      const sessionFactory = vi.fn(() => sessionFake.pubnub);
+
+      const client = new TaskClient({
+        billingMode: 'free',
+        subscribeKey: 'sub-c-test',
+        baseUrl: 'http://localhost:3001',
+        createSessionPubNub: sessionFactory,
+      });
+
+      const session = await client.sendMessage({
+        agentName: 'agent-b',
+        requestParts: [],
+        ownerId: 'user-1',
+      });
+
+      // Session factory IS used when keys match
+      expect(sessionFactory).toHaveBeenCalledTimes(1);
+
+      // PubNub constructor mock NOT used
+      expect(lastCreatedSessionPubNub).toBeNull();
+
+      // Token applied via factory-created client
+      expect(sessionFake.pubnub.setToken).toHaveBeenCalledWith('T4-same');
+
+      session.close();
+    });
+
+    it('skips session factory and creates fresh PubNub when subscribeKey differs', async () => {
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse({
+        taskId: 'task-xkey',
+        extensions: {
+          blocks: {
+            streamChannels: { status: 'u.user-1.task-xkey' },
+            readToken: 'T4-xkey',
+            subscribeKey: 'sub-c-other-keyset',
+          },
+        },
+      }));
+
+      const sessionFake = createFakePubNub();
+      const sessionFactory = vi.fn(() => sessionFake.pubnub);
+
+      const client = new TaskClient({
+        billingMode: 'paid',
+        subscribeKey: 'sub-c-my-keyset',
+        baseUrl: 'http://localhost:3001',
+        createSessionPubNub: sessionFactory,
+      });
+
+      const session = await client.sendMessage({
+        agentName: 'free-worker',
+        requestParts: [],
+        ownerId: 'user-1',
+      });
+
+      // Session factory NOT called (key mismatch forces fresh PubNub)
+      expect(sessionFactory).not.toHaveBeenCalled();
+
+      // Fresh PubNub created via constructor mock with target key
+      expect(lastCreatedSessionPubNub).not.toBeNull();
+      const { default: PubNubMock } = await import('pubnub');
+      const constructorCalls = (PubNubMock as ReturnType<typeof vi.fn>).mock.calls;
+      const lastCallArgs = constructorCalls[constructorCalls.length - 1][0];
+      expect(lastCallArgs.subscribeKey).toBe('sub-c-other-keyset');
+
+      // Token applied to the fresh client
+      expect(lastCreatedSessionPubNub!.pubnub.setToken).toHaveBeenCalledWith('T4-xkey');
+
+      session.close();
+    });
+
+    it('falls back to client subscribeKey when response has no subscribeKey', async () => {
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse({
+        taskId: 'task-nokey',
+        extensions: {
+          blocks: {
+            streamChannels: { status: 'u.user-1.task-nokey' },
+            readToken: 'T4-nokey',
+            // No subscribeKey in extensions.blocks
+          },
+        },
+      }));
+
+      const sessionFake = createFakePubNub();
+      const sessionFactory = vi.fn(() => sessionFake.pubnub);
+
+      const client = new TaskClient({
+        billingMode: 'free',
+        subscribeKey: 'sub-c-test',
+        baseUrl: 'http://localhost:3001',
+        createSessionPubNub: sessionFactory,
+      });
+
+      const session = await client.sendMessage({
+        agentName: 'agent-b',
+        requestParts: [],
+        ownerId: 'user-1',
+      });
+
+      // Session factory IS used (key defaults to client's own key, which matches)
+      expect(sessionFactory).toHaveBeenCalledTimes(1);
+
+      // PubNub constructor mock NOT used
+      expect(lastCreatedSessionPubNub).toBeNull();
+
+      session.close();
+    });
+
+    it('terminal idempotent hit carries cross-keyset subscribeKey in sdkOptions', async () => {
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse({
+        taskId: 'task-term-cross',
+        idempotent: true,
+        state: 'completed',
+        extensions: {
+          blocks: {
+            streamChannels: { status: 'u.user-1.task-term-cross' },
+            readToken: 'T4-tc',
+            subscribeKey: 'sub-c-target-key',
+          },
+        },
+      }));
+
+      const client = new TaskClient({
+        billingMode: 'paid',
+        subscribeKey: 'sub-c-caller-key',
+        baseUrl: 'http://localhost:3001',
+      });
+
+      const session = await client.sendMessage({
+        agentName: 'free-agent',
+        requestParts: [],
+        ownerId: 'user-1',
+        idempotencyKey: 'done-cross',
+      });
+
+      // Terminal hit: no PubNub created
+      expect(lastCreatedSessionPubNub).toBeNull();
+      expect(session.isClosed).toBe(true);
+      expect(session.state).toBe('completed');
+      expect(session.taskId).toBe('task-term-cross');
+    });
+  });
 });

@@ -248,6 +248,7 @@ function parseHistoryMessages(
 ): {
   streams: Map<string, StreamRef>;
   artifacts: ArtifactRef[];
+  events: SessionTaskEvent[];
   highWaterMark: string;
   /**
    * Terminal state extracted from the most recent `terminal` event in
@@ -262,6 +263,7 @@ function parseHistoryMessages(
 } {
   const streams = new Map<string, StreamRef>();
   const artifacts: ArtifactRef[] = [];
+  const events: SessionTaskEvent[] = [];
   let highWaterMark = '0';
   let terminalState: 'completed' | 'failed' | 'canceled' | undefined;
   let terminalTimetoken = '0';
@@ -273,6 +275,8 @@ function parseHistoryMessages(
 
     const event = msg.message as Record<string, unknown> | undefined;
     if (!event || typeof event !== 'object' || !event.type) continue;
+
+    events.push(event as SessionTaskEvent);
 
     // Extract terminal state from terminal events. Take the latest one by
     // timetoken in case history contains retries or duplicates.
@@ -340,7 +344,7 @@ function parseHistoryMessages(
     }
   }
 
-  return { streams, artifacts, highWaterMark, terminalState };
+  return { streams, artifacts, events, highWaterMark, terminalState };
 }
 
 // ============================================================================
@@ -660,17 +664,22 @@ export class TaskClient {
    * Never uses the shared `createPubNub` factory -- that is reserved
    * for low-level `subscribeToTask()` operations.
    */
-  private createPerSessionPubNub(readToken: string | null): PubNub {
+  private createPerSessionPubNub(readToken: string | null, subscribeKey?: string, publishKey?: string): PubNub {
     let pn: PubNub;
 
-    if (this._createSessionPubNub) {
+    const effectiveSubscribeKey = subscribeKey ?? this._subscribeKey;
+    const effectivePublishKey = publishKey ?? this._publishKey;
+
+    if (this._createSessionPubNub && effectiveSubscribeKey === this._subscribeKey) {
       // Dedicated session factory -- must return a fresh client per call.
+      // Only used when the subscribe key matches (same keyset). Cross-keyset
+      // sessions need a fresh client with the target's subscribe key.
       pn = this._createSessionPubNub();
     } else {
       const sessionId = `blocks-task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       pn = new PubNub({
-        subscribeKey: this._subscribeKey,
-        publishKey: this._publishKey || undefined,
+        subscribeKey: effectiveSubscribeKey,
+        publishKey: effectivePublishKey || undefined,
         userId: sessionId,
         enableEventEngine: true,
       });
@@ -686,7 +695,7 @@ export class TaskClient {
   // Internal helper: acquire consumer read token
   // --------------------------------------------------------------------------
 
-  private async fetchConsumerReadToken(taskId: string): Promise<{
+  private async fetchConsumerReadToken(taskId: string, role: 'consumer' | 'provider' = 'consumer'): Promise<{
     pamToken: string;
     channel: string;
     ttlMinutes: number;
@@ -710,7 +719,7 @@ export class TaskClient {
       return fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ taskId, role: 'consumer' }),
+        body: JSON.stringify({ taskId, role }),
       });
     };
 
@@ -950,6 +959,8 @@ export class TaskClient {
       extensions?: {
         blocks?: {
           readToken?: string | null;
+          subscribeKey?: string;
+          publishKey?: string;
           streamChannels?: { status?: string };
         };
       };
@@ -958,6 +969,8 @@ export class TaskClient {
     const blocks = result.extensions?.blocks;
     const readToken = blocks?.readToken ?? null;
     const statusChannel = blocks?.streamChannels?.status ?? undefined;
+    const taskSubscribeKey = blocks?.subscribeKey ?? this._subscribeKey;
+    const taskPublishKey = blocks?.publishKey ?? this._publishKey;
 
     // Detect terminal idempotent hit: task already completed/failed/canceled.
     // Create a pre-closed session that never subscribes to PubNub.
@@ -977,8 +990,8 @@ export class TaskClient {
         pubnub: null,
         ownsSubscribeClient: false,
         sdkOptions: {
-          subscribeKey: this._subscribeKey,
-          publishKey: this._publishKey,
+          subscribeKey: taskSubscribeKey,
+          publishKey: taskPublishKey,
         },
         rpcConfig: this.config,
         idempotent: result.idempotent,
@@ -989,12 +1002,15 @@ export class TaskClient {
       });
     }
 
-    // Create a per-session PubNub client so T4 tokens don't stomp each
-    // other when multiple sessions are active concurrently.
-    const sessionPubnub = this.createPerSessionPubNub(readToken);
+    // Create a per-session PubNub client using the target agent's subscribe
+    // key (returned by the backend) so cross-billing-mode A2A sessions
+    // subscribe on the correct keyset.
+    const sessionPubnub = this.createPerSessionPubNub(readToken, taskSubscribeKey, taskPublishKey);
+    // sdkOptions carries the target keyset for the streaming session (StreamRef/StreamClient);
+    // rpcConfig (this.config) keeps the caller's keyset for HTTP RPC and read-token minting.
     const sdkOptions = {
-      subscribeKey: this._subscribeKey,
-      publishKey: this._publishKey,
+      subscribeKey: taskSubscribeKey,
+      publishKey: taskPublishKey,
     };
 
     // History-based catch-up: fetch events that may have been published
@@ -1165,6 +1181,12 @@ export class TaskClient {
      * `StreamUnavailableError` per the merged t7c baseline.
      */
     drainWindowMs?: number;
+    /**
+     * Role to request when minting the read token. Defaults to 'consumer'
+     * (task submitter). Set to 'provider' when the caller is the agent
+     * owner viewing a received task.
+     */
+    role?: 'consumer' | 'provider';
   }): Promise<TaskSession> {
     const { taskId } = params;
 
@@ -1206,8 +1228,8 @@ export class TaskClient {
     const agentName = (task.agentName as string) ?? '';
     const taskState = (task.state as string) ?? '';
 
-    // Step 3: Acquire fresh consumer read token
-    const tokenResult = await this.fetchConsumerReadToken(taskId);
+    // Step 3: Acquire fresh read token (consumer or provider)
+    const tokenResult = await this.fetchConsumerReadToken(taskId, params.role);
 
     // Step 4+: Shared session assembly (history-authoritative terminal
     // detection, terminal short-circuit, or live subscribe with
@@ -1266,6 +1288,7 @@ export class TaskClient {
       const fetcher = asPubNubFetcher(sessionPubnub);
       let preloadedStreams = new Map<string, StreamRef>();
       let preloadedArtifacts: ArtifactRef[] = [];
+      let preloadedEvents: SessionTaskEvent[] = [];
       let highWaterMark = '0';
       let historyTerminalState: string | undefined;
 
@@ -1274,6 +1297,7 @@ export class TaskClient {
         const parsed = parseHistoryMessages(messages, taskId, agentName, sdkOptions);
         preloadedStreams = parsed.streams;
         preloadedArtifacts = parsed.artifacts;
+        preloadedEvents = parsed.events;
         highWaterMark = parsed.highWaterMark;
         historyTerminalState = parsed.terminalState;
       }
@@ -1306,6 +1330,7 @@ export class TaskClient {
           skipSubscription: true,
           preloadedStreams,
           preloadedArtifacts,
+          preloadedEvents,
         });
       }
 
@@ -1358,6 +1383,7 @@ export class TaskClient {
         state: taskState,
         preloadedStreams,
         preloadedArtifacts,
+        preloadedEvents,
         externalSubscription: {
           listener,
           channel,
@@ -1367,11 +1393,14 @@ export class TaskClient {
         },
       });
 
-      // Step 4h: Drain buffer through session, dedup by timetoken
+      // Step 4h: Drain buffer through session, dedup by timetoken.
+      // Also append each drained event to the history snapshot so
+      // listEvents() covers the full pre-caller window (history + gap).
       if (dispatchRef) {
         const dispatch = dispatchRef;
         for (const entry of buffer) {
           if (entry.timetoken > subscribeCursor) {
+            session._appendHistoryEvent(entry.message as TaskEvent, entry.timetoken);
             dispatch(entry.message, entry.timetoken);
           }
         }

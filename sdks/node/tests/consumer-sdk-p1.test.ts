@@ -627,6 +627,23 @@ describe('P1-2: connect()', () => {
             'u.org1.task-1': [
               {
                 message: {
+                  type: 'request',
+                  taskId: 'task-1',
+                  requestParts: [],
+                },
+                timetoken: '0000000090',
+              },
+              {
+                message: {
+                  type: 'progress',
+                  taskId: 'task-1',
+                  message: 'Working',
+                  progress: 50,
+                },
+                timetoken: '0000000095',
+              },
+              {
+                message: {
                   type: 'artifact',
                   taskId: 'task-1',
                   artifactRef: {
@@ -636,7 +653,35 @@ describe('P1-2: connect()', () => {
                     data: btoa('hello'),
                   },
                 },
-                timetoken: '100',
+                timetoken: '0000000100',
+              },
+              {
+                message: {
+                  type: 'system',
+                  taskId: 'task-1',
+                  status: 'paused',
+                },
+                timetoken: '0000000110',
+              },
+              {
+                message: {
+                  type: 'log',
+                  taskId: 'task-1',
+                  message: 'finished',
+                },
+                timetoken: '0000000115',
+              },
+              {
+                message: {
+                  type: 'terminal',
+                  taskId: 'task-1',
+                  state: 'completed',
+                },
+                timetoken: '0000000120',
+              },
+              {
+                message: 'ignore-me',
+                timetoken: '0000000130',
               },
             ],
           },
@@ -651,6 +696,14 @@ describe('P1-2: connect()', () => {
     expect(session.isClosed).toBe(false); // skipSubscription, not preClosed
     expect(session.listArtifacts()).toHaveLength(1);
     expect(session.listArtifacts()[0].kind).toBe('inline');
+    expect(session.listEvents().map((event) => event.type)).toEqual([
+      'request',
+      'progress',
+      'artifact',
+      'system',
+      'log',
+      'terminal',
+    ]);
 
     session.close();
     expect(session.isClosed).toBe(true);
@@ -672,6 +725,14 @@ describe('P1-2: connect()', () => {
     mockPn.pubnub.fetchMessages = vi.fn().mockResolvedValue({
       channels: {
         'u.org1.task-1': [
+          {
+            message: {
+              type: 'request',
+              taskId: 'task-1',
+              requestParts: [],
+            },
+            timetoken: '25',
+          },
           {
             message: {
               type: 'progress',
@@ -736,6 +797,14 @@ describe('P1-2: connect()', () => {
         'u.org1.task-1': [
           {
             message: {
+              type: 'request',
+              taskId: 'task-1',
+              requestParts: [],
+            },
+            timetoken: '0000000040',
+          },
+          {
+            message: {
               type: 'progress',
               taskId: 'task-1',
               streamEvent: 'stream_started',
@@ -750,7 +819,19 @@ describe('P1-2: connect()', () => {
                 },
               },
             },
-            timetoken: '50',
+            timetoken: '0000000050',
+          },
+          {
+            message: {
+              type: 'system',
+              taskId: 'task-1',
+              status: 'heartbeat',
+            },
+            timetoken: '0000000060',
+          },
+          {
+            message: null,
+            timetoken: '0000000070',
           },
         ],
       },
@@ -772,6 +853,12 @@ describe('P1-2: connect()', () => {
     // Stream from history should be preloaded
     expect(session.listStreams()).toHaveLength(1);
     expect(session.listStreams()[0].descriptor.streamId).toBe('s1');
+    expect(session.listEvents().map((event) => [event.type, event.streamEvent])).toEqual([
+      ['request', undefined],
+      ['progress', 'stream_started'],
+      ['system', undefined],
+    ]);
+    expect(mockPn.pubnub.fetchMessages).toHaveBeenCalledTimes(1);
 
     session.close();
   });

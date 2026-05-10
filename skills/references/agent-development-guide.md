@@ -87,6 +87,15 @@ echo "$KEY" | blocks publish --api-key-stdin  # read from stdin
 blocks logout                         # clear stored credentials
 ```
 
+When an orchestrator reconnects to an existing sub-task, `session.onArtifact(...)`
+replays any pre-populated artifacts synchronously at registration time. Those
+replay events are minimal synthetic artifact events with `type`, `taskId`, and
+`artifactRef`; original history-only wire fields such as `outputId` and
+`protocolVersion` are not retained.
+For full timeline reconstruction after reconnecting, use
+`session.listEvents()` / `session.list_events()` to read all valid task events
+parsed from history.
+
 ---
 
 ## Run & Test -- Start the Agent and Send a Task

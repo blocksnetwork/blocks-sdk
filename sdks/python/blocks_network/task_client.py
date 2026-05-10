@@ -639,19 +639,29 @@ class TaskClient:
         if self._consumer_auth is not None:
             self._consumer_auth.destroy()
 
-    def _create_session_pubnub(self, read_token: Optional[str] = None) -> Any:
+    def _create_session_pubnub(
+        self, read_token: Optional[str] = None, subscribe_key: Optional[str] = None,
+        publish_key: Optional[str] = None,
+    ) -> Any:
         """Create a per-session PubNub subscribe client with the given T4 token.
 
         Each TaskSession gets its own client to prevent token stomping
         when multiple sessions are active concurrently.
 
-        Uses the dedicated ``create_session_pubnub`` factory when available.
+        Uses the dedicated ``create_session_pubnub`` factory when available
+        and the subscribe key matches (same keyset). Cross-keyset sessions
+        need a fresh client with the target's subscribe key.
         Falls back to the internal ``create_pubnub_client()`` otherwise.
         Never uses the shared ``create_pubnub`` factory -- that is reserved
         for low-level ``subscribe_to_task()`` operations.
         """
-        if self._create_session_pubnub_factory is not None:
-            # Dedicated session factory -- must return a fresh client per call.
+        effective_subscribe_key = subscribe_key or self._subscribe_key
+        effective_publish_key = publish_key or self._publish_key
+
+        if (
+            self._create_session_pubnub_factory is not None
+            and effective_subscribe_key == self._subscribe_key
+        ):
             pn = self._create_session_pubnub_factory()
         else:
             from .pubnub_client import create_pubnub_client
@@ -659,16 +669,16 @@ class TaskClient:
             import uuid
             session_id = f"blocks-task-{uuid.uuid4().hex[:12]}"
             pn = create_pubnub_client(
-                subscribe_key=self._subscribe_key,
-                publish_key=self._publish_key or None,
+                subscribe_key=effective_subscribe_key,
+                publish_key=effective_publish_key or None,
                 user_id=session_id,
             )
         if read_token:
             pn.set_token(read_token)
         return pn
 
-    def _fetch_task_read_token(self, task_id: str) -> Dict[str, Any]:
-        """Call POST /api/v1/auth/task-read-token with role:'consumer'.
+    def _fetch_task_read_token(self, task_id: str, role: str = "consumer") -> Dict[str, Any]:
+        """Call POST /api/v1/auth/task-read-token with the given role.
 
         Returns dict with pamToken, channel, ttlMinutes.
         Uses auth_provider for Authorization header and 401 retry.
@@ -687,7 +697,7 @@ class TaskClient:
             raise ValueError("base_url is required for connect()")
 
         url = f"{self._base_url.rstrip('/')}/api/v1/auth/task-read-token"
-        payload = json.dumps({"taskId": task_id, "role": "consumer"}).encode("utf-8")
+        payload = json.dumps({"taskId": task_id, "role": role}).encode("utf-8")
 
         def _build_request() -> urllib.request.Request:
             headers: Dict[str, str] = {
@@ -999,6 +1009,8 @@ class TaskClient:
         blocks_ext = (result.get("extensions") or {}).get("blocks") or {}
         read_token = blocks_ext.get("readToken")
         status_channel = (blocks_ext.get("streamChannels") or {}).get("status")
+        task_subscribe_key = blocks_ext.get("subscribeKey") or self._subscribe_key
+        task_publish_key = blocks_ext.get("publishKey") or self._publish_key
 
         auto_drain_kwarg: Dict[str, Any] = {}
         if params.auto_drain is not None:
@@ -1018,8 +1030,8 @@ class TaskClient:
                 pubnub=None,
                 owns_subscribe_client=False,
                 sdk_options={
-                    "subscribe_key": self._subscribe_key,
-                    "publish_key": self._publish_key,
+                    "subscribe_key": task_subscribe_key,
+                    "publish_key": task_publish_key,
                 },
                 rpc_config={
                     "subscribe_key": self._subscribe_key,
@@ -1037,11 +1049,14 @@ class TaskClient:
         # Normal path (new task or non-terminal idempotent hit):
         # create a per-session PubNub subscribe client so T4 tokens don't
         # stomp each other when multiple sessions are active concurrently.
-        session_pubnub = self._create_session_pubnub(read_token)
+        # Use the target agent's keys for cross-billing-mode A2A.
+        session_pubnub = self._create_session_pubnub(read_token, task_subscribe_key, task_publish_key)
 
+        # sdk_options carries the target keyset for the streaming session (StreamRef/StreamClient);
+        # rpc_config keeps the caller's keyset for HTTP RPC and read-token minting.
         sdk_options = {
-            "subscribe_key": self._subscribe_key,
-            "publish_key": self._publish_key,
+            "subscribe_key": task_subscribe_key,
+            "publish_key": task_publish_key,
         }
         rpc_config = {
             "subscribe_key": self._subscribe_key,
@@ -1065,7 +1080,7 @@ class TaskClient:
                 "timetoken", "0",
             ))
 
-            preloaded_streams, preloaded_artifacts, high_water_mark, history_terminal_state = (
+            preloaded_streams, preloaded_artifacts, _preloaded_events, high_water_mark, history_terminal_state = (
                 self._fetch_and_parse_history(
                     session_pubnub, resolved_channel, params.agent_name,
                     result["taskId"], sdk_options,
@@ -1204,6 +1219,7 @@ class TaskClient:
         task_id: str,
         auto_drain: bool = True,
         drain_window_s: Optional[float] = None,
+        role: str = "consumer",
     ) -> TaskSession:
         """Connect to an existing task.
 
@@ -1217,9 +1233,9 @@ class TaskClient:
         subscribe. The consumer reads list_artifacts(), list_streams(),
         and session.state, then calls close().
 
-        Uses the task-read-token endpoint with role:'consumer' to acquire
-        a fresh T4 read token. The caller does not need to persist or
-        supply read_token, org_id, owner_id, or agent_name.
+        Uses the task-read-token endpoint to acquire a fresh T4 read
+        token. The caller does not need to persist or supply read_token,
+        org_id, owner_id, or agent_name.
 
         Parameters
         ----------
@@ -1237,6 +1253,10 @@ class TaskClient:
             task was still active; unopened streams on a terminal
             session raise ``StreamUnavailableError`` per the merged t7c
             baseline.
+        role : str, default "consumer"
+            Role to request when minting the read token. Set to
+            'provider' when the caller is the agent owner viewing a
+            received task.
         """
         # Step 1: Validate auth. Anonymous mode short-circuits the auth-provider
         # gate and routes to the fingerprint-gated public endpoint instead.
@@ -1269,7 +1289,7 @@ class TaskClient:
             owner_id = task_info.owner or ""
 
             # Step 3: Acquire fresh token
-            token_resp = self._fetch_task_read_token(task_id)
+            token_resp = self._fetch_task_read_token(task_id, role)
             pam_token = token_resp.get("pamToken", "")
             status_channel = token_resp.get("channel", "")
 
@@ -1302,7 +1322,7 @@ class TaskClient:
                 "timetoken", "0",
             ))
 
-            preloaded_streams, preloaded_artifacts, high_water_mark, history_terminal_state = (
+            preloaded_streams, preloaded_artifacts, preloaded_events, high_water_mark, history_terminal_state = (
                 self._fetch_and_parse_history(
                     session_pn, status_channel, agent_name, task_id, sdk_options,
                 )
@@ -1335,6 +1355,7 @@ class TaskClient:
                     skip_subscription=True,
                     preloaded_streams=preloaded_streams,
                     preloaded_artifacts=preloaded_artifacts,
+                    preloaded_events=preloaded_events,
                 )
 
             # Use the server timetoken as fallback when history is empty,
@@ -1402,6 +1423,7 @@ class TaskClient:
                 state=task_state,
                 preloaded_streams=preloaded_streams,
                 preloaded_artifacts=preloaded_artifacts,
+                preloaded_events=preloaded_events,
                 external_subscription={
                     "listener": buf_listener,
                     "channel": status_channel,
@@ -1413,6 +1435,8 @@ class TaskClient:
 
             # Step 4h: Drain buffer and switch to live mode under the lock
             # so no callback can slip between the drain loop and the flag flip.
+            # Also append each drained message to the history snapshot so
+            # list_events() covers the full pre-caller window (history + gap).
             with buf_lock:
                 buf_listener._dispatch_fn = dispatch_fn  # type: ignore[attr-defined]
                 if dispatch_fn is not None:
@@ -1420,10 +1444,11 @@ class TaskClient:
                         entry_tt = entry.get("timetoken")
                         if entry_tt is not None and subscribe_cursor and str(entry_tt) <= str(subscribe_cursor):
                             continue  # already covered by history
-                        dispatch_fn(
-                            entry["message"],
-                            str(entry_tt) if entry_tt is not None else None,
-                        )
+                        msg = entry["message"]
+                        tt_str = str(entry_tt) if entry_tt is not None else None
+                        if isinstance(msg, dict) and msg.get("type"):
+                            session._append_history_event(msg, tt_str)
+                        dispatch_fn(msg, tt_str)
                 buffering[0] = False
 
             return session
@@ -1442,11 +1467,12 @@ class TaskClient:
         task_id: str,
         sdk_options: Dict[str, Any],
     ) -> tuple:
-        """Fetch task channel history and parse stream_started + artifact events.
+        """Fetch task channel history and parse stream_started, artifact, and task events.
 
-        Returns (preloaded_streams, preloaded_artifacts, high_water_mark,
-        terminal_state). ``terminal_state`` is the most recent terminal
-        event's state if one is present in history, otherwise ``None``.
+        Returns (preloaded_streams, preloaded_artifacts, preloaded_events,
+        high_water_mark, terminal_state). ``terminal_state`` is the most
+        recent terminal event's state if one is present in history,
+        otherwise ``None``.
         History is authoritative for session state during ``connect()``:
         if a terminal event is visible on the status channel, the session
         IS terminal, even if the backend's task-state RPC hasn't yet
@@ -1458,6 +1484,7 @@ class TaskClient:
 
         preloaded_streams: Dict[str, StreamRef] = {}
         preloaded_artifacts: List[ArtifactRef] = []
+        preloaded_events: List[Dict[str, Any]] = []
         high_water_mark = "0"
         terminal_state: Optional[str] = None
         terminal_tt = "0"
@@ -1521,6 +1548,8 @@ class TaskClient:
                 continue
 
             msg_type = msg.get("type")
+            if msg_type:
+                preloaded_events.append(msg)
 
             # Parse terminal events: take the latest one by timetoken
             # in case history contains retries or duplicates.
@@ -1586,7 +1615,7 @@ class TaskClient:
             elif msg_type == "artifact" and isinstance(msg.get("artifactRef"), dict):
                 preloaded_artifacts.append(ArtifactRef.from_dict(msg["artifactRef"]))
 
-        return preloaded_streams, preloaded_artifacts, high_water_mark, terminal_state
+        return preloaded_streams, preloaded_artifacts, preloaded_events, high_water_mark, terminal_state
 
     # -- Task lifecycle -----------------------------------------------------
 

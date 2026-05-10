@@ -618,6 +618,119 @@ describe('connect() pagination', () => {
 });
 
 // ==========================================================================
+// connect() role parameter
+// ==========================================================================
+
+describe('connect() role parameter', () => {
+  it('sends role:provider in task-read-token request body when specified', async () => {
+    const client = new TaskClient({
+      billingMode: 'free',
+      subscribeKey: 'sub-test',
+      baseUrl: 'http://localhost:3001',
+      authProvider: new StaticAuthProvider('jwt-test'),
+    });
+
+    // Mock getTask RPC
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 'x',
+        result: {
+          task: {
+            taskId: 'task-provider',
+            agentName: 'my_agent',
+            state: 'completed',
+            owner: 'other-user',
+          },
+        },
+      }),
+    });
+
+    // Mock task-read-token
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        pamToken: 'pam-provider-token',
+        channel: 'u.org1.task-provider',
+        ttlMinutes: 60,
+      }),
+    });
+
+    const PubNub = (await import('pubnub')).default;
+    const mockPubNub = new PubNub({ subscribeKey: 'sub-test', userId: 'test' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPubNub as any).fetchMessages = vi.fn().mockResolvedValue({ channels: {} });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).createPerSessionPubNub = () => mockPubNub;
+
+    const session = await client.connect({ taskId: 'task-provider', role: 'provider' });
+    expect(session).toBeDefined();
+
+    // call 0 = getTask RPC, call 1 = task-read-token
+    const tokenCallInit = fetchSpy.mock.calls[1][1];
+    const body = JSON.parse(tokenCallInit.body);
+    expect(body.role).toBe('provider');
+    expect(body.taskId).toBe('task-provider');
+
+    session.close();
+  });
+
+  it('sends role:consumer by default when role is not specified', async () => {
+    const client = new TaskClient({
+      billingMode: 'free',
+      subscribeKey: 'sub-test',
+      baseUrl: 'http://localhost:3001',
+      authProvider: new StaticAuthProvider('jwt-test'),
+    });
+
+    // Mock getTask RPC
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 'x',
+        result: {
+          task: {
+            taskId: 'task-default',
+            agentName: 'agent',
+            state: 'completed',
+            owner: 'user-1',
+          },
+        },
+      }),
+    });
+
+    // Mock task-read-token
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        pamToken: 'pam-consumer-token',
+        channel: 'u.org1.task-default',
+        ttlMinutes: 60,
+      }),
+    });
+
+    const PubNub = (await import('pubnub')).default;
+    const mockPubNub = new PubNub({ subscribeKey: 'sub-test', userId: 'test' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPubNub as any).fetchMessages = vi.fn().mockResolvedValue({ channels: {} });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).createPerSessionPubNub = () => mockPubNub;
+
+    const session = await client.connect({ taskId: 'task-default' });
+    expect(session).toBeDefined();
+
+    // call 0 = getTask RPC, call 1 = task-read-token
+    const tokenCallInit = fetchSpy.mock.calls[1][1];
+    const body = JSON.parse(tokenCallInit.body);
+    expect(body.role).toBe('consumer');
+
+    session.close();
+  });
+});
+
+// ==========================================================================
 // Task-read-token 401 retry
 // ==========================================================================
 

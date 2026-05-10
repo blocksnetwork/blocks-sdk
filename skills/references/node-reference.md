@@ -257,9 +257,11 @@ client.destroy();
 
 **sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
 
-**TaskClient.connect({ taskId, autoDrain?, drainWindowMs? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`.
+**TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter); set to `'provider'` when the caller is the agent owner viewing a received task.
 
-**TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`. Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. Artifact helpers: `listArtifacts()`, `downloadArtifact(ref)`, `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)`. Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
+**TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`. Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)`, `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)`. Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
+
+`onArtifact(cb)` replays pre-populated artifacts synchronously at registration time, in the same spirit as `onStream()` and sticky `onTerminal()`. Replay events are minimal synthetic artifact events with `type`, `taskId`, and `artifactRef`; original history-only wire fields such as `outputId` and `protocolVersion` are not retained.
 
 **Part helpers:** `textPart(text, partId?)`, `filePart(data, opts?)` (sync, universal — accepts `Uint8Array | ArrayBuffer | Blob | File`), `filePartFromPath(path, opts?)` (async, Node-only — reads via lazy `node:fs`) -- all exported from `@blocks-network/sdk`.
 
@@ -405,7 +407,7 @@ const client = await TaskClient.create({
 });
 ```
 
-- `billingMode` is required ('free' → playground keyset, 'paid' → network keyset) and must match the target agent's server-derived billingMode
+- `billingMode` is required ('free' → playground keyset, 'paid' → network keyset) and must match the target agent's server-derived billingMode (exception: authenticated same-org callers are exempt from this check)
 - Exactly one auth mode: `apiKey`, `tokenEndpoint`, or `tokenProvider`
 - Returns `Promise<TaskClient>`
 
@@ -419,6 +421,7 @@ Reconnect to an active or completed task by ID:
 const session = await client.connect({ taskId: 'task-abc-123' });
 
 // For terminal tasks: history is preloaded, no live events
+const events = session.listEvents();
 const artifacts = session.listArtifacts();
 const streams = session.listStreams();
 
@@ -428,11 +431,19 @@ session.onStream((streamRef) => {
   const stream = streamRef.open();
   // consume stream...
 });
+
+// Provider (agent owner) viewing a received task:
+const providerSession = await client.connect({
+  taskId: 'task-abc-123',
+  role: 'provider',
+});
 ```
 
 - Requires JWT-based auth (`apiKey`, `tokenEndpoint`, or `tokenProvider`
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.
-- Terminal tasks: preloads artifacts/streams from history, no live events
+- `role` defaults to `'consumer'` (task submitter). Set to `'provider'`
+  when the caller owns the agent that received the task.
+- Terminal tasks: preloads events/artifacts/streams from history, no live events
 - Active tasks: preloads history, then subscribes from cursor (no gap)
 
 ---

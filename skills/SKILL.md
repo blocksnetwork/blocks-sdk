@@ -108,6 +108,17 @@ definitions, and examples for inputs/outputs. Without a correct `schema`,
 the dashboard cannot render input forms and the agent will not receive
 correct input.
 
+If a handler creates a sub-task through `TaskClient` and registers
+`onArtifact(cb)` / `on_artifact(cb)` after reconnecting to an existing
+task, the callback replays pre-populated artifacts synchronously at
+registration time. Replay events are minimal synthetic artifact events
+with `type`, `taskId`, and `artifactRef`; original history-only fields
+such as `outputId` and `protocolVersion` are not retained.
+For timeline reconstruction after `connect()`, use `session.listEvents()`
+or `session.list_events()` to read all valid task events parsed from
+history; this history list is not populated for new `sendMessage()` /
+`send_message()` sessions.
+
 ### Streaming Agents
 
 If the agent uses streaming, read the [Agent Card Reference]

@@ -140,6 +140,7 @@ class TaskSession:
         skip_subscription: bool = False,
         preloaded_streams: Optional[Dict[str, StreamRef]] = None,
         preloaded_artifacts: Optional[List[ArtifactRef]] = None,
+        preloaded_events: Optional[List[Dict[str, Any]]] = None,
         external_subscription: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._task_id = task_id
@@ -201,9 +202,14 @@ class TaskSession:
         # Artifact tracking (P1-2: accumulated from history + live events)
         self._artifacts: List[ArtifactRef] = []
 
+        # History event tracking for connect(). Live events arrive through callbacks.
+        self._history_events: List[TaskEvent] = []
+        self._history_timetokens: set = set()
+
         # Waiters for stream discovery
         self._waiter_lock = threading.Lock()
         self._stream_waiters: List[Dict[str, Any]] = []
+        self._artifact_lock = threading.RLock()
 
         self._listener: Any = None
 
@@ -221,6 +227,9 @@ class TaskSession:
                 self._streams[sid] = hooked
         if preloaded_artifacts:
             self._artifacts.extend(preloaded_artifacts)
+        if preloaded_events:
+            for raw in preloaded_events:
+                self._history_events.append(TaskEvent(raw))
 
         if pre_closed_state is not None:
             # Pre-closed session: no subscription, already terminal
@@ -383,12 +392,13 @@ class TaskSession:
                 self._handle_stream_started(raw)
 
         elif event.type == "artifact":
-            # Accumulate artifact refs
-            artifact_data = raw.get("artifactRef")
-            if isinstance(artifact_data, dict):
-                self._artifacts.append(ArtifactRef.from_dict(artifact_data))
+            with self._artifact_lock:
+                artifact_data = raw.get("artifactRef")
+                if isinstance(artifact_data, dict):
+                    self._artifacts.append(ArtifactRef.from_dict(artifact_data))
+                artifact_cbs = list(self._artifact_cbs)
 
-            for cb in list(self._artifact_cbs):
+            for cb in artifact_cbs:
                 try:
                     cb(event)
                 except Exception as err:
@@ -554,8 +564,26 @@ class TaskSession:
         return lambda: self._progress_cbs.remove(cb) if cb in self._progress_cbs else None
 
     def on_artifact(self, cb: Callable[[TaskEvent], None]) -> Unsubscribe:
-        self._artifact_cbs.append(cb)
-        return lambda: self._artifact_cbs.remove(cb) if cb in self._artifact_cbs else None
+        with self._artifact_lock:
+            self._artifact_cbs.append(cb)
+            snapshot = list(self._artifacts)
+            for ref in snapshot:
+                event = TaskEvent({
+                    "type": "artifact",
+                    "taskId": self._task_id,
+                    "artifactRef": ref.to_dict(),
+                })
+                try:
+                    cb(event)
+                except Exception as err:
+                    self._route_callback_error(err, "onArtifact", event)
+
+        def _unsubscribe() -> None:
+            with self._artifact_lock:
+                if cb in self._artifact_cbs:
+                    self._artifact_cbs.remove(cb)
+
+        return _unsubscribe
 
     def on_terminal(self, cb: Callable[[TaskEvent], None]) -> Unsubscribe:
         self._terminal_cbs.append(cb)
@@ -686,6 +714,18 @@ class TaskSession:
     def list_artifacts(self) -> List[ArtifactRef]:
         """Return all artifact refs seen so far (from history and live events)."""
         return list(self._artifacts)
+
+    def list_events(self) -> List[TaskEvent]:
+        """Return all history events from connect() in arrival order."""
+        return list(self._history_events)
+
+    def _append_history_event(self, raw: Dict[str, Any], timetoken: Optional[str] = None) -> None:
+        """Called by connect() to append buffer-drain events to the history snapshot."""
+        if timetoken:
+            if timetoken in self._history_timetokens:
+                return
+            self._history_timetokens.add(timetoken)
+        self._history_events.append(TaskEvent(raw))
 
     def wait_for_stream(
         self,

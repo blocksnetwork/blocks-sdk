@@ -113,6 +113,10 @@ export class TaskSession {
   // Artifact tracking (P1-2)
   private artifacts: ArtifactRef[] = [];
 
+  // History event tracking for connect(). Live events are delivered through callbacks.
+  private historyEvents: TaskEvent[] = [];
+  private historyTimetokens = new Set<string>();
+
   // Waiters for stream discovery
   private streamWaiters: Array<{
     resolve: (ref: StreamRef) => void;
@@ -202,6 +206,8 @@ export class TaskSession {
     preloadedStreams?: Map<string, StreamRef>;
     /** Pre-populated artifact refs from history (connect()). */
     preloadedArtifacts?: ArtifactRef[];
+    /** Pre-populated task events from connect() history. */
+    preloadedEvents?: TaskEvent[];
     /** External subscription managed by connect() for active tasks. */
     externalSubscription?: {
       listener: unknown;
@@ -244,6 +250,9 @@ export class TaskSession {
     }
     if (opts.preloadedArtifacts) {
       this.artifacts.push(...opts.preloadedArtifacts);
+    }
+    if (opts.preloadedEvents) {
+      this.historyEvents.push(...opts.preloadedEvents);
     }
 
     if (opts.preClosed) {
@@ -543,6 +552,12 @@ export class TaskSession {
 
   onArtifact(cb: (event: ArtifactEvent) => void): Unsubscribe {
     this.artifactCallbacks.push(cb);
+    for (const ref of [...this.artifacts]) {
+      const event: ArtifactEvent = { type: 'artifact', taskId: this.taskId, artifactRef: ref };
+      try { cb(event); } catch (err) {
+        this.routeCallbackError(err, 'onArtifact', event);
+      }
+    }
     return () => {
       this.artifactCallbacks = this.artifactCallbacks.filter(c => c !== cb);
     };
@@ -589,6 +604,20 @@ export class TaskSession {
   /** Return all artifact refs seen so far (from history and live events). */
   listArtifacts(): ArtifactRef[] {
     return [...this.artifacts];
+  }
+
+  /** Return all history events from connect() in arrival order. */
+  listEvents(): TaskEvent[] {
+    return [...this.historyEvents];
+  }
+
+  /** @internal Called by connect() to append buffer-drain events to the history snapshot. */
+  _appendHistoryEvent(event: TaskEvent, timetoken?: string): void {
+    if (timetoken) {
+      if (this.historyTimetokens.has(timetoken)) return;
+      this.historyTimetokens.add(timetoken);
+    }
+    this.historyEvents.push(event);
   }
 
   /**

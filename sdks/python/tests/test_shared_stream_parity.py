@@ -43,7 +43,8 @@ import pytest
 
 from blocks_network import agent_instance as _ai_mod
 from blocks_network.agent_instance import start_agent_instance
-from blocks_network.types import AgentInstanceOptions, StartTaskMessage, TaskContext
+from blocks_network.task_session import TaskSession
+from blocks_network.types import AgentInstanceOptions, ArtifactRef, StartTaskMessage, TaskContext
 
 
 # ---------------------------------------------------------------------------
@@ -408,3 +409,99 @@ class TestSharedStreamParityTwoConcurrentPipeTasks:
             assert shared_channel_end_markers == []
         finally:
             result["stop"]()
+
+
+class TestOnArtifactHistoryReplay:
+    """Cross-SDK parity: onArtifact/on_artifact history replay."""
+
+    def test_replays_preloaded_artifacts_in_order_with_minimal_event_shape(self) -> None:
+        ref1 = ArtifactRef(kind="inline", mime_type="text/plain", size=5, data="aGVsbG8=")
+        ref2 = ArtifactRef(
+            kind="file",
+            mime_type="image/png",
+            size=1000,
+            channel="u.alice.task-1",
+            file_id="file-2",
+            file_name="image.png",
+        )
+        pn = _make_mock_pubnub_with_abort_setup([], [])
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token="t4",
+            agent_name="parity_artifacts",
+            pubnub=pn,
+            sdk_options={"subscribe_key": "sub-key", "publish_key": "pub-key"},
+            preloaded_artifacts=[ref1, ref2],
+        )
+        events: List[Any] = []
+
+        session.on_artifact(lambda event: events.append(event))
+
+        assert len(events) == 2
+        assert events[0].type == "artifact"
+        assert events[0].task_id == "task-1"
+        assert events[0].artifact_ref == ref1
+        assert "outputId" not in events[0].raw
+        assert "protocolVersion" not in events[0].raw
+        assert events[1].type == "artifact"
+        assert events[1].task_id == "task-1"
+        assert events[1].artifact_ref == ref2
+        assert "outputId" not in events[1].raw
+        assert "protocolVersion" not in events[1].raw
+
+
+class TestListEventsHistoryParity:
+    """Cross-SDK parity: listEvents/list_events history snapshots."""
+
+    def test_returns_preloaded_history_events_in_insertion_order(self) -> None:
+        preloaded_events = [
+            {"type": "progress", "taskId": "task-1", "message": "Working"},
+            {
+                "type": "artifact",
+                "taskId": "task-1",
+                "artifactRef": {
+                    "kind": "inline",
+                    "mimeType": "text/plain",
+                    "size": 5,
+                    "data": "aGVsbG8=",
+                },
+            },
+            {"type": "terminal", "taskId": "task-1", "state": "completed"},
+            {
+                "type": "progress",
+                "taskId": "task-1",
+                "streamEvent": "stream_started",
+                "streams": {
+                    "s1": {
+                        "channel": "stream.echo.s1",
+                        "direction": "outbound",
+                        "format": "bytes",
+                        "affinity": "dedicated",
+                        "token": "t7c-1",
+                        "tokenTtlMinutes": 62,
+                    },
+                },
+            },
+        ]
+        pn = _make_mock_pubnub_with_abort_setup([], [])
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="alice",
+            read_token="t4",
+            agent_name="parity_events",
+            pubnub=pn,
+            sdk_options={"subscribe_key": "sub-key", "publish_key": "pub-key"},
+            preloaded_events=preloaded_events,
+        )
+
+        listed = session.list_events()
+
+        assert [(event.type, event.get("streamEvent")) for event in listed] == [
+            ("progress", None),
+            ("artifact", None),
+            ("terminal", None),
+            ("progress", "stream_started"),
+        ]
+        assert listed[0].raw is preloaded_events[0]
+        assert listed is not preloaded_events

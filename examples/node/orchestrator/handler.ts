@@ -22,12 +22,17 @@ export default async function handler(
 
   ctx?.reportStatus('Dispatching sub-tasks...');
 
-  const ownerId = task.ownerId;
-
   const [echoResult, adderResult] = await Promise.all([
-    executeSubTask(taskClient, 'echo', [{ partId: 'text', text: input.echoText }], ownerId),
-    executeSubTask(taskClient, 'adder', [{ partId: 'numbers', text: JSON.stringify({ kind: 'math_add', a: input.a, b: input.b }) }], ownerId),
+    executeSubTask(taskClient, 'echo2', [{ partId: 'text', text: input.echoText }]),
+    executeSubTask(taskClient, 'adder', [{ partId: 'numbers', text: JSON.stringify({ kind: 'math_add', a: input.a, b: input.b }) }]),
   ]);
+
+  if (echoResult.status !== 'completed') {
+    console.error(`[orchestrator] echo sub-task failed: ${echoResult.error ?? echoResult.status}`);
+  }
+  if (adderResult.status !== 'completed') {
+    console.error(`[orchestrator] adder sub-task failed: ${adderResult.error ?? adderResult.status}`);
+  }
 
   ctx?.reportStatus('Compiling results...');
 
@@ -37,6 +42,10 @@ export default async function handler(
     adder: adderResult,
     summary: `Echo: ${echoResult.status}, Adder: ${adderResult.status}`,
   };
+
+  if (!output.ok) {
+    console.error('[orchestrator] Task completing with failures:', JSON.stringify(output, null, 2));
+  }
 
   return { artifacts: [{ data: JSON.stringify(output, null, 2), mimeType: 'application/json' }] };
 }
@@ -82,10 +91,9 @@ async function executeSubTask(
   taskClient: TaskClient,
   agentName: string,
   requestParts: unknown[],
-  ownerId: string,
 ): Promise<SubTaskResult> {
   try {
-    const sent = await taskClient.sendMessage({ agentName, requestParts, ownerId });
+    const sent = await taskClient.sendMessage({ agentName, requestParts });
 
     return new Promise<SubTaskResult>((resolve) => {
       let settled = false;
@@ -148,9 +156,11 @@ async function executeSubTask(
         });
     });
   } catch (err) {
+    const msg = (err as Error)?.message ?? 'sendMessage failed';
+    console.error(`[orchestrator] sendMessage to "${agentName}" threw: ${msg}`);
     return {
       status: 'failed',
-      error: (err as Error)?.message ?? 'sendMessage failed',
+      error: msg,
     };
   }
 }
