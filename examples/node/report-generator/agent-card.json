@@ -43,7 +43,6 @@
             "data": {
               "type": "string",
               "title": "Report Data",
-              "format": "textarea",
               "description": "The data to include in the report"
             }
           }

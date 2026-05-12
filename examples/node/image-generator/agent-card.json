@@ -27,7 +27,6 @@
             "prompt": {
               "type": "string",
               "title": "Image Prompt",
-              "format": "textarea",
               "description": "Describe the image you want to generate",
               "default": "A cozy reading nook with warm lighting and books"
             }

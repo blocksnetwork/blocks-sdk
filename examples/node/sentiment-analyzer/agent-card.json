@@ -30,7 +30,6 @@
             "text": {
               "type": "string",
               "title": "Text to Analyze",
-              "format": "textarea",
               "description": "Enter the text you want to analyze for sentiment",
               "default": "I love this product! It works great and the support team is fantastic."
             }
