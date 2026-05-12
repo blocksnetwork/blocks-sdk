@@ -22,6 +22,41 @@ const (
 	promptAnsiReset = "\x1b[0m"
 )
 
+// Help text constants for publish prompts.
+const (
+	helpListing = "  Public: Anyone on the Blocks Network can discover and send tasks to your agent.\n" +
+		"  Private: Only organizations you explicitly invite can see and use your agent.\n" +
+		"  You can change this later by re-publishing."
+
+	helpBilling = "  Free: No charge for consumers who use your agent.\n" +
+		"  Paid: You set a price per task or per minute and earn money when consumers use\n" +
+		"  your agent. Blocks Network takes a platform fee; you keep the rest. Paid agents\n" +
+		"  require accepting the platform terms."
+
+	helpPricePerTask = "  The USD amount charged to the consumer for each completed request task.\n" +
+		"  Between $0.0001 and $1000.00. Leave blank to use the default ($0.10).\n" +
+		"  Enter 0 for no per-task charge (if you're using per-minute pricing instead)."
+
+	helpPricePerMinute = "  The USD amount charged to the consumer for each minute of a pipe (long-running)\n" +
+		"  task. Between $0.01 and $10.00. Leave blank to use the default ($0.10).\n" +
+		"  Enter 0 for no per-minute charge (if you're using per-task pricing instead)."
+
+	helpFreeTrialTasks = "  Number of request tasks each consumer organization can run for free before\n" +
+		"  charges begin. Between 1 and 100. Enter 0 or leave blank for no free trial.\n" +
+		"  Tracked per consumer organization, not per user."
+
+	helpFreeTrialMinutes = "  Number of pipe-task minutes each consumer organization gets for free before\n" +
+		"  per-minute charges begin. Between 1 and 30. Enter 0 or leave blank for no\n" +
+		"  free trial. Tracked per consumer organization, not per user."
+
+	helpAttestLaws = "  Required for paid agents. You're confirming that your agent doesn't violate\n" +
+		"  laws in the jurisdictions where it operates (e.g. data privacy, export controls,\n" +
+		"  content regulations)."
+
+	helpAcceptTerms = "  Required for paid agents. You're accepting the Blocks Network terms for paid\n" +
+		"  agent providers, including the platform fee structure and payout terms."
+)
+
 const (
 	DefaultPrice = "0.10"
 
@@ -130,30 +165,40 @@ func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, sc
 	const pricingRequired = false
 
 	if billingMode == "paid" {
-		if isRequest {
-			price, err := resolvePrice(pricePerTaskPrompt, pricePerTaskLabel, flags.Price, flags.PricePerTask, MinPricePerTask, MaxPricePerTask, pricingRequired, nonInteractive, scanner)
-			if err != nil {
-				return PromotionInput{}, err
-			}
-			if price != nil {
-				input.PricePerTask = price
-			}
-		}
+		for {
+			input.PricePerTask = nil
+			input.PricePerMinute = nil
 
-		if isStreaming {
-			price, err := resolvePrice(pricePerMinutePrompt, pricePerMinuteLabel, flags.Price, flags.PricePerMinute, MinPricePerMinute, MaxPricePerMinute, pricingRequired, nonInteractive, scanner)
-			if err != nil {
-				return PromotionInput{}, err
+			if isRequest {
+				price, err := resolvePrice(pricePerTaskPrompt, pricePerTaskLabel, flags.Price, flags.PricePerTask, MinPricePerTask, MaxPricePerTask, pricingRequired, nonInteractive, scanner)
+				if err != nil {
+					return PromotionInput{}, err
+				}
+				if price != nil {
+					input.PricePerTask = price
+				}
 			}
-			if price != nil {
-				input.PricePerMinute = price
-			}
-		}
 
-		// Backend rejects paid+all-zero standard prices. Fail client-side with an
-		// actionable error rather than round-tripping to the backend.
-		if !priceGtZero(input.PricePerTask) && !priceGtZero(input.PricePerMinute) {
-			return PromotionInput{}, fmt.Errorf("Paid agents need at least one price above 0. Use --price-per-task and/or --price-per-minute.")
+			if isStreaming {
+				price, err := resolvePrice(pricePerMinutePrompt, pricePerMinuteLabel, flags.Price, flags.PricePerMinute, MinPricePerMinute, MaxPricePerMinute, pricingRequired, nonInteractive, scanner)
+				if err != nil {
+					return PromotionInput{}, err
+				}
+				if price != nil {
+					input.PricePerMinute = price
+				}
+			}
+
+			if priceGtZero(input.PricePerTask) || priceGtZero(input.PricePerMinute) {
+				break
+			}
+
+			// Non-interactive: hard error (flags were explicit).
+			if nonInteractive {
+				return PromotionInput{}, fmt.Errorf("Paid agents need at least one price above 0. Use --price-per-task and/or --price-per-minute.")
+			}
+
+			fmt.Println("  Paid agents need at least one price above 0. Please enter a price.")
 		}
 
 		if shouldPromptFreeTrialAllowance(isRequest, isStreaming, flags, nonInteractive) {
@@ -196,46 +241,62 @@ func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, sc
 }
 
 func promptListingSelection(scanner *bufio.Scanner) (string, error) {
-	fmt.Println("\nWho should be able to discover and use this agent?")
-	fmt.Println()
-	fmt.Println("  1. " + boldPrompt("Public Agent") + "   Visible and usable by everyone on the Blocks Network.")
-	fmt.Println("  2. " + boldPrompt("Private Agent") + "  Visible and usable only by organizations you invite.")
-	fmt.Println()
-	fmt.Print("Select visibility [1/2]: ")
+	for {
+		fmt.Println("\nWho should be able to discover and use this agent?")
+		fmt.Println()
+		fmt.Println("  1. " + boldPrompt("Public Agent") + "   Visible and usable by everyone on the Blocks Network.")
+		fmt.Println("  2. " + boldPrompt("Private Agent") + "  Visible and usable only by organizations you invite.")
+		fmt.Println()
+		fmt.Print("Select visibility [1/2] (? for help): ")
 
-	if !scanner.Scan() {
-		return "", fmt.Errorf("no input received")
-	}
-	choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
-	switch choice {
-	case "1", "public", "p":
-		return "public", nil
-	case "2", "private", "pr":
-		return "private", nil
-	default:
-		return "", fmt.Errorf("Choose 1 for Public Agent or 2 for Private Agent.")
+		if !scanner.Scan() {
+			return "", fmt.Errorf("no input received")
+		}
+		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		if choice == "?" {
+			fmt.Println(helpListing)
+			fmt.Println()
+			continue
+		}
+		switch choice {
+		case "1", "public", "p":
+			return "public", nil
+		case "2", "private", "pr":
+			return "private", nil
+		default:
+			fmt.Println("  Choose 1 for Public Agent or 2 for Private Agent. Type ? for help.")
+			continue
+		}
 	}
 }
 
 func promptBillingMode(scanner *bufio.Scanner) (string, error) {
-	fmt.Println("\nHow should usage be priced?")
-	fmt.Println()
-	fmt.Println("  1. " + boldPrompt("Free Agent") + "  No charge for any allowed consumer.")
-	fmt.Println("  2. " + boldPrompt("Paid Agent") + "  Set usage prices and accept the paid-agent terms.")
-	fmt.Println()
-	fmt.Print("Select billing [1/2]: ")
+	for {
+		fmt.Println("\nHow should usage be priced?")
+		fmt.Println()
+		fmt.Println("  1. " + boldPrompt("Free Agent") + "  No charge for any allowed consumer.")
+		fmt.Println("  2. " + boldPrompt("Paid Agent") + "  Set usage prices and accept the paid-agent terms.")
+		fmt.Println()
+		fmt.Print("Select billing [1/2] (? for help): ")
 
-	if !scanner.Scan() {
-		return "", fmt.Errorf("no input received")
-	}
-	choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
-	switch choice {
-	case "1", "free", "f":
-		return "free", nil
-	case "2", "paid":
-		return "paid", nil
-	default:
-		return "", fmt.Errorf("Choose 1 for Free Agent or 2 for Paid Agent.")
+		if !scanner.Scan() {
+			return "", fmt.Errorf("no input received")
+		}
+		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		if choice == "?" {
+			fmt.Println(helpBilling)
+			fmt.Println()
+			continue
+		}
+		switch choice {
+		case "1", "free", "f":
+			return "free", nil
+		case "2", "paid":
+			return "paid", nil
+		default:
+			fmt.Println("  Choose 1 for Free Agent or 2 for Paid Agent. Type ? for help.")
+			continue
+		}
 	}
 }
 
@@ -343,28 +404,43 @@ func resolvePrice(prompt string, label string, genericFlag, specificFlag *string
 		return nil, nil
 	}
 
-	fmt.Printf("%s: ", prompt)
+	// Determine help text based on label.
+	helpText := helpPricePerTask
+	if label == pricePerMinuteLabel {
+		helpText = helpPricePerMinute
+	}
 
-	if !scanner.Scan() {
-		if required {
-			return nil, fmt.Errorf("no input received for %s", label)
+	for {
+		fmt.Printf("%s (? for help): ", prompt)
+
+		if !scanner.Scan() {
+			if required {
+				return nil, fmt.Errorf("no input received for %s", label)
+			}
+			return nil, nil
 		}
-		return nil, nil
-	}
-	text := strings.TrimSpace(scanner.Text())
-	if text == "" {
-		text = DefaultPrice
-	}
+		text := strings.TrimSpace(scanner.Text())
+		if text == "?" {
+			fmt.Println(helpText)
+			fmt.Println()
+			continue
+		}
+		if text == "" {
+			text = DefaultPrice
+		}
 
-	if err := validatePriceRange(text, minPrice, maxPrice, label); err != nil {
-		return nil, err
+		if err := validatePriceRange(text, minPrice, maxPrice, label); err != nil {
+			fmt.Printf("  %v\n", err)
+			continue
+		}
+		v, _ := decimal.NewFromString(normalizePriceInput(text))
+		if required && v.IsZero() {
+			fmt.Printf("  %s must be > 0\n", label)
+			continue
+		}
+		s := v.StringFixed(6)
+		return &s, nil
 	}
-	v, _ := decimal.NewFromString(normalizePriceInput(text))
-	if required && v.IsZero() {
-		return nil, fmt.Errorf("%s must be > 0", label)
-	}
-	s := v.StringFixed(6)
-	return &s, nil
 }
 
 // resolveFreeUnits resolves free units from flags or interactive prompt.
@@ -381,24 +457,38 @@ func resolveFreeUnits(label string, genericFlag, specificFlag *int, nonInteracti
 		return nil, nil
 	}
 
-	fmt.Printf("%s: ", label)
-	if !scanner.Scan() {
-		return nil, nil
-	}
-	text := strings.TrimSpace(scanner.Text())
-	if text == "" {
-		return nil, nil
+	// Determine help text based on label content.
+	helpText := helpFreeTrialTasks
+	if strings.Contains(label, "minute") || strings.Contains(label, "Minute") {
+		helpText = helpFreeTrialMinutes
 	}
 
-	v, err := decimal.NewFromString(text)
-	if err != nil || v.Sign() < 0 || !v.IsInteger() {
-		return nil, fmt.Errorf("Enter a whole number of 0 or greater.")
+	for {
+		fmt.Printf("%s (? for help): ", label)
+		if !scanner.Scan() {
+			return nil, nil
+		}
+		text := strings.TrimSpace(scanner.Text())
+		if text == "?" {
+			fmt.Println(helpText)
+			fmt.Println()
+			continue
+		}
+		if text == "" {
+			return nil, nil
+		}
+
+		v, err := decimal.NewFromString(text)
+		if err != nil || v.Sign() < 0 || !v.IsInteger() {
+			fmt.Println("  Enter a whole number of 0 or greater.")
+			continue
+		}
+		if v.IsZero() {
+			return nil, nil
+		}
+		i := int(v.IntPart())
+		return &i, nil
 	}
-	if v.IsZero() {
-		return nil, nil
-	}
-	i := int(v.IntPart())
-	return &i, nil
 }
 
 func validateFreeUnits(v int) (*int, error) {
@@ -414,20 +504,49 @@ func validateFreeUnits(v int) (*int, error) {
 func promptAttestations(scanner *bufio.Scanner) error {
 	fmt.Println("\n" + boldPrompt("Before publishing a paid agent:"))
 	fmt.Println()
-	fmt.Print("  " + boldPrompt("I attest this agent complies with applicable laws.") + " (y/N): ")
-	if !scanner.Scan() {
-		return fmt.Errorf("no input received")
-	}
-	if !isYes(scanner.Text()) {
-		return fmt.Errorf("Paid agents require both attestations. Publish canceled.")
+
+	// First attestation: legal compliance
+	for {
+		fmt.Print("  " + boldPrompt("I attest this agent complies with applicable laws.") + " (y/N, ? for help): ")
+		if !scanner.Scan() {
+			return fmt.Errorf("no input received")
+		}
+		text := strings.TrimSpace(scanner.Text())
+		if text == "?" {
+			fmt.Println(helpAttestLaws)
+			fmt.Println()
+			continue
+		}
+		if isNo(text) {
+			return fmt.Errorf("Paid agents require both attestations. Publish canceled.")
+		}
+		if !isYes(text) {
+			fmt.Println("  Please answer y or n.")
+			continue
+		}
+		break
 	}
 
-	fmt.Print("  " + boldPrompt("I accept the platform terms.") + " (y/N): ")
-	if !scanner.Scan() {
-		return fmt.Errorf("no input received")
-	}
-	if !isYes(scanner.Text()) {
-		return fmt.Errorf("Paid agents require both attestations. Publish canceled.")
+	// Second attestation: platform terms
+	for {
+		fmt.Print("  " + boldPrompt("I accept the platform terms.") + " (y/N, ? for help): ")
+		if !scanner.Scan() {
+			return fmt.Errorf("no input received")
+		}
+		text := strings.TrimSpace(scanner.Text())
+		if text == "?" {
+			fmt.Println(helpAcceptTerms)
+			fmt.Println()
+			continue
+		}
+		if isNo(text) {
+			return fmt.Errorf("Paid agents require both attestations. Publish canceled.")
+		}
+		if !isYes(text) {
+			fmt.Println("  Please answer y or n.")
+			continue
+		}
+		break
 	}
 
 	return nil
@@ -440,4 +559,9 @@ func boldPrompt(text string) string {
 func isYes(s string) bool {
 	s = strings.TrimSpace(strings.ToLower(s))
 	return s == "y" || s == "yes"
+}
+
+func isNo(s string) bool {
+	s = strings.TrimSpace(strings.ToLower(s))
+	return s == "n" || s == "no"
 }

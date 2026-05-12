@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
 	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
@@ -86,6 +88,18 @@ var initCmd = &cobra.Command{
 		dir := filepath.Join(mustCwd(), cfg.Name)
 		if _, err := os.Stat(dir); err == nil {
 			return fmt.Errorf("directory %q already exists", cfg.Name)
+		}
+
+		if !nonInteractive {
+			fmt.Printf("\n  This will create ./%s/ with your %s project files.\n", cfg.Name, cfg.Language)
+			fmt.Print("  Continue? (Y/n): ")
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				ans := strings.TrimSpace(strings.ToLower(scanner.Text()))
+				if ans == "n" || ans == "no" {
+					return fmt.Errorf("canceled")
+				}
+			}
 		}
 
 		if err := scaffold.Project(dir, cfg); err != nil {

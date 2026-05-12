@@ -87,7 +87,7 @@ func runLogin(ctx context.Context) error {
 // Order of precedence:
 //  1. --write-env flag set -> yes, unconditionally.
 //  2. Non-interactive stdin (piped / CI) -> no, keep login side-effect-free.
-//  3. Interactive terminal -> prompt the user (default no).
+//  3. Interactive terminal -> prompt the user (default yes).
 func shouldWriteEnv() bool {
 	if loginWriteEnv {
 		return true
@@ -95,11 +95,14 @@ func shouldWriteEnv() bool {
 	if !isInteractive() {
 		return false
 	}
-	fmt.Print("  Write BLOCKS_API_KEY to project .env? (y/N): ")
+	fmt.Print("  Write BLOCKS_API_KEY to project .env? (Y/n): ")
 	scanner := bufio.NewScanner(os.Stdin)
 	if !scanner.Scan() {
-		return false
+		return true
 	}
 	ans := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	return ans == "y" || ans == "yes"
+	if ans == "" {
+		return true
+	}
+	return ans != "n" && ans != "no"
 }

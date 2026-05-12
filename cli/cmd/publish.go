@@ -247,6 +247,9 @@ func resolvePublishApiKey() (string, error) {
 		}
 		return key, nil
 	}
+	if envKey := os.Getenv("BLOCKS_API_KEY"); envKey != "" {
+		return envKey, nil
+	}
 	creds, err := auth.Load()
 	if err != nil {
 		if os.IsNotExist(err) {

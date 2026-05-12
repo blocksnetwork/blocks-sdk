@@ -777,6 +777,7 @@ func TestPublishNoCredentialsFails(t *testing.T) {
 
 	dir := writeValidProject(t)
 	t.Setenv("BLOCKS_BACKEND_URL", "http://unused")
+	t.Setenv("BLOCKS_API_KEY", "")
 
 	oldDir, _ := os.Getwd()
 	os.Chdir(dir)
@@ -817,6 +818,7 @@ func TestPublishExpiredCredentialsFails(t *testing.T) {
 
 	dir := writeValidProject(t)
 	t.Setenv("BLOCKS_BACKEND_URL", "http://unused")
+	t.Setenv("BLOCKS_API_KEY", "")
 
 	oldDir, _ := os.Getwd()
 	os.Chdir(dir)
