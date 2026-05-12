@@ -19,6 +19,10 @@ import (
 //   - apiKeyDirect: use this API key directly (--api-key flag)
 //   - apiKeyStdin: read API key from stdin (--api-key-stdin flag)
 //   - Browser OAuth PKCE flow (default)
+//
+// Note: BLOCKS_API_KEY env var is handled at the command level (e.g.
+// resolvePublishApiKey) rather than here, so that `blocks login` can
+// always force a fresh browser flow regardless of env state.
 func EnsureCredentials(ctx context.Context, backendURL, clientID, apiKeyDirect string, apiKeyStdin bool) (string, error) {
 	// Direct API key
 	if apiKeyDirect != "" {

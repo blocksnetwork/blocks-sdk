@@ -3,6 +3,7 @@ package wizard
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -19,6 +20,8 @@ func readKey() (string, error) {
 		return "enter", nil
 	case ' ':
 		return "space", nil
+	case '?':
+		return "?", nil
 	case 3: // Ctrl+C
 		return "ctrlc", nil
 	case 0x1b: // Escape — start of arrow key sequence
@@ -53,8 +56,8 @@ func physicalLines(visibleLen, termWidth int) int {
 }
 
 // InteractiveSelect shows a single-select list navigable with arrow keys.
-// Returns the index of the selected option.
-func InteractiveSelect(prompt string, options []string, defaultIdx int) (int, error) {
+// Returns the index of the selected option. helpText is printed when the user presses ?.
+func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText string) (int, error) {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return defaultIdx, nil
@@ -75,7 +78,7 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int) (int, er
 
 	// Calculate total physical rows used by the rendered block,
 	// accounting for lines that wrap at the terminal width.
-	hint := "(arrows navigate, enter select)"
+	hint := "(\xe2\x86\x91\xe2\x86\x93 navigate, enter select, ? help)"
 	totalRows := physicalLines(len(prompt)+1+len(hint), width) // +1 for the space
 	for _, opt := range options {
 		totalRows += physicalLines(4+len(opt), width) // "  > " or "    " = 4 chars
@@ -124,6 +127,11 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int) (int, er
 			if cursor < len(options)-1 {
 				cursor++
 			}
+		case "?":
+			// Print help below the menu and re-render.
+			// In raw mode \n doesn't return to column 0, so replace with \r\n.
+			fmt.Fprintf(os.Stdout, "\r\x1b[J")
+			fmt.Fprintf(os.Stdout, "%s\r\n\r\n", strings.ReplaceAll(helpText, "\n", "\r\n"))
 		case "enter":
 			cleanup(options[cursor])
 			return cursor, nil
