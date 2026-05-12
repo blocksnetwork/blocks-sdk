@@ -17,13 +17,16 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
     Extracts text from request parts and returns it as plain text.
     """
+    # request_parts is the SDK's structured input — each part carries text or file data
     text = _extract_text(task.request_parts or [])
 
     if ctx:
+        # report_status publishes a real-time progress event to task subscribers
         ctx.report_status("Processing...")
 
     result = f"Processed: {text}"
 
+    # artifacts is the handler's final output, delivered to the consumer as artifact events
     return {
         "artifacts": [{"data": result, "mimeType": "text/plain"}],
     }

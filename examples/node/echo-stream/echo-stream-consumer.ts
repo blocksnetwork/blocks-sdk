@@ -7,7 +7,7 @@
  *   npx tsx echo-stream-consumer.ts "custom text to echo"
  *
  * Authentication:
- *   BLOCKS_API_KEY   API key (bk_...) — from `blocks login` or `blocks publish`.
+ *   BLOCKS_API_KEY   API key (bk_...) — from `blocks login --write-env`.
  *   BLOCKS_CDM_URL   CDM config URL (optional — falls back to default CDN).
  */
 
@@ -18,7 +18,7 @@ const AGENT_NAME = 'echo_stream';
 
 const apiKey = process.env.BLOCKS_API_KEY;
 if (!apiKey) {
-  console.error('BLOCKS_API_KEY not set. Run `blocks login --write-env` or `blocks publish` first.');
+  console.error('BLOCKS_API_KEY not set. Run `blocks login --write-env` first.');
   process.exit(1);
 }
 

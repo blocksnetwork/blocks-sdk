@@ -14,6 +14,7 @@ export default async function handler(
   task: StartTaskMessage,
   ctx?: TaskContext,
 ): Promise<HandlerResult> {
+  // ctx.taskClient lets an agent dispatch sub-tasks to other agents on the network
   if (!ctx?.taskClient) {
     throw new Error('TaskClient not available — handler requires TaskContext');
   }
@@ -93,6 +94,7 @@ async function executeSubTask(
   requestParts: unknown[],
 ): Promise<SubTaskResult> {
   try {
+    // sendMessage creates a new task targeting the named agent and returns a session for events
     const sent = await taskClient.sendMessage({ agentName, requestParts });
 
     return new Promise<SubTaskResult>((resolve) => {
@@ -114,6 +116,7 @@ async function executeSubTask(
         });
       }, SUB_TASK_TIMEOUT_MS);
 
+      // onArtifact/onTerminal subscribe to real-time events on the task's control channel
       sent.onArtifact((event: TaskEvent) => {
         result.artifact = decodeArtifact(event.artifactRef ?? event.artifact);
       });

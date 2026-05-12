@@ -1,15 +1,14 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -52,25 +51,20 @@ func init() {
 var publishCmd = &cobra.Command{
 	Use:   "publish [path]",
 	Short: "Publish an agent to the Blocks Network registry",
-	Long:  "Authenticates (if needed) and publishes the agent card to the registry.",
+	Long:  "Publish the agent card to the registry. Requires prior authentication via 'blocks login' or --api-key.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
-		defer stop()
-		return runPublish(ctx, cmd, args)
+		return runPublish(cmd, args)
 	},
 }
 
-func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
+func runPublish(cmd *cobra.Command, args []string) error {
 	backendURL := resolveBackendURL()
-	clientID := resolveClientID()
 
-	apiKey, err := auth.EnsureCredentials(ctx, backendURL, clientID, publishApiKey, publishApiKeyStdin)
+	apiKey, err := resolvePublishApiKey()
 	if err != nil {
-		return fmt.Errorf("authentication failed: %w", err)
+		return err
 	}
-
-	auth.InjectEnv("BLOCKS_API_KEY", apiKey)
 
 	cardPath := "agent-card.json"
 	if len(args) > 0 {
@@ -198,6 +192,9 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
 	}
 	registryURL := backendURL + "/api/v1/registry/agents"
+
+	printPublishSummary(agentName, promInput)
+
 	req, err := http.NewRequest("POST", registryURL, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -206,19 +203,23 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Blocks-Protocol-Version", registry.ProtocolVersion)
 
-	printPublishSummary(agentName, promInput)
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode == 401 {
-		return fmt.Errorf("authentication failed - try running 'blocks publish' again")
+		if publishApiKey != "" {
+			return fmt.Errorf("authentication failed — the provided --api-key was rejected; replace it with a valid key and retry")
+		}
+		if publishApiKeyStdin {
+			return fmt.Errorf("authentication failed — the API key provided via --api-key-stdin was rejected; replace it with a valid key and retry")
+		}
+		return fmt.Errorf("authentication failed — run 'blocks login' to re-authenticate, then retry 'blocks publish'")
 	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var errResp map[string]interface{}
 		if json.Unmarshal(respBody, &errResp) == nil {
@@ -229,6 +230,37 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 
 	printPublishSuccess(agentName, promInput, publishedAgentURL(respBody, agentName))
 	return nil
+}
+
+func resolvePublishApiKey() (string, error) {
+	if publishApiKey != "" {
+		return publishApiKey, nil
+	}
+	if publishApiKeyStdin {
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			return "", fmt.Errorf("--api-key-stdin: no input received on stdin")
+		}
+		key := scanner.Text()
+		if key == "" {
+			return "", fmt.Errorf("--api-key-stdin: empty API key received")
+		}
+		return key, nil
+	}
+	creds, err := auth.Load()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("not authenticated — run 'blocks login' first, or provide --api-key")
+		}
+		return "", fmt.Errorf("failed to load credentials: %w", err)
+	}
+	if creds.ApiKey == "" {
+		return "", fmt.Errorf("not authenticated — run 'blocks login' first, or provide --api-key")
+	}
+	if creds.IsExpired() {
+		return "", fmt.Errorf("credentials expired — run 'blocks login' to re-authenticate")
+	}
+	return creds.ApiKey, nil
 }
 
 func publishFailedError(agentName string, input registry.PromotionInput, payload map[string]interface{}) error {

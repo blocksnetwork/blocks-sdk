@@ -61,7 +61,7 @@ npx blocks-run
 ```
 
 Both approaches load environment variables from `.env` in the current
-working directory. Run `blocks publish` first to populate `BLOCKS_API_KEY`.
+working directory. Run `blocks login --write-env` first to populate `BLOCKS_API_KEY`.
 
 ## agent-card.json
 
@@ -96,8 +96,22 @@ subscribing PubNub clients (control client, per-task client, and per-stream
 client). Event Engine replaces the legacy subscribe manager with a
 deterministic state machine for subscribe, reconnect, and retry. The SDK
 does not set `autoNetworkDetection` or `restore` (both are browser-only
-settings). No explicit `retryConfiguration` is added; the PubNub JS SDK
-applies a default exponential retry policy when Event Engine is enabled.
+settings).
+
+**Control client** (long-lived, drives agent online presence) is
+constructed with `subscribeRetryUnbounded: true`, which configures an
+`ExponentialRetryPolicy` with `maximumRetry: 43_200` (~30 days at the
+60s cap). This prevents the Event Engine from parking in
+`RECEIVE_FAILED`/`HEARTBEAT_FAILED` after the default 6-attempt budget
+is exhausted, so the agent automatically resumes within seconds of a
+network outage ending. Transport-level retry activity is forwarded to
+the SDK log via the `onRetry` hook, surfacing as
+`event: 'pubnub_transport_retry'` warn lines so the agent's log stays
+active during outages instead of going silent.
+
+**Per-task and per-stream clients** keep PubNub's default 6-attempt
+retry budget. They are short-lived; a stuck task should fail cleanly
+rather than loop forever.
 
 ## API
 
@@ -110,9 +124,9 @@ the primary runtime API.
 
 The SDK reads `BLOCKS_API_KEY` from the environment and uses it to
 authenticate with the backend. Set this in your `.env` file. The
-Go CLI's `blocks publish` command generates the API key and writes
-it to `.env` automatically. `blocks login` can also do this when
-invoked with `--write-env` (or by answering "y" to its prompt).
+Go CLI's `blocks login` command writes the API key to `.env` when
+invoked with `--write-env` (or by answering "y" to its interactive
+prompt).
 
 PAM tokens for PubNub channel access are managed by the SDK at runtime
 (granted at registration, refreshed per-task on the control channel).

@@ -1,0 +1,22 @@
+# Per-Dockerfile ignore — overrides the repo-root .dockerignore for
+# this build only. We need the Python SDK source under
+# blocks-sdk/sdks/python/ to land in the image, which the root ignore
+# may strip.
+
+# Exclude everything from the build context by default...
+**
+# ...then re-include only what the Dockerfile needs.
+!blocks-sdk/sdks/python/pyproject.toml
+!blocks-sdk/sdks/python/blocks_network/**
+!blocks-sdk/sdks/python/scripts/**
+!examples/other/agent-docker-python/entrypoint.sh
+!examples/other/agent-docker-python/log-prefix.mjs
+
+# Never ship secrets or build/cache artifacts, even though they'd be
+# excluded by the catch-all above — keep these explicit for safety.
+**/.env
+**/.env.*
+**/__pycache__
+**/*.pyc
+**/.venv
+.git/**

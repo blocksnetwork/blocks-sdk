@@ -2,7 +2,7 @@
   "name": "@blocks-network/cli-darwin-x64",
   "version": "0.0.0",
   "description": "Blocks CLI binary for macOS x64",
-  "license": "Blocks Network",
+  "license": "SEE LICENSE IN LICENSE",
   "os": ["darwin"],
   "cpu": ["x64"],
   "files": ["blocks"],

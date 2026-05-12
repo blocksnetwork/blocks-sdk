@@ -35,7 +35,8 @@ my-agent/
     "handler": "./handler.ts",
     "handlerExport": "default",
     "concurrency": 1,
-    "expectedInstances": 1
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 60
   }
 }
 ```
@@ -50,7 +51,7 @@ Required in `capabilities`: `taskKinds` (array of `"request"`, `"pipe"`, or both
 
 Required in `skills`: at least one `{ id, name }`. Optional per skill: `description`, `examples`.
 
-Required in `runtime`: `handler`. Optional: `handlerExport` (default `"default"`), `concurrency` (default 1), `expectedInstances` (default 1), `maxPendingBacklog`, `maxRunningTimeSec`.
+Required in `runtime`: `handler`, `maxRunningTimeSec`. Optional: `handlerExport` (default `"default"`), `concurrency` (default 1), `expectedInstances` (default 1), `maxPendingBacklog`.
 
 Optional `io` section: `inputs`, `outputs` (each an array of typed I/O
 descriptors). On every `io.inputs[]` entry, **required**: `id`,
@@ -164,7 +165,8 @@ Without the `streams` block, `ctx.createStream()` throws at runtime:
     "handler": "./handler.ts",
     "handlerExport": "default",
     "concurrency": 5,
-    "expectedInstances": 1
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 300
   }
 }
 ```
@@ -200,7 +202,8 @@ Pipe-only agents use a named stream with dedicated affinity:
     "handler": "./handler.ts",
     "handlerExport": "default",
     "concurrency": 5,
-    "expectedInstances": 1
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 600
   }
 }
 ```

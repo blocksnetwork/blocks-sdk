@@ -1,0 +1,59 @@
+# Agent-only network isolation harness. See Dockerfile for rationale.
+#
+# Usage (from this directory):
+#   docker compose build
+#   docker compose up                  # echo-stream example
+#   AGENT_DIR=../../../path/to/agent docker compose up
+#   ./blip.sh 30                       # simulate 30s outage
+#
+# Backend port defaults to 3011 (this worktree's afui_mvp_backend .env).
+# Override by exporting BACKEND_PORT=3001 (or any) before `up` to point
+# at a different backend.
+
+services:
+  agent:
+    build:
+      context: ../../..
+      dockerfile: examples/other/agent-docker/Dockerfile
+    container_name: blocks-agent-test
+    working_dir: /agent
+    volumes:
+      - ${AGENT_DIR:-../../../blocks-sdk/examples/node/echo-stream}:/agent
+      # Shadow host-platform node_modules; container-installed SDK at
+      # /node_modules/@blocks-network/sdk is resolved via walk-up.
+      - /agent/node_modules
+      # Match host clock so log-prefix.mjs timestamps line up with the
+      # backend's pino-pretty output for cross-terminal correlation.
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      BLOCKS_CDM_URL: http://host.docker.internal:${BACKEND_PORT:-3011}/api/v1/cdm
+      # Entrypoint socat forwards these from the container's loopback
+      # to host.docker.internal, so the CDM-provided api.baseUrl
+      # ("http://localhost:{BACKEND_PORT}") resolves from inside the
+      # container without rewriting the URL.
+      HOST_BACKEND: host.docker.internal:${BACKEND_PORT:-3011}
+      LOCAL_BACKEND_PORT: ${BACKEND_PORT:-3011}
+      # Required for agent registration. Set in your shell or .env
+      # next to this compose file. Obtain via `blocks login`.
+      BLOCKS_API_KEY: ${BLOCKS_API_KEY:?Set BLOCKS_API_KEY in your environment or .env}
+      # Force Node's clock to match the host TZ so log-prefix.mjs
+      # stamps line up with the backend's pino-pretty output.
+      # Override per-shell or via .env (e.g. TZ=Europe/Warsaw).
+      # macOS: the /etc/localtime mount is unreliable on Docker
+      # Desktop, so TZ is the authoritative source here.
+      TZ: ${TZ:-UTC}
+      # Phase 1 connectivity diagnostics (BLOCKS-129) emit at debug
+      # level. Override with LOG_LEVEL=info for a quieter console.
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-net
+    tty: true
+    stdin_open: true
+    command: node /sdk/dist/cli/run.js
+
+networks:
+  agent-net:
+    name: blocks-agent-net
+    driver: bridge

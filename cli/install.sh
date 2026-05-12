@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
-# Blocks CLI installer for macOS / Linux / WSL
+#!/usr/bin/env sh
+# Blocks CLI installer for macOS / Linux / WSL / FreeBSD / OpenBSD
+# POSIX sh-compatible — no bash required.
 #
 # Usage:
 #   curl -fsSL https://config.blocks.ai/install.sh | bash
@@ -66,8 +67,10 @@ api_get() {
 # ── Detect OS ────────────────────────────────────────────────────────
 detect_os() {
   case "$(uname -s)" in
-    Darwin) echo "darwin" ;;
-    Linux)  echo "linux" ;;
+    Darwin)  echo "darwin" ;;
+    Linux)   echo "linux" ;;
+    FreeBSD) echo "freebsd" ;;
+    OpenBSD) echo "openbsd" ;;
     MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
     *)
       echo "Error: Unsupported operating system: $(uname -s)" >&2
@@ -110,6 +113,11 @@ verify_checksum() {
     actual=$(sha256sum "$file" | awk '{print $1}')
   elif command -v shasum >/dev/null 2>&1; then
     actual=$(shasum -a 256 "$file" | awk '{print $1}')
+  elif command -v sha256 >/dev/null 2>&1; then
+    # FreeBSD and OpenBSD base utility
+    actual=$(sha256 -q "$file")
+  elif command -v openssl >/dev/null 2>&1; then
+    actual=$(openssl dgst -sha256 "$file" | awk '{print $NF}')
   else
     echo "Warning: No SHA-256 tool found — skipping checksum verification" >&2
     return 0
@@ -354,4 +362,10 @@ main() {
   echo "    blocks version"
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced for testing.
+# The test harness sets BLOCKS_INSTALL_SH_SOURCED=1 before sourcing.
+# This sentinel avoids the bash-only ${BASH_SOURCE[0]} array syntax so
+# the script also parses under POSIX /bin/sh.
+if [ -z "${BLOCKS_INSTALL_SH_SOURCED:-}" ]; then
+  main "$@"
+fi

@@ -71,17 +71,30 @@ git tag cli-npm-v0.2.0    && git push origin cli-npm-v0.2.0
 
 ### CLI (`cli-v*`)
 
-1. Checks out the repo and cross-compiles Go binaries for all platforms
-   (darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
-2. Creates a GitHub Release with the archives and install scripts
-3. Packages binaries into npm platform packages
-   (`@blocks-network/cli-darwin-arm64`, etc.)
+1. Checks out the repo and cross-compiles Go binaries for all supported
+   platforms:
+   - darwin/arm64, darwin/amd64
+   - linux/arm64, linux/amd64
+   - windows/amd64
+   - freebsd/amd64, freebsd/arm64
+   - openbsd/amd64, openbsd/arm64
+2. Creates a GitHub Release with the archives, checksums, and install
+   scripts (every platform above is included as a tarball/zip)
+3. Packages the npm-published subset of binaries into platform packages
+   (`@blocks-network/cli-darwin-arm64`, `cli-darwin-x64`, `cli-linux-arm64`,
+   `cli-linux-x64`, `cli-win32-x64` — five total). FreeBSD and OpenBSD
+   binaries are intentionally NOT npm-published; BSD users install via
+   `install.sh`, which pulls from the GitHub Release archives.
 4. Publishes the platform packages and the wrapper
    (`@blocks-network/cli`) to Artifactory
 
 ### CLI public npm (`cli-npm-v*`)
 
-Same cross-compilation and packaging, published to npmjs.org instead.
+Cross-compiles and publishes only the five npm-supported targets
+(darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
+to npmjs.org. No GitHub Release is created and no BSD binaries are
+produced on this path — BSD users install via the `cli-v*` Release
+archives, not via npm.
 
 ## Version safety
 

@@ -25,6 +25,7 @@ SUB_TASK_TIMEOUT_SEC = 30
 
 def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[str, Any]:
     """Orchestrator handler - dispatches to echo and adder, compiles results."""
+    # ctx.task_client lets an agent dispatch sub-tasks to other agents on the network
     if not ctx or not ctx.task_client:
         raise RuntimeError("TaskClient not available — handler requires TaskContext")
 
@@ -100,6 +101,7 @@ def _execute_sub_task(
 ) -> Dict[str, Any]:
     """Send a sub-task, subscribe to results, and block until completion."""
     try:
+        # send_message creates a new task targeting the named agent and returns a session for events
         sent = task_client.send_message(
             SendMessageParams(
                 agent_name=agent_name,
@@ -135,6 +137,7 @@ def _execute_sub_task(
                 "error": event.get("error") or event.get("state") or "unknown",
             })
 
+    # on_artifact/on_terminal subscribe to real-time events on the task's control channel
     sent.on_artifact(_on_artifact)
     sent.on_terminal(_on_terminal)
 

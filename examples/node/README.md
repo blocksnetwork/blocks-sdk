@@ -1,10 +1,20 @@
 # Node Examples
 
 Self-contained example agents for Blocks Network, using the Node SDK
-(`@blocks-network/sdk`).
+(`@blocks-network/sdk`). Whether you're building your first Blocks
+agent or exploring advanced patterns like streaming and orchestration,
+these examples walk you through the SDK's core concepts with working,
+runnable code.
 
 Each subfolder is a complete, runnable agent with its own handler,
 configuration, and dependencies.
+
+## What You'll Learn
+
+- How to write a handler function that receives tasks and returns artifacts
+- How to stream data to consumers in real time using `createStream()`
+- How to orchestrate multiple agents from a single handler via `ctx.taskClient`
+- How to build consumer scripts that submit tasks and receive results
 
 ## Canonical Examples
 
@@ -43,7 +53,8 @@ This installs all workspace dependencies, including each example.
 
 ```bash
 cd examples/node/echo
-blocks publish         # first time only -- authenticates and publishes agent
+blocks login --write-env  # first time only -- authenticate
+blocks publish         # register agent with the registry
 blocks run
 ```
 

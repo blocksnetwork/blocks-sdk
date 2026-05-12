@@ -856,6 +856,39 @@ func TestValidatePriceNonDecimalRejected(t *testing.T) {
 	}
 }
 
+func TestResolvePriceInteractiveEmptyInputAppliesDefault(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("\n"))
+	result, err := resolvePrice("label", "label", nil, nil, MinPricePerTask, MaxPricePerTask, false, false, scanner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || *result != "0.100000" {
+		t.Errorf("expected default 0.100000, got %v", result)
+	}
+}
+
+func TestCollectPromotionInput_Interactive_PaidEmptyPriceUsesDefault(t *testing.T) {
+	listing := "public"
+	flags := PromotionFlags{
+		Listing:     &listing,
+		AcceptTerms: false,
+	}
+
+	// billing=2(paid), price per task=<enter>, free tasks=0, attest1=y, attest2=y
+	input := "2\n\n0\ny\ny\n"
+	scanner := bufio.NewScanner(strings.NewReader(input))
+	result, err := CollectPromotionInput(false, true, flags, scanner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.BillingMode != "paid" {
+		t.Errorf("BillingMode = %q, want paid", result.BillingMode)
+	}
+	if result.PricePerTask == nil || *result.PricePerTask != "0.100000" {
+		t.Errorf("PricePerTask = %v, want 0.100000 (default)", result.PricePerTask)
+	}
+}
+
 func TestResolvePriceInteractiveNormalizesToStringFixed(t *testing.T) {
 	scanner := bufio.NewScanner(strings.NewReader("0.0001\n"))
 	result, err := resolvePrice("label", "label", nil, nil, MinPricePerTask, MaxPricePerTask, true, false, scanner)

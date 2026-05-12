@@ -281,7 +281,7 @@ func TestPublishProtocolVersionHeader(t *testing.T) {
 }
 
 // TestPublishNoTTY_ApiKey verifies that "blocks publish --api-key" works
-// without a TTY attached to stdin.
+// without a TTY attached to stdin and sends the key in the Authorization header.
 func TestPublishNoTTY_ApiKey(t *testing.T) {
 	origStdin := os.Stdin
 	r, w, err := os.Pipe()
@@ -298,15 +298,15 @@ func TestPublishNoTTY_ApiKey(t *testing.T) {
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
 
-	// Create a valid project and mock backend
-	dir := writeValidProject(t)
-
+	var authHeader string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
 		w.WriteHeader(200)
 		w.Write([]byte(`{"status":"ok"}`))
 	}))
 	defer ts.Close()
 
+	dir := writeValidProject(t)
 	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
 
 	oldDir, _ := os.Getwd()
@@ -328,17 +328,13 @@ func TestPublishNoTTY_ApiKey(t *testing.T) {
 		}
 	})
 
-	creds, err := auth.Load()
-	if err != nil {
-		t.Fatalf("expected credentials to be saved, got: %v", err)
-	}
-	if creds.ApiKey != "test-key-from-agent" {
-		t.Errorf("expected ApiKey %q, got %q", "test-key-from-agent", creds.ApiKey)
+	if authHeader != "Bearer test-key-from-agent" {
+		t.Errorf("expected Authorization header %q, got %q", "Bearer test-key-from-agent", authHeader)
 	}
 }
 
 // TestPublishNoTTY_ApiKeyStdin verifies that "blocks publish --api-key-stdin"
-// works when stdin is a pipe (non-TTY).
+// works when stdin is a pipe (non-TTY) and sends the piped key in the request.
 func TestPublishNoTTY_ApiKeyStdin(t *testing.T) {
 	origStdin := os.Stdin
 	r, w, err := os.Pipe()
@@ -358,14 +354,15 @@ func TestPublishNoTTY_ApiKeyStdin(t *testing.T) {
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
 
-	dir := writeValidProject(t)
-
+	var authHeader string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
 		w.WriteHeader(200)
 		w.Write([]byte(`{"status":"ok"}`))
 	}))
 	defer ts.Close()
 
+	dir := writeValidProject(t)
 	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
 
 	oldDir, _ := os.Getwd()
@@ -387,12 +384,8 @@ func TestPublishNoTTY_ApiKeyStdin(t *testing.T) {
 		}
 	})
 
-	creds, err := auth.Load()
-	if err != nil {
-		t.Fatalf("expected credentials to be saved, got: %v", err)
-	}
-	if creds.ApiKey != "piped-agent-key" {
-		t.Errorf("expected ApiKey %q, got %q", "piped-agent-key", creds.ApiKey)
+	if authHeader != "Bearer piped-agent-key" {
+		t.Errorf("expected Authorization header %q, got %q", "Bearer piped-agent-key", authHeader)
 	}
 }
 
@@ -770,5 +763,192 @@ func TestPublishPaidPrivatePayload(t *testing.T) {
 	}
 	if _, ok := received["tcAcceptedAt"]; !ok {
 		t.Error("expected tcAcceptedAt for paid+private (D3 paid-any-listing)")
+	}
+}
+
+// TestPublishNoCredentialsFails verifies that publish without stored credentials
+// (and no --api-key flag) fails fast with an actionable error.
+func TestPublishNoCredentialsFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "credentials.json")
+	origPathFunc := auth.CredentialPathFunc
+	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
+	defer func() { auth.CredentialPathFunc = origPathFunc }()
+
+	dir := writeValidProject(t)
+	t.Setenv("BLOCKS_BACKEND_URL", "http://unused")
+
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	resetPublishFlags()
+
+	rootCmd.SetArgs([]string{"publish", "--listing", "public", "--billing-mode", "free", "--accept-terms"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when no credentials exist")
+	}
+	if !strings.Contains(err.Error(), "not authenticated") {
+		t.Errorf("error should mention 'not authenticated', got: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "blocks login") {
+		t.Errorf("error should mention 'blocks login', got: %s", err.Error())
+	}
+}
+
+// TestPublishExpiredCredentialsFails verifies that publish with expired stored
+// credentials fails fast with an actionable error.
+func TestPublishExpiredCredentialsFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "blocks", "credentials.json")
+	origPathFunc := auth.CredentialPathFunc
+	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
+	defer func() { auth.CredentialPathFunc = origPathFunc }()
+
+	creds := &auth.Credentials{
+		ApiKey:    "bk_expired_key",
+		OrgId:     "org-test",
+		ExpiresAt: time.Now().Add(-1 * time.Hour),
+	}
+	if err := auth.Save(creds); err != nil {
+		t.Fatalf("saving expired credentials: %v", err)
+	}
+
+	dir := writeValidProject(t)
+	t.Setenv("BLOCKS_BACKEND_URL", "http://unused")
+
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	resetPublishFlags()
+
+	rootCmd.SetArgs([]string{"publish", "--listing", "public", "--billing-mode", "free", "--accept-terms"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when credentials are expired")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("error should mention 'expired', got: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "blocks login") {
+		t.Errorf("error should mention 'blocks login', got: %s", err.Error())
+	}
+}
+
+// TestPublish401ReturnsActionableError verifies that a 401 from the registry
+// results in a clear error message directing the user to 'blocks login'.
+func TestPublish401ReturnsActionableError(t *testing.T) {
+	cleanup := setupFakeCredentials(t)
+	defer cleanup()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer ts.Close()
+
+	dir := writeValidProject(t)
+	cardPath := filepath.Join(dir, "agent-card.json")
+	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	resetPublishFlags()
+
+	var publishErr error
+	captureStdout(func() {
+		rootCmd.SetArgs([]string{"publish", cardPath, "--listing", "public", "--billing-mode", "free", "--accept-terms"})
+		publishErr = rootCmd.Execute()
+	})
+
+	if publishErr == nil {
+		t.Fatal("expected error on 401")
+	}
+	if !strings.Contains(publishErr.Error(), "blocks login") {
+		t.Errorf("error should mention 'blocks login', got: %s", publishErr.Error())
+	}
+}
+
+// TestPublish401WithApiKeyFlag verifies that a 401 when using --api-key
+// tells the user to replace the key, not to run 'blocks login'.
+func TestPublish401WithApiKeyFlag(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer ts.Close()
+
+	dir := writeValidProject(t)
+	cardPath := filepath.Join(dir, "agent-card.json")
+	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	resetPublishFlags()
+
+	var publishErr error
+	captureStdout(func() {
+		rootCmd.SetArgs([]string{"publish", cardPath, "--api-key", "bad-key", "--listing", "public", "--billing-mode", "free", "--accept-terms"})
+		publishErr = rootCmd.Execute()
+	})
+
+	if publishErr == nil {
+		t.Fatal("expected error on 401")
+	}
+	if !strings.Contains(publishErr.Error(), "--api-key was rejected") {
+		t.Errorf("error should mention '--api-key was rejected', got: %s", publishErr.Error())
+	}
+	if strings.Contains(publishErr.Error(), "blocks login") {
+		t.Errorf("error should NOT mention 'blocks login' for direct-key path, got: %s", publishErr.Error())
+	}
+}
+
+// TestPublish401WithApiKeyStdin verifies that a 401 when using --api-key-stdin
+// tells the user to replace the stdin key, not to run 'blocks login'.
+func TestPublish401WithApiKeyStdin(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer ts.Close()
+
+	dir := writeValidProject(t)
+	cardPath := filepath.Join(dir, "agent-card.json")
+	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	resetPublishFlags()
+
+	// Provide a key on stdin
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	w.WriteString("bad-key-from-stdin\n")
+	w.Close()
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+
+	var publishErr error
+	captureStdout(func() {
+		rootCmd.SetArgs([]string{"publish", cardPath, "--api-key-stdin", "--listing", "public", "--billing-mode", "free", "--accept-terms"})
+		publishErr = rootCmd.Execute()
+	})
+
+	if publishErr == nil {
+		t.Fatal("expected error on 401")
+	}
+	if !strings.Contains(publishErr.Error(), "--api-key-stdin was rejected") {
+		t.Errorf("error should mention '--api-key-stdin was rejected', got: %s", publishErr.Error())
+	}
+	if strings.Contains(publishErr.Error(), "blocks login") {
+		t.Errorf("error should NOT mention 'blocks login' for stdin-key path, got: %s", publishErr.Error())
 	}
 }

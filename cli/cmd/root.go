@@ -46,12 +46,13 @@ var rootCmd = &cobra.Command{
 Quick start:
   blocks init my_agent                    Scaffold a new agent (provider) project
   blocks init my_consumer --type consumer Scaffold a new consumer project
-  cd my_agent && blocks publish           Publish the agent to the registry
+  cd my_agent && blocks login --write-env Authenticate (first time only)
+  blocks publish                          Publish the agent to the registry
   blocks run                              Start the agent locally
 
 Authentication:
   blocks login     Authenticate and store API credentials
-  blocks publish   Authenticate (if needed) and publish
+  blocks publish   Publish agent to the registry (requires prior login)
   blocks logout    Remove stored credentials
   blocks whoami    Show current identity
 

@@ -277,6 +277,31 @@ export function _resolveLogLevel(): number {
   return _LOG_LEVEL_ORDER[raw] ?? _LOG_LEVEL_ORDER.info;
 }
 
+/**
+ * True when the diag entry is "parked" — past the staleness threshold
+ * AND not currently in the connected state. A long-silent
+ * PNConnectedCategory entry is healthy by definition: at LOG_LEVEL=info
+ * the SDK suppresses successful-heartbeat status events
+ * (announceSuccessfulHeartbeats=false), so lastStatusAt does not
+ * advance on a healthy idle client. Without the category gate, the
+ * 10s diag timer would log "STALE clients present" every tick after
+ * 60s of normal idleness — noisy false positive.
+ *
+ * Exported under the `_` convention for unit tests; not part of the
+ * public SDK surface.
+ */
+export function _isDiagEntryStale(args: {
+  lastStatusAt: number | null;
+  lastCategory: string | null;
+  now: number;
+  thresholdMs: number;
+}): boolean {
+  const { lastStatusAt, lastCategory, now, thresholdMs } = args;
+  if (lastStatusAt === null) return false;
+  if (lastCategory === 'PNConnectedCategory') return false;
+  return now - lastStatusAt > thresholdMs;
+}
+
 const log = (
   level: 'debug' | 'info' | 'warn' | 'error',
   message: string,
@@ -522,7 +547,7 @@ export const startAgentInstance = async (
   const apiKey = getEnv('BLOCKS_API_KEY');
   if (!apiKey) {
     throw new Error(
-      'BLOCKS_API_KEY is required. Run \'blocks publish\' to set up credentials.',
+      'BLOCKS_API_KEY is required. Run \'blocks login --write-env\' to set up credentials.',
     );
   }
   let agentAuth: AgentAuth | undefined;
@@ -578,6 +603,157 @@ export const startAgentInstance = async (
   // from the registry above and fail loudly if it's missing.
   const effectiveBillingMode: 'free' | 'paid' = registryBillingMode ?? 'free';
 
+  // === Phase 1 connectivity diagnostics ===
+  //
+  // Tracks every long-lived PubNub client created by this agent instance
+  // so a single periodic snapshot can answer "is the SDK still trying or
+  // has the Event Engine parked?" — the BLOCKS-129 SDK reconnect probe.
+  // Per-stream consumer-side clients (task-client.ts, stream-client.ts)
+  // are intentionally out of scope here; this is the agent-side surface.
+  interface ClientDiag {
+    label: string;
+    pn: PubNub;
+    /**
+     * The diagnostic listener handle. Stored so untrackClient can
+     * removeListener — without this, the listener leaks on the PubNub
+     * client and keeps emitting after switchEnvironment() / stop().
+     * Especially load-bearing when opts.pubnub is externally supplied
+     * because the SDK does not own the client's lifetime.
+     */
+    listener: Parameters<PubNub['addListener']>[0];
+    lastStatusAt: number | null;
+    lastConnectedAt: number | null;
+    lastMessageAt: number | null;
+    lastCategory: string | null;
+    lastOperation: string | null;
+    lastStatusCode: number | null;
+  }
+
+  const diagRegistry: ClientDiag[] = [];
+  let diagAliveTimer: ReturnType<typeof setInterval> | null = null;
+  const DIAG_SNAPSHOT_INTERVAL_MS = 10_000;
+  const DIAG_STALE_THRESHOLD_MS = 60_000;
+
+  const buildDiagListener = (entry: ClientDiag) => ({
+    status: (event: unknown) => {
+      const e = event as Record<string, unknown>;
+      const category = String(e.category ?? '');
+      const operation = String(e.operation ?? '');
+      const statusCode = typeof e.statusCode === 'number' ? e.statusCode : null;
+      const now = Date.now();
+      const previousCategory = entry.lastCategory;
+      entry.lastStatusAt = now;
+      entry.lastCategory = category;
+      entry.lastOperation = operation;
+      entry.lastStatusCode = statusCode;
+      if (category === 'PNConnectedCategory') entry.lastConnectedAt = now;
+
+      log('debug', 'pubnub status event', {
+        event: 'pubnub_status',
+        client: entry.label,
+        category,
+        operation,
+        statusCode,
+        error: Boolean(e.error),
+        affectedChannels: Array.isArray(e.affectedChannels)
+          ? e.affectedChannels.length
+          : undefined,
+        instanceId,
+      });
+      if (category && category !== previousCategory) {
+        log(
+          'info',
+          `pubnub status transition [${entry.label}]: ${previousCategory ?? '(none)'} -> ${category}`,
+          {
+            event: 'pubnub_status_transition',
+            client: entry.label,
+            from: previousCategory,
+            to: category,
+            operation,
+            statusCode,
+            instanceId,
+          },
+        );
+      }
+    },
+    message: () => {
+      entry.lastMessageAt = Date.now();
+    },
+  });
+
+  const trackClient = (label: string, pn: PubNub): void => {
+    const entry: ClientDiag = {
+      label,
+      pn,
+      listener: undefined as unknown as ClientDiag['listener'],
+      lastStatusAt: null,
+      lastConnectedAt: null,
+      lastMessageAt: null,
+      lastCategory: null,
+      lastOperation: null,
+      lastStatusCode: null,
+    };
+    entry.listener = buildDiagListener(entry);
+    diagRegistry.push(entry);
+    pn.addListener(entry.listener);
+  };
+
+  const untrackClient = (pn: PubNub): void => {
+    const idx = diagRegistry.findIndex((e) => e.pn === pn);
+    if (idx < 0) return;
+    const entry = diagRegistry[idx];
+    try {
+      pn.removeListener(entry.listener);
+    } catch {
+      /* listener may already be detached if pn.destroy() was called */
+    }
+    diagRegistry.splice(idx, 1);
+  };
+
+  const startDiagAliveTimer = (): void => {
+    if (diagAliveTimer !== null) return;
+    diagAliveTimer = setInterval(() => {
+      const now = Date.now();
+      let anyStale = false;
+      const snapshots = diagRegistry.map((e) => {
+        const msSinceStatus = e.lastStatusAt !== null ? now - e.lastStatusAt : null;
+        const stale = _isDiagEntryStale({
+          lastStatusAt: e.lastStatusAt,
+          lastCategory: e.lastCategory,
+          now,
+          thresholdMs: DIAG_STALE_THRESHOLD_MS,
+        });
+        if (stale) anyStale = true;
+        const subscribed =
+          typeof (e.pn as unknown as { getSubscribedChannels?: () => string[] })
+            .getSubscribedChannels === 'function'
+            ? (e.pn as unknown as { getSubscribedChannels: () => string[] })
+                .getSubscribedChannels().length
+            : null;
+        return {
+          client: e.label,
+          lastCategory: e.lastCategory,
+          lastOperation: e.lastOperation,
+          lastStatusCode: e.lastStatusCode,
+          msSinceStatus,
+          msSinceConnected:
+            e.lastConnectedAt !== null ? now - e.lastConnectedAt : null,
+          msSinceMessage:
+            e.lastMessageAt !== null ? now - e.lastMessageAt : null,
+          subscribedChannels: subscribed,
+          stale,
+        };
+      });
+      const meta = { event: 'pubnub_alive_snapshot', instanceId, clients: snapshots };
+      if (anyStale) {
+        log('info', 'pubnub alive snapshot — STALE clients present', meta);
+      } else {
+        log('debug', 'pubnub alive snapshot', meta);
+      }
+    }, DIAG_SNAPSHOT_INTERVAL_MS);
+    if (typeof diagAliveTimer.unref === 'function') diagAliveTimer.unref();
+  };
+
   // === TIER 1: Single Active Control Client ===
   let controlClient: PubNub;
   let ownsControlClient = false;
@@ -593,10 +769,22 @@ export const startAgentInstance = async (
       subscribeKey: ks.subscribeKey,
       userId: instanceId,
       presenceTimeout: 20,
+      announceSuccessfulHeartbeats: _resolveLogLevel() >= _LOG_LEVEL_ORDER.debug,
+      subscribeRetryUnbounded: true,
+      onRetry: (message) => {
+        log('warn', 'pubnub transport retrying', {
+          event: 'pubnub_transport_retry',
+          message,
+          instanceId,
+        });
+      },
     });
     ownsControlClient = true;
     if (token) controlClient.setToken(token);
   }
+  // NOTE: trackClient('control', ...) is invoked after the main listener
+  // is registered so test fixtures that index into listeners[0] continue
+  // to hit the message handler, not the diag passthrough.
 
   let subscribeKey = envKeysets[activeEnv].subscribeKey;
   let publishKey = envKeysets[activeEnv].publishKey;
@@ -621,7 +809,9 @@ export const startAgentInstance = async (
         publishKey,
         subscribeKey,
         userId: `${instanceId}-taskclient`,
+        subscribeRetryUnbounded: false,
       });
+      trackClient('consumer-task', pn);
       return pn;
     },
   });
@@ -808,6 +998,7 @@ export const startAgentInstance = async (
           publishKey: envKeys.publishKey,
           subscribeKey: envKeys.subscribeKey,
           userId: instanceId,
+          subscribeRetryUnbounded: false,
         });
         ephemeral.setToken(creds.writeToken);
         await publishTaskEvent(ephemeral, taskId, creds.orgId, creds.agentName, {
@@ -843,6 +1034,7 @@ export const startAgentInstance = async (
       publishKey: envKeys.publishKey,
       subscribeKey: envKeys.subscribeKey,
       userId: instanceId,
+      subscribeRetryUnbounded: false,
     });
     ephemeral.setToken(creds.writeToken);
 
@@ -1602,6 +1794,7 @@ export const startAgentInstance = async (
     } catch {
       /* ignore */
     }
+    untrackClient(previousControlClient);
 
     // Create new client with new environment's keys
     const ks = envKeysets[newEnv];
@@ -1610,6 +1803,15 @@ export const startAgentInstance = async (
       subscribeKey: ks.subscribeKey,
       userId: instanceId,
       presenceTimeout: 20,
+      announceSuccessfulHeartbeats: _resolveLogLevel() >= _LOG_LEVEL_ORDER.debug,
+      subscribeRetryUnbounded: true,
+      onRetry: (message) => {
+        log('warn', 'pubnub transport retrying', {
+          event: 'pubnub_transport_retry',
+          message,
+          instanceId,
+        });
+      },
     });
     ownsControlClient = true;
 
@@ -1626,8 +1828,10 @@ export const startAgentInstance = async (
       );
     }
 
-    // Add listener and subscribe
+    // Add listener and subscribe; diag listener is registered after the
+    // primary listener so listeners[0] still points at the message handler.
     controlClient.addListener(listener);
+    trackClient('control', controlClient);
     if (controlChannel) controlClient.subscribe({ channels: [controlChannel] });
 
     if (previousControlClientOwned) {
@@ -1775,8 +1979,10 @@ export const startAgentInstance = async (
           publishKey: taskKeys.publishKey,
           subscribeKey: taskKeys.subscribeKey,
           userId: instanceId,
+          subscribeRetryUnbounded: false,
         });
         if (msg.writeToken) taskPubNub.setToken(msg.writeToken);
+        trackClient(`task-sub:${msg.taskId}`, taskPubNub);
 
         // Cache credentials for post-handler operations
         credentialCache.set(msg.taskId, {
@@ -1836,6 +2042,7 @@ export const startAgentInstance = async (
         terminatedTasks.delete(msg.taskId);
         // Destroy per-task PubNub client
         if (taskPubNub) {
+          untrackClient(taskPubNub);
           try {
             taskPubNub.destroy();
           } catch {
@@ -1926,9 +2133,29 @@ export const startAgentInstance = async (
 
   const pamDeniedHandler = (() => {
     let handled = false;
-    return (category: string): void => {
+    return (
+      category: string,
+      operation?: string,
+      statusCode?: number | null,
+    ): void => {
+      log('debug', 'pamDeniedHandler invoked', {
+        event: 'pam_handler_invoked',
+        category,
+        operation,
+        statusCode,
+        alreadyHandled: handled,
+        instanceId,
+      });
       if (category === 'PNAccessDeniedCategory' && !handled) {
         handled = true;
+        log('error', 'PAM access denied — destroying control client (agent will go silent)', {
+          event: 'pam_denied_destroy',
+          category,
+          operation,
+          statusCode,
+          instanceId,
+          controlChannel,
+        });
         console.error(
           `[AgentInstance] PAM token expired or revoked — agent ${instanceId} is no longer receiving tasks. ` +
             'Re-register the agent to resume.',
@@ -1943,19 +2170,19 @@ export const startAgentInstance = async (
   })();
 
   // === Single Message Listener ===
+  // Status transitions and per-event echoes are emitted by the diag
+  // listener registered via trackClient(). This listener handles
+  // legacy human-friendly "connected" output and PAM-denied routing.
   const listener = {
     status: (event: unknown) => {
       const e = event as Record<string, unknown>;
       const category = String(e.category ?? '');
       const operation = String(e.operation ?? '');
+      const statusCode = typeof e.statusCode === 'number' ? e.statusCode : null;
       if (category === 'PNConnectedCategory') {
         console.log(`[AgentInstance] PubNub connected to ${controlChannel}`);
-      } else if (e.error) {
-        console.error(
-          `[AgentInstance] PubNub status: ${category} (op=${operation}, code=${e.statusCode})`,
-        );
       }
-      pamDeniedHandler(category);
+      pamDeniedHandler(category, operation, statusCode);
     },
     message: (event: MessageEvent): void => {
       const raw = event.message as Record<string, unknown> | undefined;
@@ -1984,6 +2211,15 @@ export const startAgentInstance = async (
   };
 
   controlClient.addListener(listener);
+  trackClient('control', controlClient);
+
+  startDiagAliveTimer();
+  log('info', 'pubnub diagnostics armed', {
+    event: 'pubnub_diagnostics_armed',
+    snapshotIntervalMs: DIAG_SNAPSHOT_INTERVAL_MS,
+    staleThresholdMs: DIAG_STALE_THRESHOLD_MS,
+    instanceId,
+  });
 
   // Register and subscribe — use registryListing (from DB) so the backend mints
   // the PAM token for the correct keyset; fall back to opts.listing or SDK default.
@@ -2045,6 +2281,22 @@ export const startAgentInstance = async (
 
   const stop = (): void => {
     try {
+      if (diagAliveTimer !== null) {
+        clearInterval(diagAliveTimer);
+        diagAliveTimer = null;
+      }
+      // Remove every diag listener before clearing the registry.
+      // Especially important when opts.pubnub was externally supplied —
+      // we don't own pn.destroy(), so the only way the listener stops
+      // emitting is if we removeListener it explicitly.
+      for (const entry of diagRegistry) {
+        try {
+          entry.pn.removeListener(entry.listener);
+        } catch {
+          /* listener may already be detached if pn.destroy() was called */
+        }
+      }
+      diagRegistry.length = 0;
       consumerAuth?.destroy();
       consumerTaskClient.destroy();
       controlClient.removeListener(listener);

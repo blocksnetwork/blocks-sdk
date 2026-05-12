@@ -22,12 +22,15 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
     if ctx:
         ctx.report_status("Streaming echo output...")
+        # create_stream negotiates a dedicated channel for streaming via the streamSetup handshake
         stream = ctx.create_stream(
             bundle_size_bytes=2048,
             max_latency_ms=50,
         )
+        # writes are batched and published according to bundle_size_bytes and max_latency_ms
         for chunk in _chunk_text(full_text):
             stream.write(chunk)
+        # end() publishes a stream_end marker so consumers know the stream is complete
         stream.end()
         ctx.report_status("Streaming complete")
 

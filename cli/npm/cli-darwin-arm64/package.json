@@ -2,7 +2,7 @@
   "name": "@blocks-network/cli-darwin-arm64",
   "version": "0.0.0",
   "description": "Blocks CLI binary for macOS ARM64",
-  "license": "Blocks Network",
+  "license": "SEE LICENSE IN LICENSE",
   "os": ["darwin"],
   "cpu": ["arm64"],
   "files": ["blocks"],

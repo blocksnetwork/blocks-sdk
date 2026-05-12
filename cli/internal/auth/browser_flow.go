@@ -197,16 +197,44 @@ func errorPage(detail string) string {
 	return buf.String()
 }
 
+// browserCommand maps a GOOS string to the command and arguments used to open
+// a URL in the platform's default browser. Pure function; no side effects.
+func browserCommand(goos, url string) (string, []string, error) {
+	switch goos {
+	case "darwin":
+		return "open", []string{url}, nil
+	case "linux", "freebsd", "openbsd":
+		return "xdg-open", []string{url}, nil
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", url}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported platform: %s", goos)
+	}
+}
+
+// missingOpenerError formats a friendly error for the case where the
+// platform's browser opener is not on PATH. Pure function for testability.
+func missingOpenerError(goos, name string) error {
+	hint := ""
+	switch goos {
+	case "freebsd":
+		hint = " (install with `pkg install xdg-utils`)"
+	case "openbsd":
+		hint = " (install with `pkg_add xdg-utils`)"
+	case "linux":
+		hint = " (install xdg-utils via your package manager)"
+	}
+	return fmt.Errorf("browser opener %q not found on PATH%s", name, hint)
+}
+
 // OpenBrowser opens the given URL in the platform's default browser.
 func OpenBrowser(url string) error {
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", url).Start()
-	case "linux":
-		return exec.Command("xdg-open", url).Start()
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	name, args, err := browserCommand(runtime.GOOS, url)
+	if err != nil {
+		return err
 	}
+	if _, lookupErr := exec.LookPath(name); lookupErr != nil {
+		return missingOpenerError(runtime.GOOS, name)
+	}
+	return exec.Command(name, args...).Start()
 }

@@ -2,7 +2,7 @@
   "name": "@blocks-network/cli-win32-x64",
   "version": "0.0.0",
   "description": "Blocks CLI binary for Windows x64",
-  "license": "Blocks Network",
+  "license": "SEE LICENSE IN LICENSE",
   "os": ["win32"],
   "cpu": ["x64"],
   "files": ["blocks.exe"],

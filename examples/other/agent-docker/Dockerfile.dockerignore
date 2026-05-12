@@ -1,0 +1,18 @@
+# Per-Dockerfile ignore — overrides the repo-root .dockerignore for
+# this build only. We need the built Node SDK (blocks-sdk/sdks/node/
+# dist) to land in the image, which the root ignore strips.
+
+# Exclude everything from the build context by default...
+**
+# ...then re-include only what the Dockerfile needs.
+!blocks-sdk/sdks/node/package.json
+!blocks-sdk/sdks/node/dist/**
+!examples/other/agent-docker/entrypoint.sh
+!examples/other/agent-docker/log-prefix.mjs
+
+# Never ship secrets or host-specific node_modules, even though
+# they'd be ignored by the negated rules above.
+**/.env
+**/.env.*
+**/node_modules
+.git/**

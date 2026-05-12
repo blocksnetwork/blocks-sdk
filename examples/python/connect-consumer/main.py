@@ -30,7 +30,7 @@ from blocks_network import TaskClient
 
 api_key = os.environ.get("BLOCKS_API_KEY")
 if not api_key:
-    print("BLOCKS_API_KEY not set. Run 'blocks publish' or 'blocks login --write-env' first.", file=sys.stderr)
+    print("BLOCKS_API_KEY not set. Run 'blocks login --write-env' first.", file=sys.stderr)
     sys.exit(1)
 
 if len(sys.argv) < 2:

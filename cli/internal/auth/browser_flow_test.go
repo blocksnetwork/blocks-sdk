@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,76 @@ func TestSuccessPageEmbedsSharedAssets(t *testing.T) {
 	}
 	if strings.Contains(callbackSuccessRendered, "{{.Styles}}") || strings.Contains(callbackSuccessRendered, "{{.Script}}") {
 		t.Error("success page still contains unresolved template placeholders")
+	}
+}
+
+func TestBrowserCommand(t *testing.T) {
+	cases := []struct {
+		goos     string
+		wantCmd  string
+		wantArgs []string
+	}{
+		{"darwin", "open", []string{"https://example.com"}},
+		{"linux", "xdg-open", []string{"https://example.com"}},
+		{"windows", "rundll32", []string{"url.dll,FileProtocolHandler", "https://example.com"}},
+		{"freebsd", "xdg-open", []string{"https://example.com"}},
+		{"openbsd", "xdg-open", []string{"https://example.com"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.goos, func(t *testing.T) {
+			cmd, args, err := browserCommand(tc.goos, "https://example.com")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cmd != tc.wantCmd {
+				t.Errorf("cmd = %q, want %q", cmd, tc.wantCmd)
+			}
+			if !slices.Equal(args, tc.wantArgs) {
+				t.Errorf("args = %v, want %v", args, tc.wantArgs)
+			}
+		})
+	}
+}
+
+func TestBrowserCommandUnsupported(t *testing.T) {
+	_, _, err := browserCommand("plan9", "https://example.com")
+	if err == nil {
+		t.Fatal("expected error for plan9, got nil")
+	}
+	if !strings.Contains(err.Error(), "plan9") {
+		t.Errorf("error %q should mention the unsupported platform name", err.Error())
+	}
+}
+
+func TestMissingOpenerError(t *testing.T) {
+	cases := []struct {
+		goos     string
+		wantHint string // substring expected in the error message; empty = no install hint
+	}{
+		{"freebsd", "pkg install xdg-utils"},
+		{"openbsd", "pkg_add xdg-utils"},
+		{"linux", "xdg-utils"},
+		{"darwin", ""},
+		{"windows", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.goos, func(t *testing.T) {
+			err := missingOpenerError(tc.goos, "xdg-open")
+			if err == nil {
+				t.Fatal("expected non-nil error")
+			}
+			if !strings.Contains(err.Error(), "xdg-open") {
+				t.Errorf("error %q should mention the opener name", err.Error())
+			}
+			if tc.wantHint == "" {
+				if strings.Contains(err.Error(), "install") {
+					t.Errorf("error %q should have no install hint for %s", err.Error(), tc.goos)
+				}
+				return
+			}
+			if !strings.Contains(err.Error(), tc.wantHint) {
+				t.Errorf("error %q missing expected hint %q for %s", err.Error(), tc.wantHint, tc.goos)
+			}
+		})
 	}
 }

@@ -23,8 +23,10 @@ const (
 )
 
 const (
-	pricePerTaskPrompt   = promptAnsiBold + "Price per task" + promptAnsiReset + " in USD (up to 1000.00)"
-	pricePerMinutePrompt = promptAnsiBold + "Price per minute" + promptAnsiReset + " in USD (up to 10.00)"
+	DefaultPrice = "0.10"
+
+	pricePerTaskPrompt   = promptAnsiBold + "Price per task" + promptAnsiReset + " in USD (up to 1000.00) [" + DefaultPrice + "]"
+	pricePerMinutePrompt = promptAnsiBold + "Price per minute" + promptAnsiReset + " in USD (up to 10.00) [" + DefaultPrice + "]"
 	pricePerTaskLabel    = "Price per task"
 	pricePerMinuteLabel  = "Price per minute"
 
@@ -351,10 +353,7 @@ func resolvePrice(prompt string, label string, genericFlag, specificFlag *string
 	}
 	text := strings.TrimSpace(scanner.Text())
 	if text == "" {
-		if required {
-			return nil, fmt.Errorf("%s is required", label)
-		}
-		return nil, nil
+		text = DefaultPrice
 	}
 
 	if err := validatePriceRange(text, minPrice, maxPrice, label); err != nil {

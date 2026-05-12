@@ -73,6 +73,15 @@ Always install (or update) the Blocks CLI to ensure the latest version:
 npm i -g @blocks-network/cli
 ```
 
+On FreeBSD or OpenBSD (no npm in base), use the POSIX shell installer
+instead, and install `xdg-utils` so `blocks login` can open a browser:
+
+```bash
+curl -fsSL https://config.blocks.ai/install.sh | sh
+pkg install xdg-utils   # FreeBSD
+pkg_add xdg-utils       # OpenBSD
+```
+
 Then ensure the `blocks` command is available for the rest of the session:
 
 ```bash
@@ -101,12 +110,147 @@ always pass `--language node` explicitly for TypeScript agents.
 Edit `handler.ts` (or `handler.py` for Python).
 See [Agent Card Reference] for signature and [Node Reference] for patterns.
 
-**Important:** Also update `agent-card.json` with proper `io` schemas.
-**You MUST read the [IO Schema Reference]**
-before editing `agent-card.json` -- it contains required rules, field
-definitions, and examples for inputs/outputs. Without a correct `schema`,
-the dashboard cannot render input forms and the agent will not receive
-correct input.
+### IO Schema Rules
+
+Update `agent-card.json` `io` to match the handler's expected input and
+output shapes. Without a correct schema the dashboard cannot render input
+forms.
+
+**Required fields:**
+
+| On each `io.inputs[]` | On each `io.outputs[]` |
+|---|---|
+| `id`, `description`, `contentType`, `required` | `id`, `contentType`, `guaranteed` |
+
+**Transport classes** (determined by `contentType`):
+
+| Class | contentType examples | Rules |
+|---|---|---|
+| **form-class** | `application/json`, `*/*+json` | `schema` and `example` **required**. `schema.type` must be `"object"` with a `properties` map. Each property uses `type` and `title`. |
+| **text-class** | `text/plain`, `text/markdown` | `schema`, `accept`, `maxSizeBytes` all **forbidden**. Renders as textarea. |
+| **file-class** | `image/png`, `application/pdf` | `schema` **forbidden**. Optional `accept` (array) and `maxSizeBytes` (1–26214400). |
+
+**Defaults:** For form-class, put default values in
+`schema.properties[*].default`. For text-class, use the top-level
+`example` field (must be a string).
+
+`schema.properties` keys must match the fields your handler reads from
+`task.requestParts[0]`.
+
+#### Example: Single Text Input (scaffold default)
+
+```json
+"io": {
+  "inputs": [
+    {
+      "id": "request",
+      "description": "Task input.",
+      "contentType": "application/json",
+      "required": true,
+      "example": { "text": "Hello from the Blocks Network!" },
+      "schema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Input Text",
+            "default": "Hello from the Blocks Network!"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "id": "result",
+      "description": "Task output.",
+      "contentType": "text/plain",
+      "guaranteed": true
+    }
+  ]
+}
+```
+
+#### Example: Multi-Field Input
+
+```json
+"io": {
+  "inputs": [
+    {
+      "id": "request",
+      "description": "Search parameters.",
+      "contentType": "application/json",
+      "required": true,
+      "example": { "query": "weather", "limit": 10, "verbose": false },
+      "schema": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query":   { "type": "string",  "title": "Search Query" },
+          "limit":   { "type": "integer", "title": "Max Results", "default": 10 },
+          "verbose": { "type": "boolean", "title": "Verbose Output", "default": false }
+        }
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "id": "result",
+      "description": "Search results.",
+      "contentType": "application/json",
+      "guaranteed": true
+    }
+  ]
+}
+```
+
+See [IO Schema Reference] for enum fields, array fields, and full
+validation details.
+
+### Required: maxRunningTimeSec
+
+**Always** set `runtime.maxRunningTimeSec` in `agent-card.json`. This
+integer (seconds) declares the maximum wall-clock time a single task
+invocation may run before the platform considers it timed out. Choose a
+value appropriate for the agent's workload:
+
+- Simple request/response: `30`–`60`
+- LLM-backed or multi-step: `120`–`300`
+- Long-running pipe tasks: `600`–`3600`
+
+```json
+"runtime": {
+  "handler": "./handler.ts",
+  "concurrency": 5,
+  "maxRunningTimeSec": 300
+}
+```
+
+If omitted, the platform applies a default timeout which may be too
+short or too long for the agent's use case.
+
+### Other Useful Agent Card Fields
+
+Beyond the required structure, consider populating these optional fields
+to improve discoverability, security, and operational behavior:
+
+| Section | Field | Purpose |
+|---------|-------|---------|
+| `identity` | `documentationUrl` | Link to external docs for the agent |
+| `identity` | `repositoryUrl` | Source code repository URL |
+| `identity` | `iconUrl` | Agent icon displayed in the dashboard/registry |
+| `identity.provider` | `url` | Organization homepage |
+| `runtime` | `concurrency` | Max concurrent tasks per instance (default 1) |
+| `runtime` | `expectedInstances` | Expected running instances for scaling (default 1) |
+| `runtime` | `maxPendingBacklog` | Max queued tasks before rejecting new ones |
+| `skills[]` | `examples` | Array of example prompts/inputs for each skill |
+| `security` | `encryption` | Declare E2E encryption requirements (`algorithm`, `consumerKeyRequired`, keys) |
+| `services` | `webhooks` | Set `true` if the agent accepts webhook triggers |
+| `extensions` | *(any)* | Freeform metadata for custom integrations |
+
+Populate `skills[].examples` whenever possible — they power the
+dashboard "Try it" UI and help consumers understand agent capabilities.
 
 If a handler creates a sub-task through `TaskClient` and registers
 `onArtifact(cb)` / `on_artifact(cb)` after reconnecting to an existing
@@ -139,20 +283,27 @@ If the agent uses streaming, read the [Agent Card Reference]
 
 ## Step 6: Publish
 
-Always run after editing `agent-card.json` or the handler, even if
+Always publish after editing `agent-card.json` or the handler, even if
 previously published. This pushes the latest metadata (IO schemas,
 streaming capabilities, description) to the registry.
 
-```bash
-cd <name> && blocks publish
-```
+**Do NOT run `blocks publish` on the user's behalf.** Instead, instruct
+the user to run it themselves. `blocks publish` requires prior
+authentication via `blocks login`:
 
-**Name conflict handling:** If `blocks publish` rejects the name
-(duplicate/already taken), inform the user that the name is unavailable
-and use `AskUserQuestion` to ask for an alternative, more unique name.
-After the user provides a new name, update `agent-card.json` (and
-rename the directory if needed), then re-run `blocks publish`. Repeat
-until the name is accepted.
+> Run these commands to authenticate and publish your agent:
+> ```bash
+> cd <name>
+> blocks login        # first time only — authenticate
+> blocks publish
+> ```
+
+**Name conflict handling:** If the user reports that `blocks publish`
+rejected the name (duplicate/already taken), inform them that the name
+is unavailable and use `AskUserQuestion` to ask for an alternative,
+more unique name. After the user provides a new name, update
+`agent-card.json` (and rename the directory if needed), then ask the
+user to re-run `blocks publish`.
 
 ## Step 7: Validate
 
@@ -162,29 +313,7 @@ cd <name> && blocks check
 
 ## Step 8: Start
 
-Stop any previously running instance of this agent first, then start
-in background. The PID file (`<name>/.agent.pid`) stores two lines:
-the PID and the absolute agent directory path. Before killing, verify
-both that the PID is still running AND that the stored path matches
-the current agent directory — if either check fails, the PID was
-reused by an unrelated process and MUST NOT be killed.
-
-```bash
-AGENT_DIR="$(cd <name> && pwd)"
-if [ -f <name>/.agent.pid ]; then
-  OLD_PID=$(sed -n '1p' <name>/.agent.pid)
-  OLD_DIR=$(sed -n '2p' <name>/.agent.pid)
-  if [ "$OLD_DIR" = "$AGENT_DIR" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    pkill -P "$OLD_PID" 2>/dev/null || true
-    kill "$OLD_PID" 2>/dev/null || true
-  fi
-  rm -f <name>/.agent.pid
-fi
-```
-
-Install dependencies if a package manifest is present, then start
-using `blocks run` (works for both scaffolded and non-scaffolded
-agents):
+Install dependencies if a package manifest is present:
 
 ```bash
 cd <name>
@@ -194,12 +323,13 @@ cd <name>
 cd ..
 ```
 
-```bash
-(cd <name> && blocks run) &
-printf '%s\n%s\n' $! "$(cd <name> && pwd)" > <name>/.agent.pid
-```
+**Do NOT run `blocks run` on the user's behalf.** Instead, instruct
+the user to start the agent themselves:
 
-Wait a few seconds before proceeding.
+> Run this command to start your agent:
+> ```bash
+> cd <name> && blocks run
+> ```
 
 ## Step 9: Test
 
