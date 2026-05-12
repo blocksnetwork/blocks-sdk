@@ -62,16 +62,23 @@ After scaffolding completes (`blocks init`), proceed to **Authentication**
 After running `blocks init`, the user must publish their agent before
 they can run it against the backend.
 
-### Step 3: Publish the Agent
+### Step 3: Authenticate
+
+```bash
+blocks login --write-env
+```
+
+This opens browser-based OAuth, stores credentials, and writes
+`BLOCKS_API_KEY` to the project `.env`.
+
+### Step 4: Publish the Agent
 
 ```bash
 cd <agent-name> && blocks publish
 ```
 
-This command authenticates via browser-based OAuth (if needed),
-validates `agent-card.json`, and publishes agent metadata to the
-registry. Credentials are stored automatically and `BLOCKS_API_KEY`
-is written to the project `.env`.
+This validates `agent-card.json` and publishes agent metadata to the
+registry. Requires prior `blocks login`.
 
 ### Verify Identity
 
@@ -439,7 +446,7 @@ not from env vars. For local development, the super-installer sets
 
 ```bash
 BLOCKS_CDM_URL=http://localhost:3001/api/v1/cdm   # SDK fetches keys from here
-BLOCKS_API_KEY=                                     # Blocks Network API key (from `blocks publish`)
+BLOCKS_API_KEY=                                     # Blocks Network API key (from `blocks login --write-env`)
 ```
 
 The backend serves dual keyset config (playground + network) at

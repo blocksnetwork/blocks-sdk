@@ -38,6 +38,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
     log(f"Symbols: {', '.join(symbols)}  Duration: {duration_minutes}m")
 
+    # format="events" means the stream carries structured JSON events (vs "bytes" for raw binary)
     stream = ctx.create_stream(format="events")
     log(f"Stream created: {stream.channel}")
 
@@ -51,6 +52,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     )
 
     try:
+        # is_cancelled becomes True on CancelTask, TerminateTask, or duration expiry
         while not ctx.is_cancelled:
             tick += 1
 

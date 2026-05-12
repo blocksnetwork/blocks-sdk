@@ -2,7 +2,7 @@
   "name": "@blocks-network/cli-linux-arm64",
   "version": "0.0.0",
   "description": "Blocks CLI binary for Linux ARM64",
-  "license": "Blocks Network",
+  "license": "SEE LICENSE IN LICENSE",
   "os": ["linux"],
   "cpu": ["arm64"],
   "files": ["blocks"],

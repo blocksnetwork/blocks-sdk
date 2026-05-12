@@ -284,6 +284,57 @@ def _download_input_artifact(
     raise ValueError(f"Unknown artifactRef kind: {kind}")
 
 
+def _make_pubnub_retry_logger(instance_id: str):
+    """Build the on_retry callback used at both control-client construction
+    sites. Dispatches on the category emitted by _RetryLogForwarder so the
+    agent log carries a distinct event for each reconnection state:
+
+    - retry     → warn,  event=pubnub_transport_retry
+    - recovered → info,  event=pubnub_transport_recovered
+    - failed    → error, event=pubnub_transport_failed
+
+    The retry-budget bump (subscribe_retry_unbounded=True, 43_200 attempts)
+    means "failed" should not fire in normal operation; surfacing it at
+    error level guarantees a regression that shrinks the budget is loud.
+
+    What "recovered" actually means. The signal fires when PubNub's
+    NativeReconnectionManager observes a successful time() round-trip
+    after a streak of failures — i.e. transport-level connectivity is
+    confirmed back. It does NOT mean the agent is fully presence-active
+    yet: the subscribe long-poll thread may still be hung on the
+    pre-cut socket waiting for `subscribe_request_timeout` (PubNub
+    default 310s) to expire before it issues a fresh subscribe, and
+    the broker may need 1-2 heartbeat cycles after that to re-emit a
+    presence join for the UUID. Verified live on 2026-05-07: recovered
+    fired at +11m9s after blip start; broker-side `Action: join` for
+    the same UUID appeared at +15m49s — a ~4-5 min lag dominated by
+    `subscribe_request_timeout`. Useful follow-up if the lag is a UX
+    problem: lower `subscribe_request_timeout` to ~60s on the control
+    client.
+    """
+
+    _CATEGORY_DISPATCH = {
+        "retry": ("warn", "pubnub transport retrying", "pubnub_transport_retry"),
+        "recovered": ("info", "pubnub transport recovered", "pubnub_transport_recovered"),
+        "failed": ("error", "pubnub transport failed", "pubnub_transport_failed"),
+    }
+
+    def on_retry(category: str, message: str) -> None:
+        dispatched = _CATEGORY_DISPATCH.get(category)
+        if dispatched is None:
+            return
+        level, log_message, event = dispatched
+        log_agent_instance_event(
+            level,
+            log_message,
+            event=event,
+            retry_message=message,
+            instance_id=instance_id,
+        )
+
+    return on_retry
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -361,7 +412,7 @@ def start_agent_instance(
     api_key = _os_top.environ.get("BLOCKS_API_KEY", "")
     if not api_key:
         raise RuntimeError(
-            "BLOCKS_API_KEY is required. Run 'blocks publish' to set up credentials."
+            "BLOCKS_API_KEY is required. Run 'blocks login --write-env' to set up credentials."
         )
 
     # -- Initialize AgentAuth (API key-based auth) -----------------------------
@@ -431,6 +482,8 @@ def start_agent_instance(
             publish_key=ks.publish_key,
             subscribe_key=ks.subscribe_key,
             presence_timeout=20,
+            subscribe_retry_unbounded=True,
+            on_retry=_make_pubnub_retry_logger(instance_id),
         )
 
     if options.token:
@@ -465,6 +518,7 @@ def start_agent_instance(
             user_id=f"{instance_id}-taskclient",
             publish_key=env_keysets[active_env].publish_key,
             subscribe_key=env_keysets[active_env].subscribe_key,
+            subscribe_retry_unbounded=False,
         ),
         base_url=options.base_url or (cdm_config.api.base_url if cdm_config else None),
     )
@@ -609,6 +663,7 @@ def start_agent_instance(
             user_id=instance_id,
             publish_key=env_keys.publish_key,
             subscribe_key=env_keys.subscribe_key,
+            subscribe_retry_unbounded=False,
         )
         try:
             ephemeral_pn.set_token(creds.write_token)
@@ -1695,6 +1750,8 @@ def start_agent_instance(
             publish_key=ks.publish_key,
             subscribe_key=ks.subscribe_key,
             presence_timeout=20,
+            subscribe_retry_unbounded=True,
+            on_retry=_make_pubnub_retry_logger(instance_id),
         )
 
         # Clear stale token from previous environment
@@ -1899,6 +1956,7 @@ def start_agent_instance(
                     user_id=instance_id,
                     publish_key=task_keys.publish_key,
                     subscribe_key=task_keys.subscribe_key,
+                    subscribe_retry_unbounded=False,
                 )
                 per_task_pubnub_clients[msg.task_id] = per_task_pn
                 if _write_token:

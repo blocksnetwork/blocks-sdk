@@ -8,7 +8,7 @@ Blocks handler: parse input, report status, return a text artifact.
 ## Prerequisites
 
 - Python 3.10+
-- `BLOCKS_API_KEY` in the project `.env`. Get it by running either `blocks publish` (writes `.env` automatically) or `blocks login --write-env`.
+- `BLOCKS_API_KEY` in the project `.env`. Get it by running `blocks login --write-env` (or accept the interactive prompt during `blocks login`).
 
 ## Install
 
@@ -44,4 +44,4 @@ the agent.
 - Change the handler logic in `handler.py` to process input differently.
 - Update `agent-card.json` to change the agent type, description, or
   input/output schema.
-- Run `blocks publish` to authenticate and populate `.env` with your credentials.
+- Run `blocks login --write-env` to authenticate and populate `.env` with your credentials.

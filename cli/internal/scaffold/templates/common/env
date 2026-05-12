@@ -1,3 +1,2 @@
-# Blocks API key — set via 'blocks login --write-env', 'blocks publish',
-# or paste from the dashboard.
+# Blocks API key — set via 'blocks login --write-env' or paste from the dashboard.
 BLOCKS_API_KEY=

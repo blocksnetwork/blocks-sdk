@@ -9,7 +9,7 @@ history-based stream/artifact discovery, and live event handling.
 ## Prerequisites
 
 - Node.js 24+
-- `BLOCKS_API_KEY` in the project `.env`. Get it by running either `blocks publish` (writes `.env` automatically) or `blocks login --write-env`.
+- `BLOCKS_API_KEY` in the project `.env`. Get it by running `blocks login --write-env` (or accept the interactive prompt during `blocks login`).
 - A task ID from a previous `sendMessage()` call
 
 ## Run

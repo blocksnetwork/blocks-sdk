@@ -560,6 +560,7 @@ class TaskClient:
                 subscribe_key=resolved_subscribe_key,
                 publish_key=resolved_publish_key or None,
                 user_id=f"blocks-task-{uuid.uuid4().hex[:12]}",
+                subscribe_retry_unbounded=False,
             )
 
         # Wire default_owner_id from ConsumerAuth identity
@@ -672,6 +673,7 @@ class TaskClient:
                 subscribe_key=effective_subscribe_key,
                 publish_key=effective_publish_key or None,
                 user_id=session_id,
+                subscribe_retry_unbounded=False,
             )
         if read_token:
             pn.set_token(read_token)

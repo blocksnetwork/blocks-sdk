@@ -14,6 +14,12 @@ ARCH="$(uname -m)"
 
 case "$OS" in
   darwin|linux) ;;
+  freebsd|openbsd)
+    echo "Error: ${OS} is not available via the Artifactory installer."
+    echo "Install via the public script instead:"
+    echo "  curl -fsSL https://config.blocks.ai/install.sh | sh"
+    exit 1
+    ;;
   *) echo "Unsupported OS: ${OS}"; exit 1 ;;
 esac
 

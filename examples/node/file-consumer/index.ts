@@ -24,7 +24,7 @@ import type { SendMessageRequestPart } from '@blocks-network/sdk';
 
 const apiKey = process.env.BLOCKS_API_KEY;
 if (!apiKey) {
-  console.error("BLOCKS_API_KEY not set. Run 'blocks publish' or 'blocks login --write-env' first.");
+  console.error("BLOCKS_API_KEY not set. Run 'blocks login --write-env' first.");
   process.exit(1);
 }
 

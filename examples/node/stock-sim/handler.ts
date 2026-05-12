@@ -25,6 +25,7 @@ export default async function handler(
 
   log(`Symbols: ${symbols.join(', ')}  Duration: ${durationMinutes}m`);
 
+  // format: 'events' means the stream carries structured JSON events (vs 'bytes' for raw binary)
   const stream = await ctx.createStream({ format: 'events' });
   log(`Stream created: ${stream.channel}`);
 
@@ -37,6 +38,7 @@ export default async function handler(
   );
 
   try {
+    // cancelSignal is an AbortSignal for cooperative cancellation (CancelTask or duration expiry)
     while (!ctx.cancelSignal.aborted) {
       tick += 1;
 

@@ -35,7 +35,7 @@ from blocks_network.consumer_auth import TokenResult
 
 api_key = os.environ.get("BLOCKS_API_KEY")
 if not api_key:
-    print("BLOCKS_API_KEY not set. Run 'blocks publish' or 'blocks login --write-env' first.", file=sys.stderr)
+    print("BLOCKS_API_KEY not set. Run 'blocks login --write-env' first.", file=sys.stderr)
     sys.exit(1)
 
 def _fetch_token() -> TokenResult:

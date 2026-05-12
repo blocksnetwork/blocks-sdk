@@ -48,7 +48,7 @@ func Load() (*Credentials, error) {
 		return nil, err
 	}
 	if creds.SchemaVersion < currentSchemaVersion {
-		return nil, fmt.Errorf("credentials file is schema v%d — run 'blocks publish' to re-authenticate", creds.SchemaVersion)
+		return nil, fmt.Errorf("credentials file is schema v%d — run 'blocks login' to re-authenticate", creds.SchemaVersion)
 	}
 	if creds.SchemaVersion > currentSchemaVersion {
 		return nil, fmt.Errorf("credentials file version %d is not supported by this CLI — please upgrade blocks", creds.SchemaVersion)

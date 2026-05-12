@@ -875,6 +875,7 @@ class TaskSession:
             subscribe_key=self._sdk_options.get("subscribe_key", ""),
             publish_key=self._sdk_options.get("publish_key"),
             user_id=f"blocks-dl-{uuid.uuid4().hex[:12]}",
+            subscribe_retry_unbounded=False,
         )
         if self._read_token:
             temp_pn.set_token(self._read_token)

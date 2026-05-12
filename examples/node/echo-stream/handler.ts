@@ -23,16 +23,19 @@ export default async function handler(
 
   if (ctx) {
     ctx.reportStatus('Streaming echo output...');
+    // createStream negotiates a dedicated channel for streaming via the streamSetup handshake
     const stream = await ctx.createStream({
       bundleSizeBytes: 2048,
       maxLatencyMs: 50,
     });
     const chunks = chunkText(fullText);
 
+    // writes are batched and published according to bundleSizeBytes and maxLatencyMs
     for (const chunk of chunks) {
       stream.write({ text: chunk });
     }
 
+    // end() publishes a stream_end marker so consumers know the stream is complete
     await stream.end();
     ctx.reportStatus('Streaming complete');
   }

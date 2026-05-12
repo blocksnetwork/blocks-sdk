@@ -267,7 +267,11 @@ describe('Single Active PubNub Instance', () => {
     const lastConfig = pnMock.mock.calls[pnMock.mock.calls.length - 1][0] as Record<string, string>;
     expect(lastConfig.subscribeKey).toBe('sub-c-nw');
 
-    expect(controlClient.removeListener).toHaveBeenCalledTimes(1);
+    // Two removeListener calls: the primary control listener (from
+    // switchEnvironment's local cleanup) AND the diagnostic listener
+    // (from untrackClient — important when opts.pubnub is externally
+    // supplied so the diag listener doesn't outlive the agent instance).
+    expect(controlClient.removeListener).toHaveBeenCalledTimes(2);
     expect(controlClient.unsubscribe).toHaveBeenCalledWith({
       channels: [`agent.${TEST_AGENT_ID_DUAL}.control`],
     });

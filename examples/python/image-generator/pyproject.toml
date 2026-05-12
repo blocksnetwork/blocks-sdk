@@ -1,0 +1,8 @@
+[project]
+name = "image-generator-example"
+version = "1.0.0"
+description = "Image generator agent example for Blocks Network (Python)"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+]

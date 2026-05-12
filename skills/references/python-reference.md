@@ -484,13 +484,23 @@ blocks run                                    # Start agent
 
 ## Environment Variables (.env)
 
-Auto-populated by `blocks init` and `blocks publish`, or by `blocks login --write-env` (opt-in). Contains `BLOCKS_API_KEY`.
+Auto-populated by `blocks init` or by `blocks login --write-env` (opt-in). Contains `BLOCKS_API_KEY`.
 
 Additional env vars read by the Python SDK:
 
 - `BLOCKS_CDM_URL` -- CDM config endpoint (defaults to production S3-hosted endpoint)
 - `LOG_LEVEL` -- error/warn/info/debug (default info)
 - `ARTIFACT_INLINE_LIMIT_BYTES` -- max artifact size for inline base64 encoding
+
+---
+
+## Transport-Layer Resilience
+
+The agent's long-lived PubNub control client retries subscribe failures with an unbounded budget by default (~30 days at a 60s cap). Brief network outages — VPN reconnects, gateway flaps, transient ISP failures — no longer silently park the agent after the SDK's vanilla ~4-6 minute retry window exhausts. The Python SDK forwards PubNub's per-attempt / recovered / failed retry messages into the agent's structured logger as `pubnub_transport_retry`, `pubnub_transport_recovered`, and `pubnub_transport_failed` events.
+
+Per-task and per-stream PubNub clients keep the SDK's default short retry budget — a stuck task should fail fast rather than retry indefinitely. This split is enforced internally and not configurable from the handler.
+
+This behavior is automatic; no agent-card or env-var changes are required.
 
 ---
 

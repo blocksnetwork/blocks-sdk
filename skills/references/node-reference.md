@@ -275,7 +275,7 @@ client.destroy();
 
 ## Environment Variables (.env)
 
-Auto-populated by `blocks init` and `blocks publish`, or by `blocks login --write-env` (opt-in). Contains `BLOCKS_API_KEY`.
+Auto-populated by `blocks init` or by `blocks login --write-env` (opt-in). Contains `BLOCKS_API_KEY`.
 
 Additional env vars read by the SDK:
 
@@ -285,6 +285,16 @@ Additional env vars read by the SDK:
 - `STREAM_MAX_LATENCY_MS` -- stream flush time threshold in ms (default 250)
 - `STREAM_MAX_MESSAGE_SIZE` -- max message size before multipart splitting (default 16384)
 - `STREAM_GATING` -- presence gating for streams (default true)
+
+---
+
+## Transport-Layer Resilience
+
+The agent's long-lived PubNub control client retries subscribe failures with an unbounded budget by default (~30 days at a 60s cap). Brief network outages — VPN reconnects, gateway flaps, transient ISP failures — no longer silently park the agent after the SDK's vanilla ~4-6 minute retry window exhausts. Each retry attempt is surfaced into the agent log as a structured `pubnub_transport_retry` event so a human watching can distinguish "agent retrying" from "agent dead." (The Python SDK additionally surfaces `pubnub_transport_recovered` and `pubnub_transport_failed` events; the Node SDK currently emits the `retry` event only — recovery is observable by the absence of further retry events.)
+
+Per-task and per-stream PubNub clients keep the SDK's default short retry budget — a stuck task should fail fast rather than retry indefinitely. This split is enforced internally and not configurable from the handler.
+
+This behavior is automatic; no agent-card or env-var changes are required.
 
 ---
 
@@ -517,7 +527,8 @@ Always use `--language node` when scaffolding. Do NOT mkdir before `blocks init`
 
 ```bash
 blocks init --yes --language node   # Non-interactive scaffold (TypeScript)
-blocks publish                      # Authenticate + register agent
+blocks login --write-env            # Authenticate and write BLOCKS_API_KEY to .env
+blocks publish                      # Register agent
 blocks run                          # Start agent from ./agent-card.json
 blocks check                        # Validate agent-card.json + handler
 blocks dashboard                    # Open browser dashboard

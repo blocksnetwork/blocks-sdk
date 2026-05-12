@@ -1,0 +1,82 @@
+{
+  "identity": {
+    "agentName": "trivia_generator",
+    "displayName": "trivia-generator",
+    "description": "Generates trivia questions on any topic using OpenAI",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "trivia_params",
+        "contentType": "application/json",
+        "required": true,
+        "description": "Trivia generation parameters",
+        "example": {
+          "kind": "trivia",
+          "topic": "Space exploration",
+          "difficulty": "medium",
+          "questionCount": 5,
+          "includeHints": true
+        },
+        "schema": {
+          "type": "object",
+          "required": ["kind", "topic"],
+          "properties": {
+            "kind": { "type": "string", "const": "trivia" },
+            "topic": {
+              "type": "string",
+              "title": "Topic",
+              "description": "The trivia topic",
+              "default": "Space exploration"
+            },
+            "difficulty": {
+              "type": "string",
+              "title": "Difficulty",
+              "enum": ["easy", "medium", "hard"],
+              "default": "medium"
+            },
+            "questionCount": {
+              "type": "integer",
+              "title": "Number of Questions",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 5
+            },
+            "includeHints": {
+              "type": "boolean",
+              "title": "Include Hints",
+              "default": true
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "trivia_questions",
+        "contentType": "application/json",
+        "guaranteed": true,
+        "description": "Trivia questions with options, answers, and hints"
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "trivia",
+      "name": "Trivia Generation",
+      "description": "Generate multiple-choice trivia questions with configurable difficulty"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1
+  }
+}

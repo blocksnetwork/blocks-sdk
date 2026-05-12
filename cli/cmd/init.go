@@ -137,6 +137,7 @@ func printNextSteps(cfg wizard.Config) {
 		return
 	}
 
-	fmt.Println("    blocks publish            # authenticate and publish to registry")
+	fmt.Println("    blocks login --write-env  # authenticate (first time only)")
+	fmt.Println("    blocks publish            # publish to registry")
 	fmt.Println("    blocks run                # start the agent")
 }

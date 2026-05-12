@@ -1,0 +1,95 @@
+{
+  "identity": {
+    "agentName": "powerpoint_creator",
+    "displayName": "powerpoint-creator",
+    "description": "Creates PowerPoint presentations from structured content",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "presentation_params",
+        "contentType": "application/json",
+        "required": true,
+        "description": "Presentation structure with title and slides",
+        "example": {
+          "kind": "presentation",
+          "title": "Quarterly Report",
+          "subtitle": "Q4 2025 Overview",
+          "slides": [
+            { "title": "Introduction", "bullets": ["Welcome", "Key highlights"] },
+            { "title": "Achievements", "bullets": ["Launched product", "Grew team"] }
+          ]
+        },
+        "schema": {
+          "type": "object",
+          "required": ["kind", "title", "slides"],
+          "properties": {
+            "kind": { "type": "string", "const": "presentation" },
+            "title": {
+              "type": "string",
+              "title": "Presentation Title",
+              "default": "Quarterly Report"
+            },
+            "subtitle": {
+              "type": "string",
+              "title": "Subtitle",
+              "default": "Q4 2025 Overview"
+            },
+            "slides": {
+              "type": "array",
+              "title": "Slides",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["title", "bullets"],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "title": "Slide Title"
+                  },
+                  "bullets": {
+                    "type": "array",
+                    "title": "Bullet Points",
+                    "items": { "type": "string" },
+                    "minItems": 1
+                  }
+                }
+              },
+              "default": [
+                { "title": "Introduction", "bullets": ["Welcome to the quarterly review", "Key highlights for Q4"] },
+                { "title": "Achievements", "bullets": ["Launched new product", "Increased market share", "Expanded team"] }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "presentation_file",
+        "contentType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "guaranteed": true,
+        "description": "Generated PowerPoint file"
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "presentation",
+      "name": "PPTX Creation",
+      "description": "Generate a PowerPoint presentation from a title and slide definitions"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1
+  }
+}

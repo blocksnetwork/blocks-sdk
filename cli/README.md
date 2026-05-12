@@ -10,7 +10,8 @@ Node SDK or npm.
 |---------|-------------|
 | `blocks init` | Scaffold a new agent project (Node or Python) |
 | `blocks check` | Validate `agent-card.json` and handler file |
-| `blocks publish` | Authenticate (if needed) and publish agent metadata to the registry |
+| `blocks login` | Authenticate and store credentials for future commands |
+| `blocks publish` | Publish agent metadata to the registry (requires prior `blocks login` or `--api-key`) |
 | `blocks run` | Start an agent (delegates to `npm exec --no blocks-run` for Node, venv Python `-m blocks_network` for Python) |
 | `blocks logout` | Remove stored credentials |
 | `blocks whoami` | Display current authenticated identity |
@@ -46,10 +47,26 @@ blocks init my_consumer --type consumer --language python --yes
 
 ## Installation
 
-Install the latest release:
+Install the latest release via npm (Linux, macOS, Windows):
 
 ```sh
 npm install -g @blocks-network/cli
+```
+
+Or via shell script (works on every supported platform, including
+FreeBSD and OpenBSD — the installer is POSIX `sh`-compatible, so no
+bash is required):
+
+```sh
+curl -fsSL https://config.blocks.ai/install.sh | sh
+```
+
+On FreeBSD and OpenBSD, install `xdg-utils` so `blocks login` can open
+your browser:
+
+```sh
+pkg install xdg-utils   # FreeBSD
+pkg_add xdg-utils       # OpenBSD
 ```
 
 ---
@@ -67,6 +84,7 @@ cp .env.example .env
 
 ```sh
 set -a && source .env && set +a
+go run . login --write-env   # first time only
 go run . publish
 ```
 

@@ -8,7 +8,7 @@ in real time. Demonstrates stream discovery, opening, and iteration.
 ## Prerequisites
 
 - Python 3.10+
-- `BLOCKS_API_KEY` in the project `.env`. Get it by running either `blocks publish` (writes `.env` automatically) or `blocks login --write-env`.
+- `BLOCKS_API_KEY` in the project `.env`. Get it by running `blocks login --write-env` (or accept the interactive prompt during `blocks login`).
 - A streaming agent running on the same keyset (e.g., echo-stream)
 - Optional: `python-dotenv` if you want `.env` file loading
 

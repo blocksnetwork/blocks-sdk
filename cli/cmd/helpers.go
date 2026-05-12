@@ -74,7 +74,7 @@ func openBrowser(rawURL string) error {
 func loadCredentials() (string, error) {
 	creds, err := auth.Load()
 	if err != nil {
-		return "", fmt.Errorf("not logged in — run 'blocks login' or 'blocks publish' first")
+		return "", fmt.Errorf("not logged in — run 'blocks login' first")
 	}
 
 	if creds.IsExpired() {

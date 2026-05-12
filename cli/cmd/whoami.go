@@ -26,7 +26,7 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 
 	creds, err := auth.Load()
 	if err != nil {
-		return fmt.Errorf("not logged in — run 'blocks login' or 'blocks publish' first")
+		return fmt.Errorf("not logged in — run 'blocks login' first")
 	}
 
 	if jsonOutput {
