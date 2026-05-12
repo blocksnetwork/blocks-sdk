@@ -36,6 +36,50 @@ type PromotionFlags struct {
 	NonInteractive bool
 }
 
+// Agent represents a registry agent record.
+type Agent struct {
+	AgentName   string `json:"agentName"`
+	DisplayName string `json:"displayName"`
+	Listing     string `json:"listing"`
+	Card        *Card  `json:"card,omitempty"`
+}
+
+// Card holds the agent card metadata.
+type Card struct {
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+}
+
+// Capabilities describes what the agent supports.
+type Capabilities struct {
+	TaskKinds []string `json:"taskKinds,omitempty"`
+}
+
+// IsStreaming returns true if the agent supports streaming (pipe) tasks.
+func (a Agent) IsStreaming() bool {
+	if a.Card == nil || a.Card.Capabilities == nil {
+		return false
+	}
+	for _, k := range a.Card.Capabilities.TaskKinds {
+		if k == "pipe" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsRequest returns true if the agent supports request tasks.
+func (a Agent) IsRequest() bool {
+	if a.Card == nil || a.Card.Capabilities == nil {
+		return false
+	}
+	for _, k := range a.Card.Capabilities.TaskKinds {
+		if k == "request" {
+			return true
+		}
+	}
+	return false
+}
+
 // MaskAPIKey masks an API key for display (e.g., "bk_abc...xyz").
 func MaskAPIKey(key string) string {
 	if len(key) <= 9 {

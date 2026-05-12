@@ -10,9 +10,6 @@ import (
 	"net/url"
 )
 
-// ProtocolVersion is the date-based protocol version for this release.
-const ProtocolVersion = "2026-05-01"
-
 // Promote sends a PATCH request to promote an existing playground agent.
 func Promote(ctx context.Context, backendURL, apiKey, agentName string, input PromotionInput) error {
 	body, err := json.Marshal(input)
