@@ -1,0 +1,52 @@
+name: Publish MCP Server to public npm
+
+on:
+  push:
+    tags:
+      - 'mcp-npm-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Build and publish MCP Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Strip tag prefix
+        id: tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#mcp-npm-v}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "::error::Invalid semver: ${VERSION}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp version from tag
+        run: npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version
+        working-directory: mcp
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: mcp
+
+      - name: Build package
+        run: npm run build
+        working-directory: mcp
+
+      - name: Publish to npm
+        run: npm publish --access public
+        working-directory: mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
