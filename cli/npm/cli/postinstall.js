@@ -8,6 +8,8 @@ const https = require("https");
 const PLATFORMS = {
   "darwin arm64":  "@blocks-network/cli-darwin-arm64/blocks",
   "darwin x64":    "@blocks-network/cli-darwin-x64/blocks",
+  "freebsd arm64": "@blocks-network/cli-freebsd-arm64/blocks",
+  "freebsd x64":   "@blocks-network/cli-freebsd-x64/blocks",
   "linux arm64":   "@blocks-network/cli-linux-arm64/blocks",
   "linux x64":     "@blocks-network/cli-linux-x64/blocks",
   "win32 x64":     "@blocks-network/cli-win32-x64/blocks.exe",
