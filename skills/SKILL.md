@@ -73,11 +73,17 @@ Always install (or update) the Blocks CLI to ensure the latest version:
 npm i -g @blocks-network/cli
 ```
 
-On FreeBSD or OpenBSD (no npm in base), use the POSIX shell installer
-instead, and install `xdg-utils` so `blocks login` can open a browser:
+On OpenBSD (no npm in base), use the POSIX shell installer instead:
 
 ```bash
 curl -fsSL https://config.blocks.ai/install.sh | sh
+pkg_add xdg-utils       # so `blocks login` can open a browser
+```
+
+On FreeBSD and OpenBSD, install `xdg-utils` so `blocks login` can open
+a browser:
+
+```bash
 pkg install xdg-utils   # FreeBSD
 pkg_add xdg-utils       # OpenBSD
 ```

@@ -47,7 +47,7 @@ blocks init my_consumer --type consumer --language python --yes
 
 ## Installation
 
-Install the latest release via npm (Linux, macOS, Windows):
+Install the latest release via npm (Linux, macOS, Windows, FreeBSD):
 
 ```sh
 npm install -g @blocks-network/cli

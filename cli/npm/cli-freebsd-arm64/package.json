@@ -1,0 +1,14 @@
+{
+  "name": "@blocks-network/cli-freebsd-arm64",
+  "version": "0.0.0",
+  "description": "Blocks CLI binary for FreeBSD ARM64",
+  "license": "SEE LICENSE IN LICENSE",
+  "os": ["freebsd"],
+  "cpu": ["arm64"],
+  "files": ["blocks"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blocksnetwork/blocks-sdk.git",
+    "directory": "cli"
+  }
+}

@@ -82,18 +82,19 @@ git tag cli-npm-v0.2.0    && git push origin cli-npm-v0.2.0
    scripts (every platform above is included as a tarball/zip)
 3. Packages the npm-published subset of binaries into platform packages
    (`@blocks-network/cli-darwin-arm64`, `cli-darwin-x64`, `cli-linux-arm64`,
-   `cli-linux-x64`, `cli-win32-x64` — five total). FreeBSD and OpenBSD
-   binaries are intentionally NOT npm-published; BSD users install via
-   `install.sh`, which pulls from the GitHub Release archives.
+   `cli-linux-x64`, `cli-win32-x64`, `cli-freebsd-arm64`,
+   `cli-freebsd-x64` — seven total). OpenBSD binaries are intentionally
+   NOT npm-published; OpenBSD users install via `install.sh`, which pulls
+   from the GitHub Release archives.
 4. Publishes the platform packages and the wrapper
    (`@blocks-network/cli`) to Artifactory
 
 ### CLI public npm (`cli-npm-v*`)
 
-Cross-compiles and publishes only the five npm-supported targets
-(darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
-to npmjs.org. No GitHub Release is created and no BSD binaries are
-produced on this path — BSD users install via the `cli-v*` Release
+Cross-compiles and publishes only the seven npm-supported targets
+(darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64,
+freebsd/arm64, freebsd/amd64) to npmjs.org. No GitHub Release is
+created on this path. OpenBSD users install via the `cli-v*` Release
 archives, not via npm.
 
 ## Version safety
