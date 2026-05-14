@@ -1,6 +1,6 @@
 .PHONY: setup build test lint clean \
-       release-node release-python release-cli release-mcp \
-       publish-node publish-python publish-cli publish-mcp
+       release-node release-python release-cli \
+       publish-node publish-python publish-cli
 
 setup:  ## Unix/macOS only — see README.md for Windows notes
 	npm install
@@ -29,11 +29,9 @@ lint:
 #   make release-node VERSION=0.2.0      # → Artifactory
 #   make release-python VERSION=0.2.0    # → Artifactory
 #   make release-cli VERSION=0.2.0       # → Artifactory + GitHub Release
-#   make release-mcp VERSION=0.2.0       # → Artifactory
 #   make publish-node VERSION=0.2.0      # → public npm
 #   make publish-python VERSION=0.2.0    # → public PyPI
 #   make publish-cli VERSION=0.2.0       # → public npm
-#   make publish-mcp VERSION=0.2.0       # → public npm
 # Append -rc to the version for a release candidate build:
 #   make release-node VERSION=0.2.0-rc
 
@@ -79,13 +77,3 @@ publish-cli:
 	$(check-version)
 	$(check-master)
 	git tag "cli-npm-v$(VERSION)" && git push origin "cli-npm-v$(VERSION)"
-
-release-mcp:
-	$(check-version)
-	$(check-master)
-	git tag "mcp-v$(VERSION)" && git push origin "mcp-v$(VERSION)"
-
-publish-mcp:
-	$(check-version)
-	$(check-master)
-	git tag "mcp-npm-v$(VERSION)" && git push origin "mcp-npm-v$(VERSION)"

@@ -47,7 +47,7 @@ jobs:
 
           mkdir -p dist
 
-          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64; do
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 freebsd/arm64 freebsd/amd64 windows/amd64; do
             GOOS="${target%/*}"
             GOARCH="${target#*/}"
             EXT=""
@@ -72,6 +72,8 @@ jobs:
             ["cli-darwin-x64"]="darwin amd64 blocks"
             ["cli-linux-arm64"]="linux arm64 blocks"
             ["cli-linux-x64"]="linux amd64 blocks"
+            ["cli-freebsd-arm64"]="freebsd arm64 blocks"
+            ["cli-freebsd-x64"]="freebsd amd64 blocks"
             ["cli-win32-x64"]="windows amd64 blocks.exe"
           )
 
@@ -91,7 +93,7 @@ jobs:
       - name: Publish platform packages to npm
         working-directory: cli
         run: |
-          for pkg_dir in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-win32-x64; do
+          for pkg_dir in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-freebsd-arm64 cli-freebsd-x64 cli-win32-x64; do
             echo "Publishing @blocks-network/${pkg_dir}..."
             npm publish "./npm/${pkg_dir}" --access public
           done

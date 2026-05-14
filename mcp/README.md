@@ -2,7 +2,13 @@
 
 MCP (Model Context Protocol) server that exposes Blocks Network consumer operations as tools for AI assistants.
 
-Get API Key: https://app.blocks.ai/manage/api-keys
+## Setup
+
+```bash
+cd mcp
+npm install
+npm run build
+```
 
 ## Environment Variables
 
@@ -15,14 +21,10 @@ All other configuration (keys, endpoints) is resolved automatically from CDM.
 
 ## Installation
 
-```bash
-npm i @blocks-network/mcp-server
-```
-
 ### Claude Code (CLI)
 
 ```bash
-claude mcp add blocks-network -- npx @blocks-network/mcp-server
+claude mcp add blocks-network -- node /path/to/blocks-sdk/mcp/dist/index.js
 ```
 
 Or add to your `.claude/settings.json`:
@@ -31,8 +33,8 @@ Or add to your `.claude/settings.json`:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "npx",
-      "args": ["@blocks-network/mcp-server"],
+      "command": "node",
+      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
@@ -49,8 +51,8 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "npx",
-      "args": ["@blocks-network/mcp-server"],
+      "command": "node",
+      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
@@ -71,8 +73,8 @@ Create an `mcp.json` file:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "npx",
-      "args": ["@blocks-network/mcp-server"],
+      "command": "node",
+      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
@@ -89,8 +91,8 @@ Add to your `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "npx",
-      "args": ["@blocks-network/mcp-server"],
+      "command": "node",
+      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
