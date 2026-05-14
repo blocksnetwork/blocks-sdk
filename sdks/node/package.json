@@ -59,12 +59,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pubnub/blocksnetwork.git",
-    "directory": "blocks-sdk/sdks/node"
+    "url": "git+https://github.com/blocksnetwork/blocks-sdk.git",
+    "directory": "sdks/node"
   },
-  "homepage": "https://github.com/pubnub/blocksnetwork/tree/main/blocks-sdk/sdks/node#readme",
+  "homepage": "https://github.com/blocksnetwork/blocks-sdk/tree/main/sdks/node#readme",
   "bugs": {
-    "url": "https://github.com/pubnub/blocksnetwork/issues"
+    "url": "https://github.com/blocksnetwork/blocks-sdk/issues"
   },
   "license": "SEE LICENSE IN LICENSE",
   "overrides": {

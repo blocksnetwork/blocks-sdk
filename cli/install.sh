@@ -5,12 +5,12 @@
 # Usage:
 #   curl -fsSL https://config.blocks.ai/install.sh | bash
 #
-# Or with a GitHub token (for private repo / pre-release builds):
+# Or with a GitHub token (for pre-release builds):
 #   export GITHUB_TOKEN="ghp_..."
 #   curl -fsSL https://config.blocks.ai/install.sh | bash
 #
 # Environment variables:
-#   GITHUB_TOKEN / GH_TOKEN — GitHub personal access token (only needed for private repo builds)
+#   GITHUB_TOKEN / GH_TOKEN — GitHub personal access token (for pre-release or draft builds)
 #   BLOCKS_INSTALL_DIR      — Override install directory (default: ~/.blocks/bin)
 #   BLOCKS_RELEASES_URL     — Override download base URL (flat directory with latest.json + archives)
 #   BLOCKS_VERSION          — Pin to a specific version (default: latest)
@@ -21,7 +21,7 @@ set -eu
 #   BLOCKS_RELEASES_URL="https://example.com/releases" bash install.sh
 BLOCKS_RELEASES_URL="${BLOCKS_RELEASES_URL:-}"
 
-GITHUB_REPO="pubnub/blocksnetwork"
+GITHUB_REPO="blocksnetwork/blocks-sdk"
 GITHUB_API="https://api.github.com"
 INSTALL_DIR="${BLOCKS_INSTALL_DIR:-$HOME/.blocks/bin}"
 AUTH_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-$(gh auth token 2>/dev/null || echo "")}}"

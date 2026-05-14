@@ -67,8 +67,7 @@ registration; see `skills/references/io-schema-reference.md` for the
 detailed rules. `contentType` values must be in canonical lowercase
 MIME form with no `;` parameters; the schema accepts a curated
 catalog plus `text|image|audio|video/*` family wildcards and
-`*/*+(json|xml|zip|gzip)` suffix patterns
-(see `dev_docs/SUPPORTED_CONTENT_TYPES.md`).
+`*/*+(json|xml|zip|gzip)` suffix patterns.
 
 ## Streaming Capabilities
 

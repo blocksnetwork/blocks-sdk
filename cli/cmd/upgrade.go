@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	githubRepo   = "pubnub/blocksnetwork"
+	githubRepo   = "blocksnetwork/blocks-sdk"
 	downloadBase = "https://github.com/" + githubRepo + "/releases/download"
 )
 

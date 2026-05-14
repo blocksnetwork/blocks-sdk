@@ -3,12 +3,12 @@
 # Usage:
 #   irm https://config.blocks.ai/install.ps1 | iex
 #
-# Or with a GitHub token (for private repo / pre-release builds):
+# Or with a GitHub token (for pre-release builds):
 #   $env:GITHUB_TOKEN = "ghp_..."
 #   irm https://config.blocks.ai/install.ps1 | iex
 #
 # Environment variables:
-#   GITHUB_TOKEN / GH_TOKEN — GitHub personal access token (only needed for private repo builds)
+#   GITHUB_TOKEN / GH_TOKEN — GitHub personal access token (for pre-release or draft builds)
 #   BLOCKS_INSTALL_DIR      — Override install directory (default: ~\.blocks\bin)
 #   BLOCKS_RELEASES_URL     — Override download base URL (flat directory with latest.json + archives)
 #   BLOCKS_VERSION          — Pin to a specific version (default: latest)
@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 # Default to GitHub API download. Set BLOCKS_RELEASES_URL to use a flat-
 # directory host (S3, etc.) instead.
 
-$GitHubRepo = "pubnub/blocksnetwork"
+$GitHubRepo = "blocksnetwork/blocks-sdk"
 $GitHubApi = "https://api.github.com"
 $InstallDir = if ($env:BLOCKS_INSTALL_DIR) { $env:BLOCKS_INSTALL_DIR } else { Join-Path $HOME ".blocks\bin" }
 $AuthToken = if ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } elseif ($env:GH_TOKEN) { $env:GH_TOKEN } else {
