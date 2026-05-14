@@ -120,24 +120,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 ## Releasing
 
 Release targets tag and push to trigger CI workflows that publish to
-Artifactory (internal). Publish targets push to the public registries.
+the public registries.
 
 ```bash
-# Internal (Artifactory)
-make release-node VERSION=0.2.0
-make release-python VERSION=0.2.0
-make release-cli VERSION=0.2.0       # also creates a GitHub Release
-
-# Public (npm / PyPI)
 make publish-node VERSION=0.2.0      # → npm (@blocks-network/sdk)
 make publish-python VERSION=0.2.0    # → PyPI (blocks-network)
+make release-cli VERSION=0.2.0       # → GitHub Release
 make publish-cli VERSION=0.2.0       # → npm (CLI)
 ```
 
 Append `-rc` for a release candidate build:
 
 ```bash
-make release-node VERSION=0.2.0-rc
+make publish-node VERSION=0.2.0-rc
 ```
 
 All release and publish targets must be run from the `master` branch.

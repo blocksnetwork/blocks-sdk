@@ -51,8 +51,8 @@ changelog:
 
 release:
   github:
-    owner: pubnub
-    name: blocksnetwork
+    owner: blocksnetwork
+    name: blocks-sdk
   draft: false
   prerelease: auto
   extra_files:

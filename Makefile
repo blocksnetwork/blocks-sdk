@@ -1,6 +1,5 @@
 .PHONY: setup build test lint clean \
-       release-node release-python release-cli \
-       publish-node publish-python publish-cli
+       release-cli publish-node publish-python publish-cli
 
 setup:  ## Unix/macOS only — see README.md for Windows notes
 	npm install
@@ -26,14 +25,12 @@ lint:
 
 # Release helpers — tag and push to trigger CI workflows.
 # Usage:
-#   make release-node VERSION=0.2.0      # → Artifactory
-#   make release-python VERSION=0.2.0    # → Artifactory
-#   make release-cli VERSION=0.2.0       # → Artifactory + GitHub Release
-#   make publish-node VERSION=0.2.0      # → public npm
-#   make publish-python VERSION=0.2.0    # → public PyPI
-#   make publish-cli VERSION=0.2.0       # → public npm
+#   make publish-node VERSION=0.2.0      # → npm
+#   make publish-python VERSION=0.2.0    # → PyPI
+#   make release-cli VERSION=0.2.0       # → GitHub Release
+#   make publish-cli VERSION=0.2.0       # → npm
 # Append -rc to the version for a release candidate build:
-#   make release-node VERSION=0.2.0-rc
+#   make publish-node VERSION=0.2.0-rc
 
 define check-version
 	@if [ -z "$(VERSION)" ]; then \
@@ -47,16 +44,6 @@ define check-master
 		echo "Warning: you are tagging from branch '$$(git rev-parse --abbrev-ref HEAD)', not master."; \
 	fi
 endef
-
-release-node:
-	$(check-version)
-	$(check-master)
-	git tag "node-v$(VERSION)" && git push origin "node-v$(VERSION)"
-
-release-python:
-	$(check-version)
-	$(check-master)
-	git tag "python-v$(VERSION)" && git push origin "python-v$(VERSION)"
 
 release-cli:
 	$(check-version)

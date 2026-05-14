@@ -100,8 +100,7 @@ agent's metadata. Run with `blocks run`.
 `agent-card.json` is validated at registration time against the
 canonical schema. Before authoring a card, read:
 
-- [`dev_docs/SUPPORTED_CONTENT_TYPES.md`](../../../dev_docs/SUPPORTED_CONTENT_TYPES.md) — accepted `io.inputs[].contentType` / `io.outputs[].contentType` values, classifier, per-class invariants.
-- [`skills/references/io-schema-reference.md`](../../../skills/references/io-schema-reference.md) — form / text / file transport classes, form-class `schema` keyword allow-list, default values.
+- [`skills/references/io-schema-reference.md`](../../../skills/references/io-schema-reference.md) — accepted content types, form / text / file transport classes, form-class `schema` keyword allow-list, default values.
 
 Summary rules: every `io.inputs[]` entry MUST declare `description`;
 `contentType` MUST be lowercase canonical form; form-class inputs MUST

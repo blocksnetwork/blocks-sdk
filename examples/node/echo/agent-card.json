@@ -9,7 +9,7 @@
       "url": "http://www.pubnub.com"
     },
     "documentationUrl": "www.blocks.ai/docs",
-    "repositoryUrl": "github.com/blocksnetwork",
+    "repositoryUrl": "https://github.com/blocksnetwork/blocks-sdk",
     "iconUrl": "https://avatars.githubusercontent.com/u/272932456?s=200&v=4"
   },
   "capabilities": {

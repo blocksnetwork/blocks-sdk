@@ -9,9 +9,7 @@ a proper schema, the agent will not receive correct input.**
 Each `io.inputs[]` and `io.outputs[]` `contentType` must be accepted by the
 canonical schema's four-rule `anyOf` predicate (catalog match, `text|image|audio|video/*`
 family wildcard, `*/*+(json|xml|zip|gzip)` suffix, or `application/octet-stream`)
-in lowercase canonical form with no `;` parameters. See
-[`dev_docs/SUPPORTED_CONTENT_TYPES.md`](../../dev_docs/SUPPORTED_CONTENT_TYPES.md)
-for the full catalog.
+in lowercase canonical form with no `;` parameters.
 
 Every accepted `contentType` belongs to one of three **transport classes**,
 which determines what other fields are allowed on the input:
