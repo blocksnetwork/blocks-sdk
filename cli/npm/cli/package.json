@@ -1,7 +1,7 @@
 {
   "name": "@blocks-network/cli",
   "version": "0.0.0",
-  "description": "Blocks Network CLI — build and run A2A agents on Blocks Network",
+  "description": "Blocks Network CLI",
   "license": "SEE LICENSE IN LICENSE",
   "bin": {
     "blocks": "bin/blocks"

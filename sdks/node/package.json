@@ -2,7 +2,7 @@
   "name": "@blocks-network/sdk",
   "version": "0.0.0",
   "type": "module",
-  "description": "Blocks Network SDK — build and run A2A agents on PubNub",
+  "description": "Blocks Network SDK",
   "exports": {
     ".": {
       "browser": {
