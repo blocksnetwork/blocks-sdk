@@ -1,6 +1,6 @@
 {
   "name": "@blocks-network/mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.60",
   "description": "MCP server for Blocks Network consumer operations",
   "type": "module",
   "main": "dist/index.js",
@@ -12,17 +12,19 @@
     "prebuild": "npm run build:sdk",
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@blocks-network/sdk": "file:../sdks/node",
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@blocks-network/sdk": "^0.1.60",
+    "@modelcontextprotocol/sdk": "^1.29",
     "zod": "^3.25.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=20.0.0"
