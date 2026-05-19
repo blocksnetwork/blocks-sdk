@@ -28,5 +28,15 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blocksnetwork/blocks-sdk.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://github.com/blocksnetwork/blocks-sdk/tree/main/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/blocksnetwork/blocks-sdk/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE"
 }
