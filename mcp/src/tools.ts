@@ -120,6 +120,8 @@ export interface ToolDeps {
     limit?: number;
   }): Promise<ListAgentsResult>;
   validateFilePath(filePath: string): string;
+  resolveSavePath(filePath: string): string;
+  writeFile(filePath: string, data: Uint8Array): void;
   fileSize(path: string): number;
   maxUploadBytes: number;
   filePartFromPath: typeof filePartFromPath;
@@ -208,6 +210,12 @@ export interface GetAgentCardParams {
 export interface ConnectTaskParams {
   taskId: string;
   timeoutMs?: number;
+}
+
+export interface DownloadArtifactParams {
+  taskId: string;
+  fileName: string;
+  savePath?: string;
 }
 
 // ============================================================================
@@ -484,6 +492,92 @@ export async function connectTask(
     }
     partial.push(...progressLines);
     return { content: [{ type: 'text', text: partial.join('\n') }], isError: true };
+  }
+}
+
+// ============================================================================
+// download_artifact
+// ============================================================================
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return Buffer.from(binary, 'binary').toString('base64');
+}
+
+export async function downloadArtifact(
+  params: DownloadArtifactParams,
+  deps: ToolDeps,
+): Promise<ToolResult> {
+  const freeClient = await deps.getTaskClient('free');
+  const task = await freeClient.getTask(params.taskId);
+  const billingMode = resolveBillingMode(task);
+  const client = await deps.getTaskClient(billingMode);
+
+  let session: TaskSessionLike;
+  try {
+    session = await client.connect({ taskId: params.taskId });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      content: [{ type: 'text', text: `Failed to connect to task ${params.taskId}: ${msg}` }],
+      isError: true,
+    };
+  }
+
+  try {
+    const refs = session.listArtifacts();
+    const ref = refs.find((r) => r.fileName === params.fileName);
+    if (!ref) {
+      const available = refs.map((r) => r.fileName ?? 'unnamed').join(', ') || '(none)';
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Artifact "${params.fileName}" not found on task ${params.taskId}. Available: ${available}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const downloaded = await session.downloadArtifact(ref);
+
+    if (params.savePath) {
+      const safePath = deps.resolveSavePath(params.savePath);
+      deps.writeFile(safePath, downloaded.data);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Saved ${downloaded.data.length} bytes to ${safePath} (${downloaded.mimeType})`,
+          },
+        ],
+      };
+    }
+
+    if (isTextMimeType(downloaded.mimeType)) {
+      const text = new TextDecoder().decode(downloaded.data);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `[artifact: ${downloaded.fileName ?? params.fileName}] (${downloaded.mimeType}, ${downloaded.data.length} bytes)\n${text}`,
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `[artifact: ${downloaded.fileName ?? params.fileName}] (${downloaded.mimeType}, ${downloaded.data.length} bytes, base64)\n${bytesToBase64(downloaded.data)}`,
+        },
+      ],
+    };
+  } finally {
+    session.close();
   }
 }
 

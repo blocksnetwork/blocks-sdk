@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 	"github.com/pubnub/blocks-sdk/cli/internal/schema"
 	"github.com/shopspring/decimal"
@@ -32,6 +33,7 @@ var publishFreeUnits int
 var publishFreeTasks int
 var publishFreeMinutes int
 var publishAcceptTerms bool
+var publishOrgName string
 
 func init() {
 	rootCmd.AddCommand(publishCmd)
@@ -46,6 +48,7 @@ func init() {
 	publishCmd.Flags().IntVar(&publishFreeTasks, "free-tasks", 0, "Free trial task runs per consumer organization")
 	publishCmd.Flags().IntVar(&publishFreeMinutes, "free-minutes", 0, "Free trial minutes per consumer organization")
 	publishCmd.Flags().BoolVar(&publishAcceptTerms, "accept-terms", false, "Accept legal attestations non-interactively")
+	publishCmd.Flags().StringVar(&publishOrgName, "org-name", "", "Set organization name (prompted on first publish)")
 }
 
 var publishCmd = &cobra.Command{
@@ -122,6 +125,17 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		printPublishIntro(agentName)
 	}
 
+	// Org name prompt: on first agent publish, let the user set their org name.
+	pubCtx := registry.FetchPublishContext(backendURL, apiKey)
+	orgNameFlags := registry.OrgNameFlags{NonInteractive: !interactive}
+	if cmd.Flags().Changed("org-name") {
+		orgNameFlags.OrgName = &publishOrgName
+	}
+	chosenOrgName, err := registry.PromptOrgName(pubCtx, orgNameFlags, nil)
+	if err != nil {
+		return err
+	}
+
 	flags := registry.PromotionFlags{
 		AcceptTerms:    publishAcceptTerms,
 		NonInteractive: !interactive,
@@ -160,7 +174,9 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		flags.FreeMinutes = &publishFreeMinutes
 	}
 
-	promInput, err := registry.CollectPromotionInput(isStreaming, isRequest, flags, nil)
+	limits := registry.FetchPricingLimits(backendURL)
+
+	promInput, err := registry.CollectPromotionInput(isStreaming, isRequest, flags, limits, nil)
 	if err != nil {
 		return err
 	}
@@ -192,6 +208,15 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
 	}
 	registryURL := backendURL + "/api/v1/registry/agents"
+
+	// Apply org name update right before publishing (after all prompts succeed).
+	// If --org-name was explicitly provided, treat conflicts as hard errors (no re-prompt).
+	orgNameInteractive := interactive && !cmd.Flags().Changed("org-name")
+	if chosenOrgName != "" && pubCtx != nil {
+		if err := applyOrgNameUpdate(backendURL, apiKey, pubCtx, chosenOrgName, orgNameInteractive); err != nil {
+			return err
+		}
+	}
 
 	printPublishSummary(agentName, promInput)
 
@@ -228,7 +253,12 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("publish failed: HTTP %d", resp.StatusCode)
 	}
 
-	printPublishSuccess(agentName, promInput, publishedAgentURL(respBody, agentName))
+	agentURL := publishedAgentURL(respBody, agentName, interactive)
+	printPublishSuccess(agentName, promInput, agentURL)
+
+	if agentURL != "" && interactive {
+		_ = openBrowser(agentURL)
+	}
 	return nil
 }
 
@@ -353,13 +383,13 @@ const blocksSuccessLogoBottom = `    ################        #################
                      ######`
 
 func publishNeedsInteractivePrompt(cmd *cobra.Command) bool {
-	if publishAcceptTerms {
-		return false
-	}
 	if !cmd.Flags().Changed("listing") || !cmd.Flags().Changed("billing-mode") {
 		return true
 	}
 	if publishBillingMode != "paid" {
+		return false
+	}
+	if publishAcceptTerms {
 		return false
 	}
 	return true
@@ -470,10 +500,10 @@ func publishNextSteps(input registry.PromotionInput) []string {
 	return []string{"Next: keep your agent running so consumers can use it."}
 }
 
-func publishedAgentURL(respBody []byte, agentName string) string {
+func publishedAgentURL(respBody []byte, agentName string, allowNetworkFallback bool) string {
 	var payload map[string]interface{}
 	if err := json.Unmarshal(respBody, &payload); err != nil {
-		return agentAppURL(agentName)
+		return agentAppURL(agentName, allowNetworkFallback)
 	}
 	if url := urlField(payload, "agentUrl", "agentURL", "url"); url != "" {
 		return url
@@ -483,12 +513,26 @@ func publishedAgentURL(respBody []byte, agentName string) string {
 			return url
 		}
 	}
-	return agentAppURL(agentName)
+	return agentAppURL(agentName, allowNetworkFallback)
 }
 
-func agentAppURL(agentName string) string {
+// agentAppURL builds the dashboard URL for an agent. Resolution order:
+// BLOCKS_APP_BASE_URL env var → CDM api.baseUrl (only when allowNetworkFallback
+// is true). In production CDM returns the app origin (https://app.blocks.ai);
+// in local dev where frontend and backend are split, set BLOCKS_APP_BASE_URL
+// to the frontend origin. The CDM fallback is skipped in non-interactive mode
+// to avoid a potential 21s timeout stall in CI/offline environments.
+func agentAppURL(agentName string, allowNetworkFallback bool) string {
+	if strings.TrimSpace(agentName) == "" {
+		return ""
+	}
 	baseURL := resolveAppBaseURL()
-	if baseURL == "" || strings.TrimSpace(agentName) == "" {
+	if baseURL == "" && allowNetworkFallback {
+		if cfg, err := cdm.Get(); err == nil && cfg.Api.BaseURL != "" {
+			baseURL = cfg.Api.BaseURL
+		}
+	}
+	if baseURL == "" {
 		return ""
 	}
 	agentURL, err := url.JoinPath(baseURL, agentAppRoute, agentName)
@@ -565,4 +609,43 @@ func moneyGtZero(raw *string) bool {
 	}
 	v, err := decimal.NewFromString(strings.TrimPrefix(strings.TrimSpace(*raw), "$"))
 	return err == nil && v.Sign() > 0
+}
+
+func applyOrgNameUpdate(backendURL, apiKey string, pubCtx *registry.PublishContext, name string, interactive bool) error {
+	chosenName := name
+	for {
+		updateErr := registry.UpdateOrgName(backendURL, apiKey, pubCtx.OrgID, chosenName)
+		if updateErr == nil {
+			return nil
+		}
+		taken, ok := updateErr.(*registry.OrgNameTakenError)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: could not update organization name: %v\n", updateErr)
+			return nil
+		}
+		if !interactive {
+			return fmt.Errorf("organization name %q is already taken", taken.Name)
+		}
+		fmt.Printf("\n  Name %q is already taken. Please choose a different name.\n", taken.Name)
+		chosenName = retryOrgNamePrompt(pubCtx.OrgName)
+		if chosenName == "" {
+			return nil
+		}
+	}
+}
+
+func retryOrgNamePrompt(defaultName string) string {
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Printf("\nOrganization name [%s] (? for help): ", defaultName)
+		if !scanner.Scan() {
+			return ""
+		}
+		text := strings.TrimSpace(scanner.Text())
+		if text == "?" {
+			fmt.Println(registry.HelpOrgName)
+			continue
+		}
+		return text
+	}
 }

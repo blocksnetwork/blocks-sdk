@@ -128,12 +128,14 @@ validation.
 #### Added
 - Private agent invitations and grants — invite collaborators to private agents
 - `blocks delete` command for removing agent registrations
+- `blocks login --no-write-env` flag to opt out of writing `BLOCKS_API_KEY` to `.env` without seeing the interactive prompt. Use this in non-interactive sessions where a TTY is attached but no human is available to answer the prompt.
 
 #### Fixed
 - Windows TLS timeouts when fetching CDM config
 - PowerShell 5.1 install script parse errors
 - Dashboard URL updated from `/playground/agents/` to `/agents/`
 - Windows and Linux install script fixes
+- `blocks login` no longer hangs on the `Write BLOCKS_API_KEY to project .env? (Y/n):` prompt in non-interactive sessions where a TTY is attached. Pass `--write-env` to opt in or `--no-write-env` to opt out non-interactively.
 
 #### Changed
 - Scaffolded projects no longer include Artifactory/.npmrc/pip.conf configuration — simplified for public registry use

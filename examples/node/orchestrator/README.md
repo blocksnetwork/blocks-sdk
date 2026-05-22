@@ -8,7 +8,7 @@ artifact.
 
 ## Prerequisites
 
-- Node.js 24+
+- Node.js 22+
 - `BLOCKS_API_KEY` in the project `.env`. Get it by running `blocks login --write-env` (or accept the interactive prompt during `blocks login`).
 - The `echo` and `adder` agents running (same PubNub keyset)
 
@@ -26,6 +26,7 @@ blocks run
 ```
 
 Send a task with input like:
+
 ```json
 { "echoText": "Hello from Orchestrator!", "a": 3, "b": 4 }
 ```

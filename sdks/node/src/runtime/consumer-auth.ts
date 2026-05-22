@@ -11,8 +11,15 @@
  */
 
 import type { AuthProvider } from './auth-provider.js';
+import { log as baseLog } from './logger.js';
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from './protocol-version.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
+
+const log = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  meta?: Record<string, unknown>,
+): void => baseLog('[ConsumerAuth]', level, message, meta);
 
 // ============================================================================
 // Types
@@ -417,7 +424,10 @@ export class ConsumerAuth implements AuthProvider {
         if (this._onAuthError) {
           this._onAuthError(error);
         } else {
-          console.warn('[ConsumerAuth] proactive refresh permanently failed:', error.message);
+          log('warn', 'proactive refresh permanently failed', {
+            event: 'consumer_auth_proactive_refresh_failed',
+            error: error.message,
+          });
         }
       }
     }

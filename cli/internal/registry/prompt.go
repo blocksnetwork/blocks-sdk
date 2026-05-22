@@ -13,8 +13,11 @@ import (
 const (
 	MinPricePerTask   = "0.0001"
 	MinPricePerMinute = "0.01"
-	MaxPricePerTask   = "1000.00"
-	MaxPricePerMinute = "10.00"
+	MaxPricePerTask   = "25.00"
+	MaxPricePerMinute = "1.00"
+
+	MaxFreeTasksPerConsumer   = 100
+	MaxFreeMinutesPerConsumer = 30
 )
 
 const (
@@ -33,20 +36,12 @@ const (
 		"  your agent. Blocks Network takes a platform fee; you keep the rest. Paid agents\n" +
 		"  require accepting the platform terms."
 
-	helpPricePerTask = "  The USD amount charged to the consumer for each completed request task.\n" +
-		"  Between $0.0001 and $1000.00. Leave blank to use the default ($0.10).\n" +
-		"  Enter 0 for no per-task charge (if you're using per-minute pricing instead)."
-
-	helpPricePerMinute = "  The USD amount charged to the consumer for each minute of a pipe (long-running)\n" +
-		"  task. Between $0.01 and $10.00. Leave blank to use the default ($0.10).\n" +
-		"  Enter 0 for no per-minute charge (if you're using per-task pricing instead)."
-
-	helpFreeTrialTasks = "  Number of request tasks each consumer organization can run for free before\n" +
-		"  charges begin. Between 1 and 100. Enter 0 or leave blank for no free trial.\n" +
+	helpFreeTrialTasksTpl = "  Number of request tasks each consumer organization can run for free before\n" +
+		"  charges begin. Between 1 and %d. Enter 0 or leave blank for no free trial.\n" +
 		"  Tracked per consumer organization, not per user."
 
-	helpFreeTrialMinutes = "  Number of pipe-task minutes each consumer organization gets for free before\n" +
-		"  per-minute charges begin. Between 1 and 30. Enter 0 or leave blank for no\n" +
+	helpFreeTrialMinutesTpl = "  Number of pipe-task minutes each consumer organization gets for free before\n" +
+		"  per-minute charges begin. Between 1 and %d. Enter 0 or leave blank for no\n" +
 		"  free trial. Tracked per consumer organization, not per user."
 
 	helpAttestLaws = "  Required for paid agents. You're confirming that your agent doesn't violate\n" +
@@ -60,8 +55,6 @@ const (
 const (
 	DefaultPrice = "0.10"
 
-	pricePerTaskPrompt   = promptAnsiBold + "Price per task" + promptAnsiReset + " in USD (up to 1000.00) [" + DefaultPrice + "]"
-	pricePerMinutePrompt = promptAnsiBold + "Price per minute" + promptAnsiReset + " in USD (up to 10.00) [" + DefaultPrice + "]"
 	pricePerTaskLabel    = "Price per task"
 	pricePerMinuteLabel  = "Price per minute"
 
@@ -83,17 +76,17 @@ const (
 //   - T&C is required for billingMode="paid" regardless of listing (D3 paid-any-listing).
 //   - billingMode="free" with no pricing is allowed for any listing.
 //
-// The caller is treated as non-interactive when either NonInteractive is set
-// (stdin is not a TTY) or AcceptTerms is set (explicit non-interactive opt-in).
-// In non-interactive mode, required values must come from flags and optional
-// fields default to nil instead of prompting. --billing-mode is required;
-// omitting it is a fast-fail error.
-func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, scanner *bufio.Scanner) (PromotionInput, error) {
+// The caller is treated as non-interactive when NonInteractive is set (stdin
+// is not a TTY). In non-interactive mode, required values must come from flags
+// and optional fields default to nil instead of prompting. --billing-mode is
+// required; omitting it is a fast-fail error. --accept-terms is only required
+// for paid agents (free agents skip T&C entirely, matching the dashboard).
+func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, limits PricingLimits, scanner *bufio.Scanner) (PromotionInput, error) {
 	if scanner == nil {
 		scanner = bufio.NewScanner(os.Stdin)
 	}
 	isDualKind := isStreaming && isRequest
-	nonInteractive := flags.NonInteractive || flags.AcceptTerms
+	nonInteractive := flags.NonInteractive
 
 	if isDualKind && flags.Price != nil {
 		return PromotionInput{}, fmt.Errorf("agent has both request and pipe taskKinds - use --price-per-task and --price-per-minute instead of --price")
@@ -170,7 +163,7 @@ func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, sc
 			input.PricePerMinute = nil
 
 			if isRequest {
-				price, err := resolvePrice(pricePerTaskPrompt, pricePerTaskLabel, flags.Price, flags.PricePerTask, MinPricePerTask, MaxPricePerTask, pricingRequired, nonInteractive, scanner)
+				price, err := resolvePrice(pricePrompt(pricePerTaskLabel, limits.MaxPricePerTask, limits.MinPricePerTask), pricePerTaskLabel, flags.Price, flags.PricePerTask, limits.MinPricePerTask, limits.MaxPricePerTask, pricingRequired, nonInteractive, scanner)
 				if err != nil {
 					return PromotionInput{}, err
 				}
@@ -180,7 +173,7 @@ func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, sc
 			}
 
 			if isStreaming {
-				price, err := resolvePrice(pricePerMinutePrompt, pricePerMinuteLabel, flags.Price, flags.PricePerMinute, MinPricePerMinute, MaxPricePerMinute, pricingRequired, nonInteractive, scanner)
+				price, err := resolvePrice(pricePrompt(pricePerMinuteLabel, limits.MaxPricePerMinute, limits.MinPricePerMinute), pricePerMinuteLabel, flags.Price, flags.PricePerMinute, limits.MinPricePerMinute, limits.MaxPricePerMinute, pricingRequired, nonInteractive, scanner)
 				if err != nil {
 					return PromotionInput{}, err
 				}
@@ -201,12 +194,26 @@ func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, sc
 			fmt.Println("  Paid agents need at least one price above 0. Please enter a price.")
 		}
 
-		if shouldPromptFreeTrialAllowance(isRequest, isStreaming, flags, nonInteractive) {
+		freeTasksEnabled := isRequest && limits.MaxFreeTasksAllowed > 0
+		freeMinutesEnabled := isStreaming && limits.MaxFreeMinutesAllowed > 0
+
+		if !freeTasksEnabled && isRequest {
+			if (flags.FreeTasks != nil && *flags.FreeTasks > 0) || (flags.FreeUnits != nil && *flags.FreeUnits > 0) {
+				return PromotionInput{}, fmt.Errorf("Free tasks are disabled by the platform (maximum is 0).")
+			}
+		}
+		if !freeMinutesEnabled && isStreaming {
+			if (flags.FreeMinutes != nil && *flags.FreeMinutes > 0) || (flags.FreeUnits != nil && *flags.FreeUnits > 0) {
+				return PromotionInput{}, fmt.Errorf("Free minutes are disabled by the platform (maximum is 0).")
+			}
+		}
+
+		if (freeTasksEnabled || freeMinutesEnabled) && shouldPromptFreeTrialAllowance(isRequest, isStreaming, flags, nonInteractive) {
 			printFreeTrialAllowanceIntro()
 		}
 
-		if isRequest {
-			free, err := resolveFreeUnits(freeTrialTaskPrompt, flags.FreeUnits, flags.FreeTasks, nonInteractive, scanner)
+		if freeTasksEnabled {
+			free, err := resolveFreeUnits(freeTrialTaskPrompt, flags.FreeUnits, flags.FreeTasks, limits.MaxFreeTasksAllowed, nonInteractive, scanner)
 			if err != nil {
 				return PromotionInput{}, err
 			}
@@ -215,8 +222,8 @@ func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, sc
 			}
 		}
 
-		if isStreaming {
-			free, err := resolveFreeUnits(freeTrialMinutePrompt, flags.FreeUnits, flags.FreeMinutes, nonInteractive, scanner)
+		if freeMinutesEnabled {
+			free, err := resolveFreeUnits(freeTrialMinutePrompt, flags.FreeUnits, flags.FreeMinutes, limits.MaxFreeMinutesAllowed, nonInteractive, scanner)
 			if err != nil {
 				return PromotionInput{}, err
 			}
@@ -230,6 +237,9 @@ func CollectPromotionInput(isStreaming, isRequest bool, flags PromotionFlags, sc
 	// Both public+paid and private+paid prompt for T&C. Free agents (any listing) skip T&C.
 	if billingMode == "paid" {
 		if !flags.AcceptTerms {
+			if nonInteractive {
+				return PromotionInput{}, fmt.Errorf("Paid agents require --accept-terms to accept platform terms non-interactively.")
+			}
 			if err := promptAttestations(scanner); err != nil {
 				return PromotionInput{}, err
 			}
@@ -332,6 +342,23 @@ func validatePriceRange(raw string, min string, max string, label string) error 
 	return nil
 }
 
+func effectiveDefault(minPrice, maxPrice string) string {
+	d, _ := decimal.NewFromString(DefaultPrice)
+	min, _ := decimal.NewFromString(minPrice)
+	max, _ := decimal.NewFromString(maxPrice)
+	if d.LessThan(min) {
+		return min.String()
+	}
+	if d.GreaterThan(max) {
+		return max.String()
+	}
+	return DefaultPrice
+}
+
+func pricePrompt(label, maxPrice, minPrice string) string {
+	return fmt.Sprintf("%s%s%s in USD (up to %s) [%s]", promptAnsiBold, label, promptAnsiReset, maxPrice, effectiveDefault(minPrice, maxPrice))
+}
+
 func normalizePriceInput(raw string) string {
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "$")
@@ -387,14 +414,22 @@ func resolvePrice(prompt string, label string, genericFlag, specificFlag *string
 
 	if raw != nil {
 		if err := validatePriceRange(*raw, minPrice, maxPrice, label); err != nil {
-			return nil, err
+			if nonInteractive {
+				return nil, err
+			}
+			fmt.Printf("  %v\n", err)
+		} else {
+			v, _ := decimal.NewFromString(normalizePriceInput(*raw))
+			if required && v.IsZero() {
+				if nonInteractive {
+					return nil, fmt.Errorf("%s must be > 0", label)
+				}
+				fmt.Printf("  %s must be > 0\n", label)
+			} else {
+				s := v.StringFixed(6)
+				return &s, nil
+			}
 		}
-		v, _ := decimal.NewFromString(normalizePriceInput(*raw))
-		if required && v.IsZero() {
-			return nil, fmt.Errorf("%s must be > 0", label)
-		}
-		s := v.StringFixed(6)
-		return &s, nil
 	}
 
 	if nonInteractive {
@@ -404,10 +439,17 @@ func resolvePrice(prompt string, label string, genericFlag, specificFlag *string
 		return nil, nil
 	}
 
-	// Determine help text based on label.
-	helpText := helpPricePerTask
+	// Generate help text from actual limits.
+	effDefault := effectiveDefault(minPrice, maxPrice)
+	var helpText string
 	if label == pricePerMinuteLabel {
-		helpText = helpPricePerMinute
+		helpText = fmt.Sprintf("  The USD amount charged to the consumer for each minute of a pipe (long-running)\n"+
+			"  task. Between $%s and $%s. Leave blank to use the default ($%s).\n"+
+			"  Enter 0 for no per-minute charge (if you're using per-task pricing instead).", minPrice, maxPrice, effDefault)
+	} else {
+		helpText = fmt.Sprintf("  The USD amount charged to the consumer for each completed request task.\n"+
+			"  Between $%s and $%s. Leave blank to use the default ($%s).\n"+
+			"  Enter 0 for no per-task charge (if you're using per-minute pricing instead).", minPrice, maxPrice, effDefault)
 	}
 
 	for {
@@ -426,7 +468,7 @@ func resolvePrice(prompt string, label string, genericFlag, specificFlag *string
 			continue
 		}
 		if text == "" {
-			text = DefaultPrice
+			text = effectiveDefault(minPrice, maxPrice)
 		}
 
 		if err := validatePriceRange(text, minPrice, maxPrice, label); err != nil {
@@ -445,22 +487,32 @@ func resolvePrice(prompt string, label string, genericFlag, specificFlag *string
 
 // resolveFreeUnits resolves free units from flags or interactive prompt.
 // When nonInteractive is true and no flag is set, returns nil and never reads stdin.
-func resolveFreeUnits(label string, genericFlag, specificFlag *int, nonInteractive bool, scanner *bufio.Scanner) (*int, error) {
-	if specificFlag != nil {
-		return validateFreeUnits(*specificFlag)
+func resolveFreeUnits(label string, genericFlag, specificFlag *int, max int, nonInteractive bool, scanner *bufio.Scanner) (*int, error) {
+	flagVal := specificFlag
+	if flagVal == nil {
+		flagVal = genericFlag
 	}
-	if genericFlag != nil {
-		return validateFreeUnits(*genericFlag)
+
+	if flagVal != nil {
+		result, err := validateFreeUnits(*flagVal, max)
+		if err != nil {
+			if nonInteractive {
+				return nil, err
+			}
+			fmt.Printf("  %v\n", err)
+		} else {
+			return result, nil
+		}
 	}
 
 	if nonInteractive {
 		return nil, nil
 	}
 
-	// Determine help text based on label content.
-	helpText := helpFreeTrialTasks
+	// Generate help text from actual max.
+	helpText := fmt.Sprintf(helpFreeTrialTasksTpl, max)
 	if strings.Contains(label, "minute") || strings.Contains(label, "Minute") {
-		helpText = helpFreeTrialMinutes
+		helpText = fmt.Sprintf(helpFreeTrialMinutesTpl, max)
 	}
 
 	for {
@@ -487,16 +539,23 @@ func resolveFreeUnits(label string, genericFlag, specificFlag *int, nonInteracti
 			return nil, nil
 		}
 		i := int(v.IntPart())
+		if i > max {
+			fmt.Printf("  Maximum is %d.\n", max)
+			continue
+		}
 		return &i, nil
 	}
 }
 
-func validateFreeUnits(v int) (*int, error) {
+func validateFreeUnits(v int, max int) (*int, error) {
 	if v < 0 {
 		return nil, fmt.Errorf("Enter a whole number of 0 or greater.")
 	}
 	if v == 0 {
 		return nil, nil
+	}
+	if v > max {
+		return nil, fmt.Errorf("Maximum is %d.", max)
 	}
 	return &v, nil
 }

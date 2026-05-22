@@ -64,9 +64,11 @@ func resolveClientID() string {
 	return ""
 }
 
-// openBrowser opens the given URL in the platform's default browser.
+// openBrowserFunc is the browser-open implementation. Tests replace it with a no-op.
+var openBrowserFunc = auth.OpenBrowser
+
 func openBrowser(rawURL string) error {
-	return auth.OpenBrowser(rawURL)
+	return openBrowserFunc(rawURL)
 }
 
 // loadCredentials loads credentials and returns the API key or an error.

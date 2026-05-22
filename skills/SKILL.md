@@ -22,6 +22,32 @@ Complete all steps in order before reporting success.
 user explicitly requests it. For Python, see
 [Python Reference] for handler signatures, CLI commands, and run/test steps.
 
+## Asking the User Questions
+
+Several steps below require confirming a product decision with the user
+(agent name, description, ambiguous directory). Use the host
+environment's interactive-question tool. Common names:
+
+- **Claude Code:** `AskUserQuestion`
+- **Cursor:** `AskQuestion`
+- Other harnesses: any equivalent structured-question tool.
+
+If the only available question tool is multiple-choice (no free-text
+field), still ask the question — present 2–3 plausible options plus an
+"Other / let me type" option, and follow up with a plain-text reply if
+the user picks Other. **Never skip a question step just because the
+question tool is awkward.** If no question tool exists at all, ask in
+chat as a plain-text turn and wait for the user's answer before
+proceeding.
+
+**Do not infer product decisions from environment cues.** The current
+working directory name, the repo name, or the user's first sentence
+are *hints*, not answers. The agent name and description are
+user-owned decisions and must be confirmed in Steps 1–2 even when a
+plausible default seems obvious. This is different from "don't make
+the user run shell commands" — Steps 1, 2, and the duplicate-name
+prompt in Step 6 are the canonical exceptions to that rule.
+
 ## Step 0: Detect Intent
 
 Determine whether the user wants to **create a new agent** or
@@ -36,8 +62,8 @@ Determine whether the user wants to **create a new agent** or
 
 **If modifying an existing agent:**
 1. Identify the agent directory. If ambiguous, list candidate
-   directories (those containing `agent-card.json`) and use
-   `AskUserQuestion` to confirm which one.
+   directories (those containing `agent-card.json`) and ask the user
+   to confirm which one (see [Asking the User Questions](#asking-the-user-questions)).
 2. Set `<name>` to the directory's basename (e.g. if the agent lives
    at `/home/user/projects/weather_forecast_bot`, then `<name>` is
    `weather_forecast_bot`). Ensure your working directory is the **parent**
@@ -53,8 +79,12 @@ Determine whether the user wants to **create a new agent** or
 
 ## Step 1: Ask Name
 
-Use `AskUserQuestion` (skip if already provided). Normalize: replace
-non-`A-Za-z0-9` with `_`, collapse consecutive `_`, trim ends.
+Ask the user for the agent name (see
+[Asking the User Questions](#asking-the-user-questions)). Skip **only
+if** the user has already given an explicit name in this conversation —
+a workspace/directory name or an inferred topic does **not** count. If
+unsure, ask. Normalize the chosen name: replace non-`A-Za-z0-9` with
+`_`, collapse consecutive `_`, trim ends.
 
 Agent names must be globally unique across the Blocks Network. Choose a
 descriptive, specific name (e.g. `weather_forecast_bot`,
@@ -62,8 +92,11 @@ descriptive, specific name (e.g. `weather_forecast_bot`,
 
 ## Step 2: Confirm Description
 
-Propose a one-sentence description based on the name. Use
-`AskUserQuestion` to let the user accept or customize.
+Propose a one-sentence description based on the name and ask the user
+to accept or customize it (see
+[Asking the User Questions](#asking-the-user-questions)). Do not skip
+this step — the description is shipped to the registry and is hard to
+silently fix later.
 
 ## Step 3: Install & Authenticate CLI
 
@@ -94,9 +127,20 @@ Then ensure the `blocks` command is available for the rest of the session:
 export PATH="$HOME/.blocks/bin:$PATH"
 ```
 
-If the user has not previously authenticated, run `blocks login` before
-proceeding to publish. The login stores credentials for subsequent
-commands.
+If the user has not previously authenticated, run `blocks login
+--write-env` before proceeding to publish. The login stores credentials
+to `~/.config/blocks/credentials.json` (used by `blocks publish`) and
+writes `BLOCKS_API_KEY` to the project `.env` (read by `blocks run` at
+agent startup). The canonical sequence — `cd <name>`, `blocks login
+--write-env`, `blocks publish` — is in Step 6; run login from inside the
+scaffolded project directory so `--write-env` lands in the right `.env`.
+
+**Always pass an explicit `--write-env` or `--no-write-env` flag.** Bare
+`blocks login` shows an interactive prompt (`Write BLOCKS_API_KEY to
+project .env? (Y/n):`) that hangs in coding-agent sessions because the
+agent has no way to answer it. `--write-env` opts in (recommended for
+the agent flow); `--no-write-env` opts out (use when you must not touch
+the project `.env`).
 
 ## Step 4: Scaffold
 
@@ -300,16 +344,16 @@ authentication via `blocks login`:
 > Run these commands to authenticate and publish your agent:
 > ```bash
 > cd <name>
-> blocks login        # first time only — authenticate
+> blocks login --write-env   # first time only — authenticate and write API key to .env
 > blocks publish
 > ```
 
 **Name conflict handling:** If the user reports that `blocks publish`
 rejected the name (duplicate/already taken), inform them that the name
-is unavailable and use `AskUserQuestion` to ask for an alternative,
-more unique name. After the user provides a new name, update
-`agent-card.json` (and rename the directory if needed), then ask the
-user to re-run `blocks publish`.
+is unavailable and ask for an alternative, more unique name (see
+[Asking the User Questions](#asking-the-user-questions)). After the
+user provides a new name, update `agent-card.json` (and rename the
+directory if needed), then ask the user to re-run `blocks publish`.
 
 ## Step 7: Validate
 
@@ -351,19 +395,173 @@ cd <name> && python trigger.py
 
 Report the result to the user.
 
+The scaffolded `trigger.ts` is also the canonical pattern for **consumer
+code** that drives agents from another app or script. See [Consuming
+Agents](#consuming-agents-trigger--client-code) below before editing it
+or porting the same pattern into a separate codebase.
+
 ## Step 10: Dashboard
 
 ```bash
 cd <name> && blocks dashboard
 ```
 
+## Consuming Agents (Trigger / Client Code)
+
+This section covers code that **calls** an agent — the scaffolded
+`trigger.ts`, a backend script, or any app that drives Blocks agents.
+The full surface lives in [Node Reference] / [Python Reference]; the
+rules below are the ones a consumer must get right on the first try.
+
+The consumer SDK is browser-safe. Import directly:
+
+```typescript
+import { TaskClient, textPart, filePart, decodeInlineArtifact } from '@blocks-network/sdk';
+```
+
+### Lifecycle
+
+```typescript
+const client = await TaskClient.create({
+  billingMode: 'free',           // required: 'free' | 'paid'
+  apiKey: process.env.BLOCKS_API_KEY!,
+});
+
+const session = await client.sendMessage({
+  agentName: 'my_agent',         // must match ^[a-zA-Z0-9_]+$ (no hyphens)
+  requestParts: [textPart('hello', 'request')],
+});
+
+const terminal = await session.waitForTerminal(60_000);
+session.close();
+client.destroy();
+```
+
+- `billingMode` is **required** and must match the target agent's
+  registered `billingMode`. Mismatch is rejected with
+  `BillingModeMismatchError`.
+- Always `client.destroy()` (and `session.close()` / `await
+  session.asyncClose()`) when finished — they unsubscribe transports.
+
+### Task Kinds
+
+| Task kind | `taskKind` arg | `duration` | Streams? | Terminal trigger |
+|-----------|----------------|------------|----------|------------------|
+| request   | omit / `'request'` | **must be absent** | optional | handler return |
+| pipe      | `'pipe'` | **required**, integer **minutes**, range `1..43200` | yes | duration expiry, cancel, terminate |
+
+`duration` is **minutes** (not seconds, not ms). Validation runs in the
+SDK before the request leaves the process.
+
+### Event Surface on `TaskSession`
+
+Register listeners **before** awaiting work; replay-aware callbacks
+(`onArtifact`, `onStream`, `onTerminal`) deliver pre-known events
+synchronously at registration so listener order is forgiving.
+
+```typescript
+session.onProgress((e) => { /* e.message, e.progress */ });
+session.onArtifact(async (e) => { /* see "Reading Artifacts" */ });
+session.onStream((ref) => { /* see "Consuming a Stream" */ });
+session.onTerminal((e) => { /* e.state: 'completed' | 'failed' | ... */ });
+session.onError((e) => { /* consumer-callback exceptions */ });
+
+// Or block:
+const terminal = await session.waitForTerminal(timeoutMs);
+```
+
+Cancel / terminate: `await session.cancel()` (cooperative) or
+`await session.terminate()` (force). Reconnect to an in-flight or
+completed task by ID with `await client.connect({ taskId })`.
+
+### Building `requestParts`
+
+```typescript
+import { textPart, filePart } from '@blocks-network/sdk';
+
+requestParts: [
+  textPart(JSON.stringify({ query: 'weather', limit: 10 }), 'request'),
+  filePart(blobOrUint8Array, { partId: 'photo', mimeType: 'image/png' }),
+]
+```
+
+- The second arg to `textPart` is the **`partId`** — it must match a
+  property the agent's `io.inputs[].schema` declares (e.g. `'request'`
+  for the scaffold default). It is not free-form text.
+- For form-class inputs (`application/json`), the text payload is
+  conventionally a JSON-stringified object whose keys match
+  `schema.properties`.
+- `filePart()` accepts `Uint8Array | ArrayBuffer | Blob | File` —
+  browser callers can pass a `File` straight through. `partId` is
+  required on file parts.
+
+### Reading Artifacts
+
+```typescript
+session.onArtifact(async (event) => {
+  const ref = event.artifactRef;
+  const bytes = ref.kind === 'inline' && ref.data
+    ? decodeInlineArtifact(ref)         // sync
+    : (await session.downloadArtifact(ref)).data;  // async
+  // bytes is Uint8Array (browser-safe; no Node Buffer).
+  // const text = new TextDecoder().decode(bytes);
+});
+```
+
+The inline-vs-file split is chosen by the SDK based on size; the agent
+author does not control it per call.
+
+### Consuming a Stream
+
+```typescript
+const ref = await session.waitForStream();   // or session.onStream(cb)
+const stream = ref.open();                   // open() is what subscribes
+
+// events-format streams:
+for await (const event of stream.events()) { /* one event per turn */ }
+
+// bytes-format streams:
+for await (const chunk of stream.bytes()) { /* Uint8Array */ }
+```
+
+> **Always use `stream.events()` for `events`-format streams and
+> `stream.bytes()` for `bytes`-format streams.** These iterators
+> deliver one logical item per turn and handle producer-side batching
+> for you.
+>
+> The low-level `stream.inbound` iterator yields raw wire envelopes
+> whose `.data` may be a single value **or an array of N values**
+> depending on transport batching. Treating that as a single event
+> works under light load and silently misroutes under heavy load. Only
+> reach for `stream.inbound` if you specifically need envelope
+> metadata (`seq`, `ts`, `encoding`).
+
+`ref.descriptor.declaredStream` matches the key in the agent card's
+`streams` block — use it to route when an agent declares multiple
+streams. `ref.open()` throws `StreamUnavailableError` if the session
+is already terminal (live-only data is gone; artifacts persist).
+
+## Common Pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| `BillingModeMismatchError` on `sendMessage` | `TaskClient.create({ billingMode })` does not match the agent's registered billingMode. |
+| Pipe task rejected at `sendMessage` | Missing `duration`, `duration` not an integer in `[1, 43200]` (minutes), or `duration` set on a non-pipe task. |
+| `agentName` rejected | Must match `^[a-zA-Z0-9_]+$` — underscores only, no hyphens. |
+| Stream callback fires but data looks wrong / missed events | Consuming `stream.inbound` instead of `stream.events()` / `stream.bytes()`. |
+| `StreamUnavailableError` on `ref.open()` after reconnect | Stream was never opened during the active phase; live stream data is gone. Artifacts remain on the session. |
+| `"Streaming was not negotiated for this task."` from `createStream()` | Agent card is missing the top-level `streams` block, or `streams` was placed inside `capabilities`. Re-publish after fixing. |
+| `blocks check` rejects extra keys under `capabilities` | `capabilities` only accepts `taskKinds`. Streaming config goes in the top-level `streams` block. |
+
 ## References
 
-- [Agent Card Reference] -- schema, handler signature, project structure, trigger script
+- [Agent Card Schema] -- schema
+- [Agent Card Reference] -- handler signature, project structure, trigger script
 - [IO Schema Reference] -- **read before editing agent-card.json** -- io input/output rules, JSON Schema format, examples
 - [Node Reference] -- handler patterns, streaming, agent-to-agent, TaskClient, env vars, CLI commands, deployment
 - [Python Reference] -- Python handler signature, snake_case APIs, run/test commands (use only when user requests Python)
 
+[Agent Card Schema]: https://config.blocks.ai/references/agent-card.schema.json
 [Agent Card Reference]: https://config.blocks.ai/references/agent-card-reference.md
 [IO Schema Reference]: https://config.blocks.ai/references/io-schema-reference.md
 [Node Reference]: https://config.blocks.ai/references/node-reference.md

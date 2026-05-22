@@ -1,6 +1,6 @@
 {
   "name": "@blocks-network/mcp-server",
-  "version": "0.1.60",
+  "version": "0.0.0",
   "description": "MCP server for Blocks Network consumer operations",
   "type": "module",
   "main": "dist/index.js",

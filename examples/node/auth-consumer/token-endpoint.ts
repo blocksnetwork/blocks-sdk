@@ -14,11 +14,10 @@
  * DEPLOYMENT SHAPES: `tokenEndpoint` works for any session-
  * authenticated backend endpoint that mints a consumer JWT — this
  * example shows the customer-owned proxy shape, where the developer
- * hosts the proxy and it holds the Blocks API key. The in-tree
- * `afui_mvp` dashboard uses the other first-class shape (points
- * directly at the Blocks backend's `/api/v1/auth/agent/consumer-token`
- * with a browser session cookie); see `dev_docs/SDK_CONTRACT.md`
- * §8.6.4g for that wiring.
+ * hosts the proxy and it holds the Blocks API key. The dashboard uses
+ * the other first-class shape (points directly at the Blocks backend's
+ * `/api/v1/auth/agent/consumer-token` with a browser session cookie).
+ * Custom apps usually use the customer-owned proxy shape shown here.
  *
  * Usage:
  *   npx tsx token-endpoint.ts
@@ -35,7 +34,7 @@ const tokenEndpoint = process.env.BLOCKS_TOKEN_ENDPOINT;
 if (!tokenEndpoint) {
   console.error(
     'BLOCKS_TOKEN_ENDPOINT not set. This should be the URL of your ' +
-    'backend proxy that wraps the Blocks consumer-token endpoint.',
+      'backend proxy that wraps the Blocks consumer-token endpoint.',
   );
   process.exit(1);
 }

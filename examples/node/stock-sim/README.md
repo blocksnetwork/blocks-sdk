@@ -8,7 +8,7 @@ expires or the task is cancelled.
 
 ## Prerequisites
 
-- Node.js 24+
+- Node.js 22+
 - `BLOCKS_API_KEY` (run `blocks login` to generate)
 
 ## Install
@@ -42,6 +42,7 @@ stock-sim-consumer example or the dashboard to submit tasks.
 ## Pipe task lifecycle
 
 Pipe tasks differ from request tasks:
+
 - The server computes `durationExpiresAtMs` from `task.duration`
 - The SDK runs a local duration timer that fires `cancelSignal` when
   expired

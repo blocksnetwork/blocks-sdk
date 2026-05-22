@@ -1,6 +1,6 @@
 # @blocks-network/sdk
 
-Blocks Network SDK for Node.js -- build and run A2A agents on PubNub.
+Blocks Network SDK for Node.js
 
 ## Installation
 
@@ -198,9 +198,9 @@ import type { TokenEndpointConfig } from '@blocks-network/sdk';
 
 const tokenEndpoint: TokenEndpointConfig = {
   url: '/api/blocks-token',
-  credentials: 'include',                        // send session cookies
-  headers: { 'X-CSRF-Token': readCsrfMeta() },   // merged with Content-Type
-  body: { sessionId: getCurrentSessionId() },    // replaces the default {}
+  credentials: 'include', // send session cookies
+  headers: { 'X-CSRF-Token': readCsrfMeta() }, // merged with Content-Type
+  body: { sessionId: getCurrentSessionId() }, // replaces the default {}
 };
 
 const client = await TaskClient.create({
@@ -228,12 +228,12 @@ the client.
    Blocks API key, authenticates the browser caller however you
    choose (session cookie / OAuth / etc.), and forwards to the
    Blocks backend's `POST /api/v1/auth/agent/consumer-token`.
-2. **Dashboard embedder (`afui_mvp` pattern).** The Blocks backend's
-   own `POST /api/v1/auth/agent/consumer-token` endpoint, called
-   directly from a signed-in dashboard with the user's session
-   cookie plus `X-Active-Org` and `X-CSRF-Token` headers. No proxy,
-   no API key in the browser. See `dev_docs/SDK_CONTRACT.md` §8.6.4g
-   for the full wiring.
+2. **Dashboard embedder.** The Blocks backend's own
+   `POST /api/v1/auth/agent/consumer-token` endpoint, called directly
+   from a signed-in dashboard with the user's session cookie plus
+   `X-Active-Org` and `X-CSRF-Token` headers. No proxy, no API key in
+   the browser. Custom apps usually use the customer-owned backend
+   proxy shape.
 
 Both shapes speak the same Mode 2 contract and are consumed
 uniformly by this SDK.
@@ -437,9 +437,7 @@ import type { StreamError } from '@blocks-network/sdk/stream';
 
 const stream = ref.open();
 stream.onError((err: StreamError) => {
-  console.warn(
-    `[stream] ${err.category} fatal=${err.fatal} channel=${err.channel}`,
-  );
+  console.warn(`[stream] ${err.category} fatal=${err.fatal} channel=${err.channel}`);
 });
 
 for await (const chunk of stream.bytes()) {
@@ -484,10 +482,10 @@ session.onStream((ref) => {
 });
 
 // Option 2 — open every readable stream in one call, then branch
-await session.waitForStream();                 // ensure at least one is announced
-const streams = session.openAllStreams();      // returns StreamClient[] in insertion order
+await session.waitForStream(); // ensure at least one is announced
+const streams = session.openAllStreams(); // returns StreamClient[] in insertion order
 for (const s of streams) {
-  void consume(s, /* whichever ref you care about */);
+  void consume(s /* whichever ref you care about */);
 }
 ```
 
@@ -507,13 +505,13 @@ loops. Tune the window per session:
 const session = await client.sendMessage({
   agentName: 'llm_streamer',
   requestParts: [textPart('stream please')],
-  drainWindowMs: 5_000,      // 5 seconds
+  drainWindowMs: 5_000, // 5 seconds
 });
 
 // Wider window for long-tail consumers, or on connect()
 const resumed = await client.connect({
   taskId: 'task-abc',
-  drainWindowMs: 60_000,     // 60 seconds
+  drainWindowMs: 60_000, // 60 seconds
 });
 ```
 
@@ -586,11 +584,11 @@ Import from the package root — no special browser entrypoint needed:
 
     import { TaskClient, TaskSession, StreamRef } from '@blocks-network/sdk';
 
-The Node SDK package.json declares `engines.node >= 20.0.0` (Node 20
-LTS) alongside the `browser` exports field. Node 20+ has native
+The Node SDK package.json declares `engines.node >= 22.0.0` (Node 22
+Maintenance LTS) alongside the `browser` exports field. Node 22+ has native
 `FormData`, `fetch`, `Blob`, `Uint8Array`, `TextEncoder`, and
 `TextDecoder`, which the SDK uses directly — no polyfill required on
-either platform.
+either platform. CI tests against Node 22, 24, and 26.
 
 **Consumer APIs** (TaskClient, TaskSession, StreamRef, StreamClient)
 are browser-safe — no Node.js `Buffer` polyfill needed:

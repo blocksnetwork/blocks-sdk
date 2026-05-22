@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { resolve, relative } from 'node:path';
-import { realpathSync } from 'node:fs';
+import { resolve, relative, dirname } from 'node:path';
+import { realpathSync, mkdirSync, writeFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -23,6 +23,7 @@ import {
   listAgents,
   getAgentCard,
   connectTask,
+  downloadArtifact,
   defaultFileSize,
   type ToolDeps,
   type TaskClientLike,
@@ -49,6 +50,21 @@ function validateFilePath(filePath: string): string {
     throw new Error(`File path must be within ${ALLOWED_ROOT}`);
   }
   return real;
+}
+
+function resolveSavePath(filePath: string): string {
+  const root = realpathSync(resolve(ALLOWED_ROOT));
+  const resolved = resolve(root, filePath);
+  const rel = relative(root, resolved);
+  if (rel.startsWith('..') || resolve(root, rel) !== resolved) {
+    throw new Error(`Save path must be within ${ALLOWED_ROOT}`);
+  }
+  mkdirSync(dirname(resolved), { recursive: true });
+  return resolved;
+}
+
+function writeFile(filePath: string, data: Uint8Array): void {
+  writeFileSync(filePath, data);
 }
 
 const taskClients = new Map<string, TaskClient>();
@@ -83,6 +99,8 @@ const deps: ToolDeps = {
     getAgent(agentName, options) as Promise<AgentEntryLike | null>,
   listAgents: listAgentsAuthenticated,
   validateFilePath,
+  resolveSavePath,
+  writeFile,
   fileSize: defaultFileSize,
   maxUploadBytes: BLOCKS_MAX_UPLOAD_BYTES,
   filePartFromPath,
@@ -169,6 +187,20 @@ server.tool(
     timeoutMs: z.number().optional().describe('Timeout in milliseconds (default: 60000)'),
   },
   (params) => connectTask(params, deps),
+);
+
+server.tool(
+  'download_artifact',
+  'Download a single artifact from a task by file name. If savePath is provided, writes the artifact to disk under BLOCKS_MCP_FILE_ROOT; otherwise returns the content inline (text decoded, binary base64-encoded).',
+  {
+    taskId: z.string().describe('The task ID that produced the artifact'),
+    fileName: z.string().describe('Artifact file name as listed by get_task'),
+    savePath: z
+      .string()
+      .optional()
+      .describe('Optional path (relative to BLOCKS_MCP_FILE_ROOT) to write the artifact to'),
+  },
+  (params) => downloadArtifact(params, deps),
 );
 
 function shutdown() {

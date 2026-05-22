@@ -17,6 +17,13 @@ import { StreamRef } from './stream-ref.js';
 import { taskChannel } from './channel-manager.js';
 import { callRpc, type RpcClientConfig } from './rpc-client.js';
 import { downloadArtifact, type ArtifactRef, type DownloadedArtifact } from './artifacts.js';
+import { log as baseLog } from './logger.js';
+
+const log = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  meta?: Record<string, unknown>,
+): void => baseLog('[TaskSession]', level, message, meta);
 
 export type Unsubscribe = () => void;
 
@@ -315,7 +322,11 @@ export class TaskSession {
         }
       }
     } else {
-      console.warn(`[TaskSession] callback error in ${callbackType}:`, error.message);
+      log('warn', `callback error in ${callbackType}`, {
+        event: 'task_session_callback_error',
+        callbackType,
+        error: error.message,
+      });
     }
   }
 
@@ -440,10 +451,12 @@ export class TaskSession {
         // affinity became schema-required in 4.7.0. Silent drop would
         // leave a consumer missing a stream with no log. Warn loudly
         // so a malformed live event is diagnosable.
-        console.warn(
-          `[TaskSession] live stream_started: dropping stream "${streamId}" for task "${this.taskId}" — ` +
-          `invalid or missing affinity (got ${JSON.stringify(entry.affinity)})`,
-        );
+        log('warn', `live stream_started: dropping stream "${streamId}" for task "${this.taskId}" — invalid or missing affinity`, {
+          event: 'task_session_live_invalid_affinity',
+          streamId,
+          taskId: this.taskId,
+          receivedAffinity: entry.affinity,
+        });
         continue;
       }
 
@@ -589,7 +602,7 @@ export class TaskSession {
 
   /**
    * Register an error handler for callback exceptions.
-   * If registered, callback errors are routed here instead of console.warn.
+   * If registered, callback errors are routed here instead of the SDK logger.
    * Returns an unsubscribe function.
    */
   onError(cb: (error: Error, context: CallbackErrorContext) => void): Unsubscribe {

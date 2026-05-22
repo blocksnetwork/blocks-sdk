@@ -25,10 +25,13 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('resolveMaxRunningTimeSec', () => {
+  // After BLOCKS-373, divergence logs go through the shared `baseLog` helper,
+  // which routes `info` entries to `console.log` with a structured entry
+  // shape `(tag, { level, message, ts, ...meta })` rather than `console.info`.
   let infoSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    infoSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -53,9 +56,15 @@ describe('resolveMaxRunningTimeSec', () => {
   it('returns opts and logs once at info level when values disagree', () => {
     expect(resolveMaxRunningTimeSec(900, 1800)).toBe(900);
     expect(infoSpy).toHaveBeenCalledTimes(1);
-    const msg = String(infoSpy.mock.calls[0]?.[0] ?? '');
-    expect(msg).toContain('opts.maxRunningTimeSec (900)');
-    expect(msg).toContain('card.runtime.maxRunningTimeSec (1800)');
+    const [tag, entry] = infoSpy.mock.calls[0] ?? [];
+    expect(tag).toBe('[AgentInstance]');
+    const e = entry as Record<string, unknown>;
+    expect(e.level).toBe('info');
+    expect(e.event).toBe('max_running_time_override');
+    expect(e.optsValue).toBe(900);
+    expect(e.cardValue).toBe(1800);
+    expect(String(e.message)).toContain('opts.maxRunningTimeSec (900)');
+    expect(String(e.message)).toContain('card.runtime.maxRunningTimeSec (1800)');
   });
 
   it('returns undefined when neither source is set', () => {

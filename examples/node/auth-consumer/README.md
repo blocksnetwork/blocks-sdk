@@ -7,7 +7,7 @@ demonstrates a different way to acquire and refresh tokens.
 
 ## Prerequisites
 
-- Node.js 24+
+- Node.js 22+
 - `BLOCKS_API_KEY` for api-key and custom-provider modes
 - A running echo agent on the same keyset
 
@@ -41,8 +41,8 @@ either a **customer-owned proxy** (what this example demonstrates —
 developer hosts it and it holds the Blocks API key) or the
 **dashboard-embedder pattern** (the Blocks backend's own
 `/api/v1/auth/agent/consumer-token` endpoint, called from a signed-in
-browser dashboard with a session cookie). Both are first-class; see
-`dev_docs/SDK_CONTRACT.md` §8.6.4g for the dashboard-embedder wiring.
+browser dashboard with a session cookie). Custom apps usually use the
+customer-owned proxy shape shown here.
 
 Best for: browser apps, mobile apps, Electron -- environments where
 the API key must not be bundled.
@@ -62,11 +62,11 @@ proxy endpoints requiring custom headers or credentials.
 
 ## Environment variables
 
-| Variable | Required by | Description |
-|---|---|---|
-| `BLOCKS_API_KEY` | api-key, custom-provider | Blocks API key |
-| `BLOCKS_TOKEN_ENDPOINT` | token-endpoint | Customer proxy endpoint URL |
-| `BLOCKS_CDM_URL` | all (optional) | CDM config URL |
+| Variable                | Required by              | Description                 |
+| ----------------------- | ------------------------ | --------------------------- |
+| `BLOCKS_API_KEY`        | api-key, custom-provider | Blocks API key              |
+| `BLOCKS_TOKEN_ENDPOINT` | token-endpoint           | Customer proxy endpoint URL |
+| `BLOCKS_CDM_URL`        | all (optional)           | CDM config URL              |
 
 ## SDK concepts demonstrated
 

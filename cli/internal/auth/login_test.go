@@ -142,6 +142,50 @@ func TestUpsertEnvKey_PreservesComments(t *testing.T) {
 	}
 }
 
+func TestInjectEnvAt_CreatesNewFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "my_agent")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectEnvAt(subDir, "BLOCKS_API_KEY", "test-key-123"); err != nil {
+		t.Fatalf("InjectEnvAt failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(subDir, ".env"))
+	if err != nil {
+		t.Fatalf("expected .env to be created: %v", err)
+	}
+	if string(data) != "BLOCKS_API_KEY=test-key-123\n" {
+		t.Errorf("unexpected content: %q", string(data))
+	}
+}
+
+func TestInjectEnvAt_UpdatesExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	envFile := filepath.Join(tmpDir, ".env")
+	if err := os.WriteFile(envFile, []byte("BLOCKS_API_KEY=old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectEnvAt(tmpDir, "BLOCKS_API_KEY", "new-key"); err != nil {
+		t.Fatalf("InjectEnvAt failed: %v", err)
+	}
+
+	data, _ := os.ReadFile(envFile)
+	if !strings.Contains(string(data), "BLOCKS_API_KEY=new-key") {
+		t.Errorf("expected updated key, got: %q", string(data))
+	}
+}
+
+func TestInjectEnvAt_InvalidDirReturnsError(t *testing.T) {
+	err := InjectEnvAt("/nonexistent/path/that/does/not/exist", "KEY", "val")
+	if err == nil {
+		t.Fatal("expected error for nonexistent directory")
+	}
+}
+
 func TestRemoveEnvKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	envFile := filepath.Join(tmpDir, ".env")

@@ -17,9 +17,9 @@ For development (includes pytest):
 pip install -e ".[dev]"
 ```
 
-**Requirements:** Python 3.9+, `pubnub>=10.6.0,<11`
+**Requirements:** Python 3.10+, `pubnub>=10.6.0,<11`. CI tests against Python 3.10, 3.11, 3.12, 3.13, and 3.14 (every security-supported release per [python.org devguide](https://devguide.python.org/versions/)).
 
-**Subscribe strategy:** The Python SDK uses PubNub's synchronous `NativeSubscriptionManager`. PubNub Event Engine is not available in the synchronous Python client -- the synchronous `PubNub` class does not expose `enable_event_engine` on `PNConfiguration`. The async client (`PubNubAsyncio`) does support Event Engine internally, but the Blocks Python SDK is built around a synchronous, thread-based runtime (blocking handlers, `threading.Event` cancellation, `ThreadPoolExecutor` concurrency, `queue.Queue` streams). Adopting Event Engine would require a runtime-model migration, not a config change. This is deferred to a separate initiative. See `dev_docs/initiative/event_engine/PYTHON_SYNC_DESIGN_ANALYSIS.md` for the full analysis.
+**Subscribe strategy:** The Python SDK uses PubNub's synchronous `NativeSubscriptionManager`. PubNub Event Engine is not available in the synchronous Python client -- the synchronous `PubNub` class does not expose `enable_event_engine` on `PNConfiguration`. The async client (`PubNubAsyncio`) does support Event Engine internally, but the Blocks Python SDK is built around a synchronous, thread-based runtime (blocking handlers, `threading.Event` cancellation, `ThreadPoolExecutor` concurrency, `queue.Queue` streams). Adopting Event Engine would require a runtime-model migration, not a config change.
 
 ## Quick Start
 
@@ -112,23 +112,23 @@ result = start_agent_instance(
 
 **Parameters:** An `AgentInstanceOptions` dataclass with the following fields:
 
-| Field                | Type        | Description                                            |
-| -------------------- | ----------- | ------------------------------------------------------ |
-| `agent_name`         | `str`       | Agent name identifier (required)                       |
-| `description`        | `str`       | Human-readable description for the agent               |
-| `capabilities`       | `list[str]` | Capability tags for registry membership                |
-| `handler`            | `Callable`  | Task handler function                                  |
-| `concurrency`        | `int`       | Maximum concurrent tasks                               |
-| `expected_instances` | `int`       | Expected instance count for scaling                    |
-| `pubnub`             | `PubNub`    | Pre-configured PubNub client (auto-created if omitted) |
-| `token`              | `str`       | PAM token for access control                           |
-| `heartbeat_ms`       | `int`       | Heartbeat interval in milliseconds                     |
-| `on_start_task`      | `Callable`  | Override default StartTask processing                  |
-| `on_cancel_task`     | `Callable`  | Override default CancelTask processing                 |
-| `on_error`           | `Callable`  | Error callback for handler exceptions                  |
+| Field                | Type        | Description                                                |
+| -------------------- | ----------- | ---------------------------------------------------------- |
+| `agent_name`         | `str`       | Agent name identifier (required)                           |
+| `description`        | `str`       | Human-readable description for the agent                   |
+| `capabilities`       | `list[str]` | Capability tags for registry membership                    |
+| `handler`            | `Callable`  | Task handler function                                      |
+| `concurrency`        | `int`       | Maximum concurrent tasks                                   |
+| `expected_instances` | `int`       | Expected instance count for scaling                        |
+| `pubnub`             | `PubNub`    | Pre-configured PubNub client (auto-created if omitted)     |
+| `token`              | `str`       | PAM token for access control                               |
+| `heartbeat_ms`       | `int`       | Heartbeat interval in milliseconds                         |
+| `on_start_task`      | `Callable`  | Override default StartTask processing                      |
+| `on_cancel_task`     | `Callable`  | Override default CancelTask processing                     |
+| `on_error`           | `Callable`  | Error callback for handler exceptions                      |
 | `card`               | `dict`      | Agent card (required for registration and stream affinity) |
-| `card_ref`           | `str`       | Reference URL for the agent card                       |
-| `card_summary`       | `str`       | Short summary for the agent card                       |
+| `card_ref`           | `str`       | Reference URL for the agent card                           |
+| `card_summary`       | `str`       | Short summary for the agent card                           |
 
 **Returns:** A dict with:
 
@@ -232,8 +232,8 @@ credential ever reaches the client.
 2. **Dashboard embedder** — the Blocks backend's own consumer-token
    endpoint, called directly from a signed-in browser client with
    the user's session cookie plus `X-Active-Org` and `X-CSRF-Token`
-   headers. See the Node SDK README and `dev_docs/SDK_CONTRACT.md`
-   §8.6.4g.
+   headers. Custom Python services usually use the customer-owned
+   proxy or API key mode.
 
 While `token_endpoint` is primarily a browser/mobile pattern, the
 Python SDK supports it for cases where a Python service consumes
@@ -340,8 +340,7 @@ with TaskClient.create(billing_mode="free", api_key=api_key) as client:
 Raises `TimeoutError` if no terminal event arrives within the timeout.
 
 The `TaskEvent` returned by `wait_for_terminal()` has typed properties:
-`.message`, `.progress`, `.state`, `.artifact_ref`. See
-`dev_docs/SDK_CONTRACT.md` Section 8.6.2f.
+`.message`, `.progress`, `.state`, and `.artifact_ref`.
 
 ### `session.list_artifacts()`
 

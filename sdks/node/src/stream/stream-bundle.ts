@@ -22,6 +22,13 @@ import type PubNub from 'pubnub';
 import type { StreamFormat, StreamBundleConfig } from './types.js';
 import { utf8ByteLength, utf8Encode, bytesToBase64 } from './bytes.js';
 import { CURRENT_PROTOCOL_VERSION } from '../runtime/protocol-version.js';
+import { log as baseLog } from '../runtime/logger.js';
+
+const log = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  meta?: Record<string, unknown>,
+): void => baseLog('[StreamBundle]', level, message, meta);
 
 // Reserved bytes for the per-part envelope in multipart messages.
 const ENVELOPE_RESERVE = 512;
@@ -416,10 +423,11 @@ export class StreamBundle {
         }
       }
     }
-    console.error(
-      `[StreamBundle] Failed to publish stream message after ${MAX_ATTEMPTS} attempts:`,
-      lastErr,
-    );
+    log('error', `failed to publish stream message after ${MAX_ATTEMPTS} attempts`, {
+      event: 'stream_bundle_publish_failed_after_retries',
+      maxAttempts: MAX_ATTEMPTS,
+      error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+    });
   }
 
   /**

@@ -23,6 +23,7 @@ import { normalizeFileInput } from './file-input.js';
 import { fetchCdmConfig } from './cdm-config.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
 import { getEnv } from '../env.js';
+import { log as baseLog } from './logger.js';
 import { StreamRef } from './stream-ref.js';
 import {
   invertDirection,
@@ -32,6 +33,12 @@ import {
 import { asPubNubFetcher, type FetchedMessage } from './pubnub-types.js';
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from './protocol-version.js';
 import { getAgent, type AgentCard } from './agent-registry.js';
+
+const log = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  meta?: Record<string, unknown>,
+): void => baseLog('[TaskClient]', level, message, meta);
 
 // ============================================================================
 // Types
@@ -311,10 +318,12 @@ function parseHistoryMessages(
           // affinity became schema-required in 4.7.0. Silent drop would
           // leave a consumer missing a stream with no log. Warn loudly
           // so a malformed history entry is diagnosable.
-          console.warn(
-            `[TaskClient] history-preload: dropping stream "${streamId}" for task "${taskId}" — ` +
-            `invalid or missing affinity (got ${JSON.stringify(entry.affinity)})`,
-          );
+          log('warn', `history-preload: dropping stream "${streamId}" for task "${taskId}" — invalid or missing affinity`, {
+            event: 'history_preload_invalid_affinity',
+            streamId,
+            taskId,
+            receivedAffinity: entry.affinity,
+          });
           continue;
         }
 
@@ -1471,7 +1480,7 @@ export class TaskClient {
 // Standalone subscribe helper
 // ============================================================================
 
-/** Route a callback error through onError or console.warn. */
+/** Route a callback error through onError or the SDK logger. */
 function routeSubscribeError(
   err: unknown,
   callbackType: CallbackErrorContext['callbackType'],
@@ -1486,7 +1495,11 @@ function routeSubscribeError(
       // Prevent infinite loop if error handler itself throws
     }
   } else {
-    console.warn(`[subscribeToTask] callback error in ${callbackType}:`, error.message);
+    log('warn', `subscribeToTask callback error in ${callbackType}`, {
+      event: 'subscribe_callback_error',
+      callbackType,
+      error: error.message,
+    });
   }
 }
 

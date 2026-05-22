@@ -6,7 +6,8 @@ If you discover a security vulnerability, please report it responsibly.
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Instead, email security@pubnub.com with:
+Instead, email security@blocks.ai with:
+
 - A description of the vulnerability
 - Steps to reproduce
 - Affected versions

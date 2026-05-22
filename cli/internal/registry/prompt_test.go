@@ -19,7 +19,7 @@ func TestCollectPromotionInputAllFlags(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestCollectPromotionInputStreamingFlags(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(true, false, flags, nil)
+	input, err := CollectPromotionInput(true, false, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestCollectPromotionInputDualKindExplicitFlags(t *testing.T) {
 		AcceptTerms:    true,
 	}
 
-	input, err := CollectPromotionInput(true, true, flags, nil)
+	input, err := CollectPromotionInput(true, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestCollectPromotionInputDualKindRejectsGenericPrice(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	_, err := CollectPromotionInput(true, true, flags, nil)
+	_, err := CollectPromotionInput(true, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error when --price used with dual-kind agent")
 	}
@@ -113,7 +113,7 @@ func TestCollectPromotionInputRejectsFreeUnitsWithFreeTasks(t *testing.T) {
 		FreeTasks: &freeTasks,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error when --free-units and --free-tasks are both set")
 	}
@@ -130,7 +130,7 @@ func TestCollectPromotionInputRejectsFreeUnitsWithFreeMinutes(t *testing.T) {
 		FreeMinutes: &freeMinutes,
 	}
 
-	_, err := CollectPromotionInput(true, false, flags, nil)
+	_, err := CollectPromotionInput(true, false, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error when --free-units and --free-minutes are both set")
 	}
@@ -155,7 +155,7 @@ func TestCollectPromotionInputPublicPaidRequiresTerms(t *testing.T) {
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader("")) // empty — EOF at attestation prompt
-	_, err := CollectPromotionInput(false, true, flags, scanner)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), scanner)
 	if err == nil {
 		t.Fatal("expected error when paid published without --accept-terms and no attestation input")
 	}
@@ -171,7 +171,7 @@ func TestCollectPromotionInputPublicFreeNoTermsNeeded(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error for public+free: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestCollectPromotionInputPublicExplicitZeroAllowed(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error for public + price 0 + free billing mode: %v", err)
 	}
@@ -209,10 +209,11 @@ func TestCollectPromotionInputPublicExplicitZeroAllowed(t *testing.T) {
 
 func TestCollectPromotionInputNonInteractiveRequiresListing(t *testing.T) {
 	flags := PromotionFlags{
-		AcceptTerms: true,
+		NonInteractive: true,
+		AcceptTerms:    true,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error when --listing omitted in non-interactive mode")
 	}
@@ -229,7 +230,7 @@ func TestCollectPromotionInput_PrivateNoPricing_Allowed(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(true, true, flags, nil)
+	input, err := CollectPromotionInput(true, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -258,7 +259,7 @@ func TestCollectPromotionInput_PrivateExplicitZero_Allowed(t *testing.T) {
 		AcceptTerms:  true,
 	}
 
-	input, err := CollectPromotionInput(true, true, flags, nil)
+	input, err := CollectPromotionInput(true, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -280,7 +281,7 @@ func TestCollectPromotionInputPrivatePaidRequiresTerms(t *testing.T) {
 		AcceptTerms:  true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error for private+paid: %v", err)
 	}
@@ -306,7 +307,7 @@ func TestCollectPromotionInputDualKindPrivateNoPricingAllowed(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(true, true, flags, nil)
+	input, err := CollectPromotionInput(true, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("expected nil error for dual-kind private+free, got %v", err)
 	}
@@ -325,12 +326,12 @@ func TestCollectPromotionInputDualKindPrivateNoPricingAllowed(t *testing.T) {
 func TestCollectPromotionInput_NonInteractive_MissingBillingMode_FailsFast(t *testing.T) {
 	listing := "public"
 	flags := PromotionFlags{
-		Listing:     &listing,
-		AcceptTerms: true,
+		Listing:        &listing,
+		NonInteractive: true,
 		// BillingMode intentionally omitted
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error when --billing-mode omitted in non-interactive mode")
 	}
@@ -350,7 +351,7 @@ func TestCollectPromotionInput_NonInteractive_InvalidBillingMode_FailsFast(t *te
 		AcceptTerms: true,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error for invalid --billing-mode value")
 	}
@@ -367,7 +368,7 @@ func TestCollectPromotionInput_Interactive_PromptsBillingMode(t *testing.T) {
 
 	// Simulate user choosing "1" (free) at billing mode prompt.
 	scanner := bufio.NewScanner(strings.NewReader("1\n"))
-	input, err := CollectPromotionInput(false, true, flags, scanner)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), scanner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestCollectPromotionInput_Interactive_PromptsVisibilityThenBilling(t *testi
 	flags := PromotionFlags{}
 
 	scanner := bufio.NewScanner(strings.NewReader("pr\nf\n"))
-	input, err := CollectPromotionInput(false, true, flags, scanner)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), scanner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,7 +408,7 @@ func TestCollectPromotionInput_Interactive_PromptsBillingMode_Paid(t *testing.T)
 	// Simulate: billing=2(paid), price=0.15, free=0, attest1=y, attest2=y
 	input := "2\n0.15\n0\ny\ny\n"
 	scanner := bufio.NewScanner(strings.NewReader(input))
-	result, err := CollectPromotionInput(false, true, flags, scanner)
+	result, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), scanner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -487,7 +488,7 @@ func TestCollectPromotionInput_FreeBillingMode_NoPricingPrompt(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -503,6 +504,49 @@ func TestCollectPromotionInput_FreeBillingMode_NoPricingPrompt(t *testing.T) {
 	}
 }
 
+// Free agent in non-interactive mode succeeds WITHOUT --accept-terms (matches dashboard).
+func TestCollectPromotionInput_FreeNonInteractive_NoAcceptTermsNeeded(t *testing.T) {
+	listing := "public"
+	billingMode := "free"
+	flags := PromotionFlags{
+		Listing:        &listing,
+		BillingMode:    &billingMode,
+		NonInteractive: true,
+	}
+
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
+	if err != nil {
+		t.Fatalf("free agent should not require --accept-terms, got: %v", err)
+	}
+	if input.BillingMode != "free" {
+		t.Errorf("BillingMode = %q, want free", input.BillingMode)
+	}
+	if input.TcAcceptedAt != "" {
+		t.Errorf("expected empty TcAcceptedAt for free agent, got %q", input.TcAcceptedAt)
+	}
+}
+
+// Paid agent in non-interactive mode WITHOUT --accept-terms fails with clear error.
+func TestCollectPromotionInput_PaidNonInteractive_RequiresAcceptTerms(t *testing.T) {
+	listing := "public"
+	billingMode := "paid"
+	price := "0.15"
+	flags := PromotionFlags{
+		Listing:        &listing,
+		BillingMode:    &billingMode,
+		Price:          &price,
+		NonInteractive: true,
+	}
+
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
+	if err == nil {
+		t.Fatal("expected error for paid agent without --accept-terms in non-interactive mode")
+	}
+	if !strings.Contains(err.Error(), "--accept-terms") {
+		t.Errorf("error should mention --accept-terms, got: %v", err)
+	}
+}
+
 // T&C fires for paid+public (regression: paid-any-listing T&C preserved under explicit billingMode).
 func TestCollectPromotionInput_PaidPublic_TCRequired(t *testing.T) {
 	listing := "public"
@@ -515,7 +559,7 @@ func TestCollectPromotionInput_PaidPublic_TCRequired(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error for paid+public: %v", err)
 	}
@@ -539,7 +583,7 @@ func TestCollectPromotionInput_PaidPrivate_TCRequired(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error for paid+private: %v", err)
 	}
@@ -562,7 +606,7 @@ func TestCollectPromotionInput_PrivateFree_ValidPayload(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("private+free must not error, got: %v", err)
 	}
@@ -588,13 +632,14 @@ func TestCollectPromotionInput_PaidAllZero_RejectedClientSide(t *testing.T) {
 	billingMode := "paid"
 	zero := "0"
 	flags := PromotionFlags{
-		Listing:     &listing,
-		BillingMode: &billingMode,
-		Price:       &zero,
-		AcceptTerms: true,
+		Listing:        &listing,
+		BillingMode:    &billingMode,
+		Price:          &zero,
+		NonInteractive: true,
+		AcceptTerms:    true,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error for paid+all-zero, got nil")
 	}
@@ -616,7 +661,7 @@ func TestCollectPromotionInput_DualKindPaidOnePositivePriceAccepted(t *testing.T
 		AcceptTerms:    true,
 	}
 
-	input, err := CollectPromotionInput(true, true, flags, nil)
+	input, err := CollectPromotionInput(true, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("expected one positive price to be accepted, got: %v", err)
 	}
@@ -637,10 +682,11 @@ func TestCollectPromotionInput_DualKindPaidAllZeroRejected(t *testing.T) {
 		BillingMode:    &billingMode,
 		PricePerTask:   &zero,
 		PricePerMinute: &zero,
+		NonInteractive: true,
 		AcceptTerms:    true,
 	}
 
-	_, err := CollectPromotionInput(true, true, flags, nil)
+	_, err := CollectPromotionInput(true, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected all-zero dual-kind paid pricing to fail")
 	}
@@ -654,12 +700,13 @@ func TestCollectPromotionInput_PaidNoPriceFlags_RejectedClientSide(t *testing.T)
 	listing := "public"
 	billingMode := "paid"
 	flags := PromotionFlags{
-		Listing:     &listing,
-		BillingMode: &billingMode,
-		AcceptTerms: true,
+		Listing:        &listing,
+		BillingMode:    &billingMode,
+		NonInteractive: true,
+		AcceptTerms:    true,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error for paid with no pricing flags, got nil")
 	}
@@ -680,7 +727,7 @@ func TestCollectPromotionInput_FreeWithPositivePrice_Rejected(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error for free + positive price, got nil")
 	}
@@ -701,7 +748,7 @@ func TestCollectPromotionInput_FreeWithPricePerTask_Rejected(t *testing.T) {
 		AcceptTerms:  true,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error for free + positive price-per-task, got nil")
 	}
@@ -717,7 +764,7 @@ func TestCollectPromotionInput_NonInteractiveTTYMissingBillingMode_FailsFast(t *
 		NonInteractive: true,
 	}
 
-	_, err := CollectPromotionInput(false, true, flags, nil)
+	_, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err == nil {
 		t.Fatal("expected error for non-interactive missing --billing-mode, got nil")
 	}
@@ -781,28 +828,28 @@ func TestValidatePriceAcceptsDollarPrefix(t *testing.T) {
 }
 
 func TestValidatePriceRejectsTaskMax(t *testing.T) {
-	err := validatePrice("1000.01", MinPricePerTask, pricePerTaskLabel)
+	err := validatePrice("25.01", MinPricePerTask, pricePerTaskLabel)
 	if err == nil {
 		t.Fatal("expected price above task max to fail")
 	}
-	if !strings.Contains(err.Error(), "1000.00 or less") {
+	if !strings.Contains(err.Error(), "25.00 or less") {
 		t.Errorf("error = %q, want task max range", err.Error())
 	}
 }
 
 func TestValidatePriceRejectsMinuteMax(t *testing.T) {
-	err := validatePrice("10.01", MinPricePerMinute, pricePerMinuteLabel)
+	err := validatePrice("1.01", MinPricePerMinute, pricePerMinuteLabel)
 	if err == nil {
 		t.Fatal("expected price above minute max to fail")
 	}
-	if !strings.Contains(err.Error(), "10.00 or less") {
+	if !strings.Contains(err.Error(), "1.00 or less") {
 		t.Errorf("error = %q, want minute max range", err.Error())
 	}
 }
 
 func TestResolveFreeUnitsZeroFlagOmitted(t *testing.T) {
 	zero := 0
-	got, err := resolveFreeUnits(freeTrialTaskPrompt, nil, &zero, true, nil)
+	got, err := resolveFreeUnits(freeTrialTaskPrompt, nil, &zero, MaxFreeTasksPerConsumer, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -813,12 +860,34 @@ func TestResolveFreeUnitsZeroFlagOmitted(t *testing.T) {
 
 func TestResolveFreeUnitsRejectsNegativeFlag(t *testing.T) {
 	negative := -1
-	_, err := resolveFreeUnits(freeTrialTaskPrompt, nil, &negative, true, nil)
+	_, err := resolveFreeUnits(freeTrialTaskPrompt, nil, &negative, MaxFreeTasksPerConsumer, true, nil)
 	if err == nil {
 		t.Fatal("expected negative free trial units to fail")
 	}
 	if !strings.Contains(err.Error(), "whole number of 0 or greater") {
 		t.Errorf("error = %q, want whole-number validation", err.Error())
+	}
+}
+
+func TestResolveFreeUnitsRejectsAboveMax(t *testing.T) {
+	above := MaxFreeTasksPerConsumer + 1
+	_, err := resolveFreeUnits(freeTrialTaskPrompt, nil, &above, MaxFreeTasksPerConsumer, true, nil)
+	if err == nil {
+		t.Fatal("expected free units above max to fail")
+	}
+	if !strings.Contains(err.Error(), "Maximum is 100") {
+		t.Errorf("error = %q, want max validation", err.Error())
+	}
+}
+
+func TestResolveFreeMinutesRejectsAboveMax(t *testing.T) {
+	above := MaxFreeMinutesPerConsumer + 1
+	_, err := resolveFreeUnits(freeTrialMinutePrompt, nil, &above, MaxFreeMinutesPerConsumer, true, nil)
+	if err == nil {
+		t.Fatal("expected free minutes above max to fail")
+	}
+	if !strings.Contains(err.Error(), "Maximum is 30") {
+		t.Errorf("error = %q, want max validation", err.Error())
 	}
 }
 
@@ -867,6 +936,28 @@ func TestResolvePriceInteractiveEmptyInputAppliesDefault(t *testing.T) {
 	}
 }
 
+func TestResolvePriceEffectiveDefaultWhenMinAboveDefault(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("\n"))
+	result, err := resolvePrice("label", "label", nil, nil, "0.50", "10.00", false, false, scanner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || *result != "0.500000" {
+		t.Errorf("expected effective default 0.500000 (min > 0.10), got %v", result)
+	}
+}
+
+func TestResolvePriceEffectiveDefaultWhenMaxBelowDefault(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("\n"))
+	result, err := resolvePrice("label", "label", nil, nil, "0.0001", "0.08", false, false, scanner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || *result != "0.080000" {
+		t.Errorf("expected effective default 0.080000 (max < 0.10), got %v", result)
+	}
+}
+
 func TestCollectPromotionInput_Interactive_PaidEmptyPriceUsesDefault(t *testing.T) {
 	listing := "public"
 	flags := PromotionFlags{
@@ -877,7 +968,7 @@ func TestCollectPromotionInput_Interactive_PaidEmptyPriceUsesDefault(t *testing.
 	// billing=2(paid), price per task=<enter>, free tasks=0, attest1=y, attest2=y
 	input := "2\n\n0\ny\ny\n"
 	scanner := bufio.NewScanner(strings.NewReader(input))
-	result, err := CollectPromotionInput(false, true, flags, scanner)
+	result, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), scanner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -918,8 +1009,32 @@ func TestResolvePriceInteractiveAndFlagProduceSameWireFormat(t *testing.T) {
 
 func TestResolvePriceRejectsTooManyFractionalDigitsViaFlag(t *testing.T) {
 	raw := "0.1234567"
-	_, err := resolvePrice(pricePerTaskPrompt, pricePerTaskLabel, nil, &raw, MinPricePerTask, MaxPricePerTask, true, true, nil)
+	_, err := resolvePrice(pricePrompt(pricePerTaskLabel, MaxPricePerTask, MinPricePerTask), pricePerTaskLabel, nil, &raw, MinPricePerTask, MaxPricePerTask, true, true, nil)
 	if err == nil {
 		t.Fatal("expected error for 7 fractional digits via flag")
+	}
+}
+
+func TestResolvePriceInteractiveFallbackOnBadFlag(t *testing.T) {
+	bad := "50.00"
+	scanner := bufio.NewScanner(strings.NewReader("10.00\n"))
+	result, err := resolvePrice(pricePrompt(pricePerTaskLabel, MaxPricePerTask, MinPricePerTask), pricePerTaskLabel, nil, &bad, MinPricePerTask, MaxPricePerTask, false, false, scanner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || *result != "10.000000" {
+		t.Errorf("expected 10.000000 from interactive retry, got %v", result)
+	}
+}
+
+func TestResolveFreeUnitsInteractiveFallbackOnBadFlag(t *testing.T) {
+	bad := 200
+	scanner := bufio.NewScanner(strings.NewReader("50\n"))
+	result, err := resolveFreeUnits(freeTrialTaskPrompt, nil, &bad, MaxFreeTasksPerConsumer, false, scanner)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || *result != 50 {
+		t.Errorf("expected 50 from interactive retry, got %v", result)
 	}
 }

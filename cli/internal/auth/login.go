@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -253,25 +254,28 @@ func createApiKey(backendURL, sessionToken, orgId, keyName string) (*apiKeyCreat
 }
 
 // InjectEnv writes the given key=value to the .env file in the current
-// working directory, if the file exists. If the file does not exist,
-// it prints a hint.
-func InjectEnv(key, value string) {
-	const envFile = ".env"
+// working directory. If the file does not exist, it creates one.
+func InjectEnv(key, value string) error {
+	return InjectEnvAt(".", key, value)
+}
+
+// InjectEnvAt writes the given key=value to the .env file in the specified
+// directory. If the file does not exist, it creates one.
+func InjectEnvAt(dir, key, value string) error {
+	envFile := filepath.Join(dir, ".env")
 	if _, err := os.Stat(envFile); os.IsNotExist(err) {
-		// Create .env with the key
 		if err := os.WriteFile(envFile, []byte(key+"="+value+"\n"), 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: could not create .env: %v\n", err)
-			return
+			return fmt.Errorf("could not create %s: %w", envFile, err)
 		}
-		fmt.Printf("  .env created with %s\n", key)
-		return
+		fmt.Printf("  %s created with %s\n", envFile, key)
+		return nil
 	}
 
 	if err := UpsertEnvKey(envFile, key, value); err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: could not update .env: %v\n", err)
-		return
+		return fmt.Errorf("could not update %s: %w", envFile, err)
 	}
-	fmt.Printf("  .env updated with %s\n", key)
+	fmt.Printf("  %s updated with %s\n", envFile, key)
+	return nil
 }
 
 // EnvLineMatchesKey returns true if the line is an uncommented assignment for the

@@ -25,6 +25,12 @@ import { connectAgent, getAgent, type AgentCard } from './agent-registry.js';
 import { parseStreamSetupResponse, parseStreamSetupError } from './stream-setup-helper.js';
 import { DEFAULTS } from '../defaults.js';
 import { getEnv } from '../env.js';
+import {
+  log as baseLog,
+  isInternalDebugEnabled,
+  _resolveLogLevel,
+  _LOG_LEVEL_ORDER,
+} from './logger.js';
 import { uploadFile, type FileUploadAuth } from './file-upload.js';
 import { StaticAuthProvider } from './auth-provider.js';
 import { StreamRegistry } from './stream-registry.js';
@@ -263,20 +269,6 @@ const publishTaskEvent = async (
   }
 };
 
-/** Numeric precedence for LOG_LEVEL threshold filtering. */
-export const _LOG_LEVEL_ORDER: Record<string, number> = {
-  error: 0,
-  warn: 1,
-  info: 2,
-  debug: 3,
-};
-
-/** Resolve the effective LOG_LEVEL from env (default: "info"). */
-export function _resolveLogLevel(): number {
-  const raw = (getEnv('LOG_LEVEL') ?? 'info').toLowerCase();
-  return _LOG_LEVEL_ORDER[raw] ?? _LOG_LEVEL_ORDER.info;
-}
-
 /**
  * True when the diag entry is "parked" — past the staleness threshold
  * AND not currently in the connected state. A long-silent
@@ -306,16 +298,7 @@ const log = (
   level: 'debug' | 'info' | 'warn' | 'error',
   message: string,
   meta?: Record<string, unknown>,
-): void => {
-  const threshold = _resolveLogLevel();
-  const lvl = _LOG_LEVEL_ORDER[level] ?? _LOG_LEVEL_ORDER.info;
-  if (lvl > threshold) return;
-
-  const entry = { level, message, ts: Date.now(), ...meta };
-  if (level === 'error') console.error('[AgentInstance]', entry);
-  else if (level === 'warn') console.warn('[AgentInstance]', entry);
-  else console.log('[AgentInstance]', entry);
-};
+): void => baseLog('[AgentInstance]', level, message, meta);
 
 /**
  * Resolve the effective `maxRunningTimeSec` for an agent instance from its
@@ -339,9 +322,11 @@ export function resolveMaxRunningTimeSec(
     cardValue !== undefined &&
     optsValue !== cardValue
   ) {
-    console.info(
-      `[AgentInstance] opts.maxRunningTimeSec (${optsValue}) overrides ` +
-        `card.runtime.maxRunningTimeSec (${cardValue}).`,
+    baseLog(
+      '[AgentInstance]',
+      'info',
+      `opts.maxRunningTimeSec (${optsValue}) overrides card.runtime.maxRunningTimeSec (${cardValue})`,
+      { event: 'max_running_time_override', optsValue, cardValue },
     );
   }
   return optsValue ?? cardValue;
@@ -538,9 +523,9 @@ export const startAgentInstance = async (
       playground: cdmConfig.playground,
       network: cdmConfig.network,
     };
-    console.log(
-      '[AgentInstance] CDM config loaded — environment switching enabled (playground + network)',
-    );
+    log('info', 'CDM config loaded — environment switching enabled', {
+      event: 'cdm_config_loaded',
+    });
   }
 
   // -- Initialize AgentAuth (API key-based auth) — BLOCKS_API_KEY is required --
@@ -554,7 +539,9 @@ export const startAgentInstance = async (
   const baseUrl = opts.baseUrl ?? cdmConfig?.api.baseUrl;
   if (apiKey && baseUrl) {
     agentAuth = new AgentAuth(apiKey, baseUrl);
-    console.log('[AgentInstance] AgentAuth created — will authenticate via connect');
+    log('info', 'AgentAuth created — will authenticate via connect', {
+      event: 'agent_auth_created',
+    });
   }
 
   // Resolve billingMode from the registry. The registry is authoritative for
@@ -592,9 +579,11 @@ export const startAgentInstance = async (
     registryBillingMode = agentEntry.billingMode;
     registryListing = agentEntry.listing;
     primaryEnv = registryBillingMode === 'paid' ? 'network' : 'playground';
-    console.log(
-      `[AgentInstance] Registry billingMode: ${registryBillingMode} — using ${primaryEnv} environment`,
-    );
+    log('info', `registry billingMode: ${registryBillingMode} — using ${primaryEnv} environment`, {
+      event: 'registry_billing_mode_resolved',
+      billingMode: registryBillingMode,
+      environment: primaryEnv,
+    });
     activeEnv = primaryEnv;
   }
   // Effective billingMode for the connect payload + consumer TaskClient.
@@ -603,13 +592,15 @@ export const startAgentInstance = async (
   // from the registry above and fail loudly if it's missing.
   const effectiveBillingMode: 'free' | 'paid' = registryBillingMode ?? 'free';
 
-  // === Phase 1 connectivity diagnostics ===
+  // === Phase 1 connectivity diagnostics (gated) ===
   //
-  // Tracks every long-lived PubNub client created by this agent instance
-  // so a single periodic snapshot can answer "is the SDK still trying or
-  // has the Event Engine parked?" — the BLOCKS-129 SDK reconnect probe.
-  // Per-stream consumer-side clients (task-client.ts, stream-client.ts)
-  // are intentionally out of scope here; this is the agent-side surface.
+  // BLOCKS-129 reconnect-investigation surface. Default OFF — set
+  // BLOCKS_DEBUG_INTERNAL=1 or LOG_LEVEL=debug to enable. When OFF every
+  // hook below is a no-op: no listener attached, no timer armed, no
+  // per-status emission, no pubnub_diagnostics_armed boot line. This
+  // keeps PubNub-internal vocabulary out of default-level production logs
+  // and removes the diag listener/timer overhead from the steady-state
+  // path. See BLOCKS-373.
   interface ClientDiag {
     label: string;
     pn: PubNub;
@@ -633,6 +624,7 @@ export const startAgentInstance = async (
   let diagAliveTimer: ReturnType<typeof setInterval> | null = null;
   const DIAG_SNAPSHOT_INTERVAL_MS = 10_000;
   const DIAG_STALE_THRESHOLD_MS = 60_000;
+  const diagEnabled = isInternalDebugEnabled();
 
   const buildDiagListener = (entry: ClientDiag) => ({
     status: (event: unknown) => {
@@ -682,6 +674,7 @@ export const startAgentInstance = async (
   });
 
   const trackClient = (label: string, pn: PubNub): void => {
+    if (!diagEnabled) return;
     const entry: ClientDiag = {
       label,
       pn,
@@ -699,6 +692,7 @@ export const startAgentInstance = async (
   };
 
   const untrackClient = (pn: PubNub): void => {
+    if (!diagEnabled) return;
     const idx = diagRegistry.findIndex((e) => e.pn === pn);
     if (idx < 0) return;
     const entry = diagRegistry[idx];
@@ -711,6 +705,7 @@ export const startAgentInstance = async (
   };
 
   const startDiagAliveTimer = (): void => {
+    if (!diagEnabled) return;
     if (diagAliveTimer !== null) return;
     diagAliveTimer = setInterval(() => {
       const now = Date.now();
@@ -947,14 +942,11 @@ export const startAgentInstance = async (
       // On shared-affinity streams StreamClient.end() suppresses the
       // marker publish; the teardown still closes the local writer.
       // See QUESTIONS.md I1 (shared_stream_lifecycle).
-      console.log('[AgentInstance]', {
-        level: 'info',
-        message: 'last-ref teardown',
+      log('info', 'last-ref teardown', {
         event: 'stream_registry_last_ref_teardown',
         streamId,
         affinity: entry.affinity,
         releasingTaskId: taskId,
-        ts: Date.now(),
       });
       try {
         await entry.streamClient.end();
@@ -2156,10 +2148,10 @@ export const startAgentInstance = async (
           instanceId,
           controlChannel,
         });
-        console.error(
-          `[AgentInstance] PAM token expired or revoked — agent ${instanceId} is no longer receiving tasks. ` +
-            'Re-register the agent to resume.',
-        );
+        log('error', 'PAM token expired or revoked — agent is no longer receiving tasks. Re-register the agent to resume.', {
+          event: 'pam_denied_user_message',
+          instanceId,
+        });
         try {
           controlClient.destroy();
         } catch {
@@ -2180,7 +2172,10 @@ export const startAgentInstance = async (
       const operation = String(e.operation ?? '');
       const statusCode = typeof e.statusCode === 'number' ? e.statusCode : null;
       if (category === 'PNConnectedCategory') {
-        console.log(`[AgentInstance] PubNub connected to ${controlChannel}`);
+        log('debug', 'pubnub control client connected', {
+          event: 'control_connected',
+          controlChannel,
+        });
       }
       pamDeniedHandler(category, operation, statusCode);
     },
@@ -2205,7 +2200,11 @@ export const startAgentInstance = async (
           : undefined;
 
       handleControlMessage(msg, meta).catch((err) => {
-        console.error('[AgentInstance] Unhandled error in message handler:', err);
+        log('error', 'unhandled error in message handler', {
+          event: 'message_handler_error',
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
       });
     },
   };
@@ -2214,12 +2213,14 @@ export const startAgentInstance = async (
   trackClient('control', controlClient);
 
   startDiagAliveTimer();
-  log('info', 'pubnub diagnostics armed', {
-    event: 'pubnub_diagnostics_armed',
-    snapshotIntervalMs: DIAG_SNAPSHOT_INTERVAL_MS,
-    staleThresholdMs: DIAG_STALE_THRESHOLD_MS,
-    instanceId,
-  });
+  if (diagEnabled) {
+    log('info', 'pubnub diagnostics armed', {
+      event: 'pubnub_diagnostics_armed',
+      snapshotIntervalMs: DIAG_SNAPSHOT_INTERVAL_MS,
+      staleThresholdMs: DIAG_STALE_THRESHOLD_MS,
+      instanceId,
+    });
+  }
 
   // Register and subscribe — use registryListing (from DB) so the backend mints
   // the PAM token for the correct keyset; fall back to opts.listing or SDK default.
@@ -2246,7 +2247,11 @@ export const startAgentInstance = async (
     agentAuth,
   })
     .then((result) => {
-      console.log(`[AgentInstance] Registered agent: ${agentName} (instance: ${instanceId})`);
+      log('info', `registered agent: ${agentName} (instance: ${instanceId})`, {
+        event: 'agent_registered',
+        agentName,
+        instanceId,
+      });
       if (!result.controlChannel) {
         throw new Error('Connect response missing controlChannel — server may be outdated');
       }
@@ -2265,9 +2270,12 @@ export const startAgentInstance = async (
     })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[AgentInstance] Failed to register agent: ${agentName} — ${message}`,
-      );
+      log('error', `failed to register agent: ${agentName} — ${message}`, {
+        event: 'agent_registration_failed',
+        agentName,
+        instanceId,
+        error: message,
+      });
       if (err instanceof AgentAuthFatalError) {
         process.exit(1);
       }

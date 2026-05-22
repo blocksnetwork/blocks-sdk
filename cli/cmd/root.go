@@ -63,6 +63,11 @@ Dashboard:
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		if cmd.Name() != "upgrade" {
+			checkForUpdateNotice()
+		}
+	},
 }
 
 func Execute() error {

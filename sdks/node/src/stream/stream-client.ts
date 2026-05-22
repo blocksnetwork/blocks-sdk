@@ -12,6 +12,7 @@ import PubNub from 'pubnub';
 import { StreamBundle } from './stream-bundle.js';
 import { validateStreamId } from './validate.js';
 import { getEnv } from '../env.js';
+import { log as baseLog } from '../runtime/logger.js';
 import { base64ToBytes, concatBytes, utf8Decode, utf8Encode } from './bytes.js';
 import type { StreamDescriptor } from './descriptor.js';
 import type {
@@ -23,6 +24,12 @@ import type {
   InboundMessage,
   StreamBundleConfig,
 } from './types.js';
+
+const log = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  meta?: Record<string, unknown>,
+): void => baseLog('[StreamClient]', level, message, meta);
 
 // Per-process UUID counter for the {agentName}-stream-{NNNN} convention
 let uuidCounter = 0;
@@ -211,14 +218,12 @@ export class StreamClient {
     } else if (rawAffinity === 'dedicated' || rawAffinity === 'shared') {
       this._affinity = rawAffinity;
     } else {
-      console.warn(
-        '[StreamClient] stream_client_invalid_affinity_fallback',
-        {
-          streamId: options.streamId,
-          receivedAffinity: rawAffinity,
-          fallbackAffinity: 'dedicated',
-        },
-      );
+      log('warn', 'invalid affinity in stream options — falling back to dedicated', {
+        event: 'stream_client_invalid_affinity_fallback',
+        streamId: options.streamId,
+        receivedAffinity: rawAffinity,
+        fallbackAffinity: 'dedicated',
+      });
       this._affinity = 'dedicated';
     }
 
@@ -329,7 +334,10 @@ export class StreamClient {
     if (this.bundle) {
       try { await this.bundle.end(); }
       catch (err) {
-        console.warn('[StreamClient] bundle.end() failed during end() (continuing teardown):', err);
+        log('warn', 'bundle.end() failed during end() — continuing teardown', {
+          event: 'stream_client_bundle_end_failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -345,7 +353,10 @@ export class StreamClient {
     ) {
       try { await this.bundle.publishEndMarker(); }
       catch (err) {
-        console.warn('[StreamClient] publishEndMarker() failed during end() (continuing teardown):', err);
+        log('warn', 'publishEndMarker() failed during end() — continuing teardown', {
+          event: 'stream_client_publish_end_marker_failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -435,7 +446,10 @@ export class StreamClient {
       try {
         cb(err);
       } catch (e) {
-        console.error('[StreamClient] onError callback raised:', e);
+        log('error', 'onError callback raised', {
+          event: 'stream_client_on_error_callback_raised',
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
   }
@@ -521,21 +535,30 @@ export class StreamClient {
         timestamp: Date.now(),
         fatal,
       };
-      console.warn(
-        `[StreamClient] status error: category=${category} fatal=${fatal} channel=${this._channel}`,
+      log('warn', `status error: category=${category} fatal=${fatal} channel=${this._channel}`, {
+        event: 'stream_client_status_error',
+        category,
+        fatal,
+        channel: this._channel,
         rawError,
-      );
+      });
       this.fireError(err);
       if (fatal && this._isActive) {
         // Fire-and-forget: end() is async but we don't want to block
         // the PubNub listener thread, and we must not throw. The consumer
         // iterator exits via onInboundDone once end() completes.
         this.end().catch((e) => {
-          console.error('[StreamClient] forced end() after fatal error raised:', e);
+          log('error', 'forced end() after fatal error raised', {
+            event: 'stream_client_forced_end_after_fatal_raised',
+            error: e instanceof Error ? e.message : String(e),
+          });
         });
       }
     } catch (e) {
-      console.error('[StreamClient] status handler raised:', e);
+      log('error', 'status handler raised', {
+        event: 'stream_client_status_handler_raised',
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
@@ -558,9 +581,9 @@ export class StreamClient {
 
       // Malformed stream_end: seq must be an integer per schema
       if (typeof message.seq !== 'number' || !Number.isInteger(message.seq)) {
-        console.warn(
-          '[StreamClient] stream_end missing numeric seq field; ignoring in reorder mode',
-        );
+        log('warn', 'stream_end missing numeric seq field — ignoring in reorder mode', {
+          event: 'stream_client_stream_end_missing_seq',
+        });
         return;
       }
 
@@ -841,10 +864,11 @@ export class StreamClient {
       // Invariant: buffer should be empty at this point. All seqs < endSeq
       // were emitted or timed out, and no valid data message has seq >= endSeq.
       if (this.reorderBuffer.size > 0) {
-        console.warn(
-          `[StreamClient] reorder buffer not empty at stream end ` +
-          `(${this.reorderBuffer.size} unexpected messages with seq >= ${this.endSeq})`,
-        );
+        log('warn', `reorder buffer not empty at stream end (${this.reorderBuffer.size} unexpected messages with seq >= ${this.endSeq})`, {
+          event: 'stream_client_reorder_buffer_not_empty_at_end',
+          unexpectedCount: this.reorderBuffer.size,
+          endSeq: this.endSeq,
+        });
         this.reorderBuffer.clear();
       }
       if (this.reorderTimer) {
