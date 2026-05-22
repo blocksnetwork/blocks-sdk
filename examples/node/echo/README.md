@@ -7,7 +7,7 @@ Blocks handler: parse input, report status, return a text artifact.
 
 ## Prerequisites
 
-- Node.js 24+
+- Node.js 22+
 - `BLOCKS_API_KEY` in the project `.env`. Get it by running `blocks login --write-env` (or accept the interactive prompt during `blocks login`).
 
 ## Install

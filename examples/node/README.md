@@ -21,22 +21,22 @@ configuration, and dependencies.
 These are the primary teaching examples. Each demonstrates one core
 SDK concept and uses current APIs.
 
-| Example | Concept | Description |
-|---------|---------|-------------|
-| [echo](./echo/) | Request/response | Simplest handler: parse input, return text |
-| [adder](./adder/) | Request/response | Structured JSON input validation and output |
-| [echo-stream](./echo-stream/) | Request streaming | Stream output chunk-by-chunk, then return artifact |
-| [orchestrator](./orchestrator/) | Orchestration | Fan out sub-tasks to other agents, collect results |
-| [stock-sim](./stock-sim/) | Pipe streaming (provider) | Long-running stream of events |
-| [stock-sim-consumer](./stock-sim-consumer/) | Pipe streaming (consumer) | Submit pipe task, consume stream in real time |
+| Example                                     | Concept                   | Description                                        |
+| ------------------------------------------- | ------------------------- | -------------------------------------------------- |
+| [echo](./echo/)                             | Request/response          | Simplest handler: parse input, return text         |
+| [adder](./adder/)                           | Request/response          | Structured JSON input validation and output        |
+| [echo-stream](./echo-stream/)               | Request streaming         | Stream output chunk-by-chunk, then return artifact |
+| [orchestrator](./orchestrator/)             | Orchestration             | Fan out sub-tasks to other agents, collect results |
+| [stock-sim](./stock-sim/)                   | Pipe streaming (provider) | Long-running stream of events                      |
+| [stock-sim-consumer](./stock-sim-consumer/) | Pipe streaming (consumer) | Submit pipe task, consume stream in real time      |
 
 ## Advanced Examples
 
 These demonstrate more complex integrations. They use the same SDK
 surface but wrap external tools or services.
 
-| Example | Description |
-|---------|-------------|
+| Example                       | Description                                        |
+| ----------------------------- | -------------------------------------------------- |
 | [claude-code](./claude-code/) | Wraps the Claude Code CLI with real-time streaming |
 
 ## Quick Start
@@ -71,6 +71,7 @@ Each example contains:
 - `README.md` -- local documentation
 
 Some examples also include:
+
 - Consumer scripts (e.g., `echo-consumer.ts`)
 - `Dockerfile` for containerized deployment
 
@@ -85,10 +86,11 @@ agent's metadata. Run with `blocks run`.
 `agent-card.json` is validated at registration time against the
 canonical schema. Before authoring a card, read:
 
-- [`skills/references/io-schema-reference.md`](../../../skills/references/io-schema-reference.md) — accepted content types, form / text / file transport classes, form-class `schema` keyword allow-list, default values.
+- [`schemas/agent-card.schema.json`](../../schemas/agent-card.schema.json) — the JSON Schema used to validate publishable agent cards.
+- [`skills/references/io-schema-reference.md`](../../skills/references/io-schema-reference.md) — form / text / file transport classes, form-class `schema` keyword allow-list, default values.
 
 Summary rules: every `io.inputs[]` entry MUST declare `description`;
 `contentType` MUST be lowercase canonical form; form-class inputs MUST
 declare `schema` + `example`; file-class inputs MAY declare `accept`
-+ `maxSizeBytes` (≤ `BLOCKS_MAX_UPLOAD_BYTES` = 26 MB). Run
+and `maxSizeBytes` (≤ `BLOCKS_MAX_UPLOAD_BYTES` = 26 MB). Run
 `blocks check` locally to catch violations before registration.

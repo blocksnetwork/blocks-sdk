@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
 func TestMinPriceParityWithBackend(t *testing.T) {
@@ -37,6 +39,58 @@ func TestMinPriceParityWithBackend(t *testing.T) {
 	}
 }
 
+func TestMaxPriceAndFreeCapParityWithBackend(t *testing.T) {
+	tsPath := filepath.Join("..", "..", "..", "..", "afui_mvp_backend", "src", "modules", "billing", "pricing-limits.service.ts")
+	data, err := os.ReadFile(tsPath)
+	if err != nil {
+		t.Fatalf("cannot read pricing-limits.service.ts: %v", err)
+	}
+	src := string(data)
+
+	maxTaskRe := regexp.MustCompile(`FALLBACK_MAX_PRICE_PER_TASK\s*=\s*'([^']+)'`)
+	maxMinuteRe := regexp.MustCompile(`FALLBACK_MAX_PRICE_PER_MINUTE\s*=\s*'([^']+)'`)
+	maxFreeTasksRe := regexp.MustCompile(`FALLBACK_MAX_FREE_TASKS\s*=\s*(\d+)`)
+	maxFreeMinutesRe := regexp.MustCompile(`FALLBACK_MAX_FREE_MINUTES\s*=\s*(\d+)`)
+
+	if m := maxTaskRe.FindStringSubmatch(src); m != nil {
+		beVal, _ := decimal.NewFromString(m[1])
+		cliVal, _ := decimal.NewFromString(MaxPricePerTask)
+		if !beVal.Equal(cliVal) {
+			t.Errorf("MaxPricePerTask = %q, backend fallback = %q", MaxPricePerTask, m[1])
+		}
+	} else {
+		t.Fatal("FALLBACK_MAX_PRICE_PER_TASK not found in pricing-limits.service.ts")
+	}
+
+	if m := maxMinuteRe.FindStringSubmatch(src); m != nil {
+		beVal, _ := decimal.NewFromString(m[1])
+		cliVal, _ := decimal.NewFromString(MaxPricePerMinute)
+		if !beVal.Equal(cliVal) {
+			t.Errorf("MaxPricePerMinute = %q, backend fallback = %q", MaxPricePerMinute, m[1])
+		}
+	} else {
+		t.Fatal("FALLBACK_MAX_PRICE_PER_MINUTE not found in pricing-limits.service.ts")
+	}
+
+	if m := maxFreeTasksRe.FindStringSubmatch(src); m != nil {
+		expected := "100"
+		if m[1] != expected {
+			t.Errorf("MaxFreeTasksPerConsumer = %d, backend fallback = %s", MaxFreeTasksPerConsumer, m[1])
+		}
+	} else {
+		t.Fatal("FALLBACK_MAX_FREE_TASKS not found in pricing-limits.service.ts")
+	}
+
+	if m := maxFreeMinutesRe.FindStringSubmatch(src); m != nil {
+		expected := "30"
+		if m[1] != expected {
+			t.Errorf("MaxFreeMinutesPerConsumer = %d, backend fallback = %s", MaxFreeMinutesPerConsumer, m[1])
+		}
+	} else {
+		t.Fatal("FALLBACK_MAX_FREE_MINUTES not found in pricing-limits.service.ts")
+	}
+}
+
 // TestPromotionInputBillingModeInJSON asserts that BillingMode is present
 // in the JSON-serialised PromotionInput so the publish payload always carries it.
 func TestPromotionInputBillingModeInJSON(t *testing.T) {
@@ -50,7 +104,7 @@ func TestPromotionInputBillingModeInJSON(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +138,7 @@ func TestPromotionInputFreeBillingModeInJSON(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

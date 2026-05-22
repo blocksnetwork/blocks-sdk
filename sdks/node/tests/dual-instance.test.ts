@@ -239,49 +239,57 @@ describe('Single Active PubNub Instance', () => {
   });
 
   it('applies pamToken from SwitchEnvironment message to new control client', async () => {
-    const { startAgentInstance } = await import('../src/runtime/agent-instance.js');
+    process.env.BLOCKS_DEBUG_INTERNAL = '1';
+    try {
+      const { startAgentInstance } = await import('../src/runtime/agent-instance.js');
 
-    const handle = await startAgentInstance({
-      agentName: 'test_agent',
-      card: makeTestCard(),
-      handler: async () => ({}),
-    });
+      const handle = await startAgentInstance({
+        agentName: 'test_agent',
+        card: makeTestCard(),
+        handler: async () => ({}),
+      });
 
-    const pnMock = PubNub as unknown as ReturnType<typeof vi.fn>;
-    const countBeforeSwitch = pnMock.mock.results.length;
-    // The control client is the last one created before the switch
-    const controlClient = pnMock.mock.results[countBeforeSwitch - 1].value;
+      const pnMock = PubNub as unknown as ReturnType<typeof vi.fn>;
+      const countBeforeSwitch = pnMock.mock.results.length;
+      // The control client is the last one created before the switch
+      const controlClient = pnMock.mock.results[countBeforeSwitch - 1].value;
 
-    // Wait for async registration to complete (sets controlChannel)
-    await vi.waitFor(() => expect(controlClient.subscribe).toHaveBeenCalled());
+      // Wait for async registration to complete (sets controlChannel)
+      await vi.waitFor(() => expect(controlClient.subscribe).toHaveBeenCalled());
 
-    // Simulate SwitchEnvironment message with pamToken
-    controlClient._simulateMessage({
-      type: 'SwitchEnvironment',
-      environment: 'network',
-      pamToken: 'token-for-network',
-    });
+      // Simulate SwitchEnvironment message with pamToken
+      controlClient._simulateMessage({
+        type: 'SwitchEnvironment',
+        environment: 'network',
+        pamToken: 'token-for-network',
+      });
 
-    // A new PubNub client should have been created for network
-    expect(pnMock.mock.results.length).toBeGreaterThan(countBeforeSwitch);
-    const lastConfig = pnMock.mock.calls[pnMock.mock.calls.length - 1][0] as Record<string, string>;
-    expect(lastConfig.subscribeKey).toBe('sub-c-nw');
+      // A new PubNub client should have been created for network
+      expect(pnMock.mock.results.length).toBeGreaterThan(countBeforeSwitch);
+      const lastConfig = pnMock.mock.calls[pnMock.mock.calls.length - 1][0] as Record<string, string>;
+      expect(lastConfig.subscribeKey).toBe('sub-c-nw');
 
-    // Two removeListener calls: the primary control listener (from
-    // switchEnvironment's local cleanup) AND the diagnostic listener
-    // (from untrackClient — important when opts.pubnub is externally
-    // supplied so the diag listener doesn't outlive the agent instance).
-    expect(controlClient.removeListener).toHaveBeenCalledTimes(2);
-    expect(controlClient.unsubscribe).toHaveBeenCalledWith({
-      channels: [`agent.${TEST_AGENT_ID_DUAL}.control`],
-    });
-    expect(controlClient.destroy).toHaveBeenCalledTimes(1);
+      // Two removeListener calls: the primary control listener (from
+      // switchEnvironment's local cleanup) AND the diagnostic listener
+      // (from untrackClient — important when opts.pubnub is externally
+      // supplied so the diag listener doesn't outlive the agent
+      // instance). The diag listener is gated behind BLOCKS_DEBUG_INTERNAL
+      // (see BLOCKS-373), so this test sets it to '1' to exercise the
+      // listener-cleanup path.
+      expect(controlClient.removeListener).toHaveBeenCalledTimes(2);
+      expect(controlClient.unsubscribe).toHaveBeenCalledWith({
+        channels: [`agent.${TEST_AGENT_ID_DUAL}.control`],
+      });
+      expect(controlClient.destroy).toHaveBeenCalledTimes(1);
 
-    // The new client (created during switch) should have setToken called with the provided pamToken
-    const newClient = pnMock.mock.results[countBeforeSwitch].value;
-    expect(newClient.setToken).toHaveBeenCalledWith('token-for-network');
+      // The new client (created during switch) should have setToken called with the provided pamToken
+      const newClient = pnMock.mock.results[countBeforeSwitch].value;
+      expect(newClient.setToken).toHaveBeenCalledWith('token-for-network');
 
-    handle.stop();
+      handle.stop();
+    } finally {
+      delete process.env.BLOCKS_DEBUG_INTERNAL;
+    }
   });
 
   it('rejects SwitchEnvironment when pamToken is absent (no fallback re-registration)', async () => {

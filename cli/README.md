@@ -61,6 +61,28 @@ bash is required):
 curl -fsSL https://config.blocks.ai/install.sh | sh
 ```
 
+### Upgrading
+
+Run `blocks upgrade` to download and install the latest release. The CLI
+checks the npm registry for new versions every 2 hours and prints a
+notice to stderr when an update is available. Upgrade behavior by install
+method:
+
+- **`~/.blocks/bin` (install.sh, `make install`)** — `blocks upgrade`
+  replaces the binary in place.
+- **npm global (`npm i -g`)** — `blocks upgrade` detects this and
+  directs you to run `npm i -g @blocks-network/cli@latest` instead.
+- **OpenBSD** — npm packages are not published; use `install.sh`.
+
+Environment variables:
+
+- `BLOCKS_INSTALL_DIR` — override the install directory for `blocks upgrade`.
+
+Files created:
+
+- `~/.blocks/update-check.json` — caches the latest version to avoid
+  hitting the registry on every invocation.
+
 On FreeBSD and OpenBSD, install `xdg-utils` so `blocks login` can open
 your browser:
 

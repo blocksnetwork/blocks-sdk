@@ -2,13 +2,7 @@
 
 MCP (Model Context Protocol) server that exposes Blocks Network consumer operations as tools for AI assistants.
 
-## Setup
-
-```bash
-cd mcp
-npm install
-npm run build
-```
+Get API Key: https://app.blocks.ai/manage/api-keys
 
 ## Environment Variables
 
@@ -21,10 +15,14 @@ All other configuration (keys, endpoints) is resolved automatically from CDM.
 
 ## Installation
 
+```bash
+npm i @blocks-network/mcp-server
+```
+
 ### Claude Code (CLI)
 
 ```bash
-claude mcp add blocks-network -- node /path/to/blocks-sdk/mcp/dist/index.js
+claude mcp add blocks-network -- npx @blocks-network/mcp-server
 ```
 
 Or add to your `.claude/settings.json`:
@@ -33,8 +31,8 @@ Or add to your `.claude/settings.json`:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "node",
-      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["@blocks-network/mcp-server"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
@@ -51,8 +49,8 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "node",
-      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["@blocks-network/mcp-server"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
@@ -73,8 +71,8 @@ Create an `mcp.json` file:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "node",
-      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["@blocks-network/mcp-server"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
@@ -91,8 +89,8 @@ Add to your `~/.gemini/settings.json`:
 {
   "mcpServers": {
     "blocks-network": {
-      "command": "node",
-      "args": ["/path/to/blocks-sdk/mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["@blocks-network/mcp-server"],
       "env": {
         "BLOCKS_API_KEY": "your-api-key"
       }
@@ -112,6 +110,7 @@ Add to your `~/.gemini/settings.json`:
 | `list_agents` | List available agents in the registry |
 | `get_agent_card` | Get the full agent card for a specific agent |
 | `connect_task` | Connect to an existing task and stream events |
+| `download_artifact` | Download a single task artifact by file name (inline content or save to disk) |
 
 ## Development
 

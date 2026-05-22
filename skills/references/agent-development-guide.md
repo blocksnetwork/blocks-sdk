@@ -69,7 +69,14 @@ blocks login --write-env
 ```
 
 This opens browser-based OAuth, stores credentials, and writes
-`BLOCKS_API_KEY` to the project `.env`.
+`BLOCKS_API_KEY` to the project `.env`. Use `--dir <path>` to target a
+different directory (e.g. `blocks login --write-env --dir ./my_agent`).
+
+**Always pass `--write-env` (or `--no-write-env`) when invoking `blocks
+login` from a coding-agent / non-interactive session.** Bare `blocks
+login` shows a `Write BLOCKS_API_KEY to project .env? (Y/n):` prompt
+that hangs without a TTY answer. `--write-env` opts in unconditionally;
+`--no-write-env` opts out unconditionally. Either skips the prompt.
 
 ### Step 4: Publish the Agent
 
@@ -89,9 +96,10 @@ blocks whoami
 ### CI/CD Auth (Reference)
 
 ```bash
-blocks publish --api-key "$KEY"       # use a pre-obtained API key
+blocks login --api-key "$KEY" --write-env  # non-interactive login + .env write
+blocks publish --api-key "$KEY"            # use a pre-obtained API key
 echo "$KEY" | blocks publish --api-key-stdin  # read from stdin
-blocks logout                         # clear stored credentials
+blocks logout                              # clear stored credentials
 ```
 
 When an orchestrator reconnects to an existing sub-task, `session.onArtifact(...)`

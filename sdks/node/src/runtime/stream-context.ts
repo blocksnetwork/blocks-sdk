@@ -19,6 +19,13 @@
  */
 
 import type { StreamClient, InboundMessage, StreamError } from '../stream/index.js';
+import { log as baseLog } from './logger.js';
+
+const log = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  meta?: Record<string, unknown>,
+): void => baseLog('[StreamContext]', level, message, meta);
 
 /** Hook the agent-instance passes to the stream wrapper so `end()` can
  * route through the registry + handle-cache eviction path. Decouples
@@ -167,11 +174,19 @@ export function runOnActivate(
     .then(() => callback(streamObject))
     .catch(async (err: unknown) => {
       const errMsg = (err instanceof Error) ? err.message : String(err);
-      console.error(`[StreamContext] onActivate error for stream "${streamId}":`, errMsg);
+      log('error', `onActivate error for stream "${streamId}"`, {
+        event: 'stream_context_on_activate_error',
+        streamId,
+        error: errMsg,
+      });
       try {
         await failStreamCb(streamId, 'stream_crashed');
       } catch (failErr) {
-        console.error(`[StreamContext] failStream error for "${streamId}":`, failErr);
+        log('error', `failStream error for "${streamId}"`, {
+          event: 'stream_context_fail_stream_error',
+          streamId,
+          error: failErr instanceof Error ? failErr.message : String(failErr),
+        });
       }
     });
 }

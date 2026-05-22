@@ -1,200 +1,294 @@
 package cmd
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 )
 
-// resetTokenCache allows tests to clear the sync.Once-cached token.
-func resetTokenCache() {
-	cachedToken = ""
-	cachedTokenOnce = sync.Once{}
-}
-
-func TestBuildArchiveName(t *testing.T) {
-	name := buildArchiveName("v1.2.3")
-
-	// Should strip v prefix
-	if strings.Contains(name, "v1.2.3") {
-		t.Error("should strip v prefix from tag")
-	}
-
-	// Should follow format: blocks_{ver}_{os}_{arch}.{ext}
-	ext := "tar.gz"
-	if runtime.GOOS == "windows" {
-		ext = "zip"
-	}
-	want := "blocks_1.2.3_" + runtime.GOOS + "_" + runtime.GOARCH + "." + ext
-	if name != want {
-		t.Errorf("buildArchiveName(\"v1.2.3\") = %q, want %q", name, want)
-	}
-}
-
-func TestBuildArchiveNameNoPrefix(t *testing.T) {
-	name := buildArchiveName("1.2.3")
-
-	ext := "tar.gz"
-	if runtime.GOOS == "windows" {
-		ext = "zip"
-	}
-	want := "blocks_1.2.3_" + runtime.GOOS + "_" + runtime.GOARCH + "." + ext
-	if name != want {
-		t.Errorf("buildArchiveName(\"1.2.3\") = %q, want %q", name, want)
-	}
-}
-
-func TestCheckLatestRelease_FastPathCliTag(t *testing.T) {
-	resetTokenCache()
+func TestFetchLatestNpmVersion(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/releases/latest" {
-			json.NewEncoder(w).Encode(githubRelease{
-				TagName:     "cli-v1.5.0",
-				PublishedAt: "2025-06-01T00:00:00Z",
-			})
+		if r.URL.Path != "/@blocks-network/cli/latest" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
 			return
 		}
-		t.Errorf("unexpected request: %s", r.URL.Path)
-		http.NotFound(w, r)
+		json.NewEncoder(w).Encode(npmPackageVersion{Version: "0.2.0"})
 	}))
 	defer srv.Close()
 
-	orig := githubAPIBase
-	githubAPIBase = srv.URL
-	defer func() { githubAPIBase = orig }()
+	orig := npmRegistry
+	npmRegistryURL = srv.URL
+	defer func() { npmRegistryURL = orig }()
 
-	ver, dl, err := checkLatestRelease()
+	ver, err := fetchLatestNpmVersion()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ver != "v1.5.0" {
-		t.Errorf("version = %q, want %q", ver, "v1.5.0")
-	}
-	if !strings.Contains(dl, "cli-v1.5.0") {
-		t.Errorf("download URL %q should contain cli-v1.5.0", dl)
+	if ver != "0.2.0" {
+		t.Errorf("version = %q, want %q", ver, "0.2.0")
 	}
 }
 
-func TestCheckLatestRelease_FastPathFails_FallsThrough(t *testing.T) {
-	resetTokenCache()
+func TestFetchLatestNpmVersion_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/releases/latest":
-			http.NotFound(w, r)
-		case "/releases":
-			json.NewEncoder(w).Encode([]githubRelease{
-				{TagName: "sdk/v2.0.0", PublishedAt: "2025-07-01T00:00:00Z"},
-				{TagName: "cli-v1.3.0", PublishedAt: "2025-06-15T00:00:00Z"},
-			})
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	orig := npmRegistry
+	npmRegistryURL = srv.URL
+	defer func() { npmRegistryURL = orig }()
+
+	_, err := fetchLatestNpmVersion()
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+func TestPlatformPackage(t *testing.T) {
+	pkg, err := platformPackage()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	key := runtime.GOOS + "/" + runtime.GOARCH
+	want := npmPlatformPackages[key]
+	if pkg != want {
+		t.Errorf("platformPackage() = %q, want %q", pkg, want)
+	}
+}
+
+func TestVerifyIntegrity_Valid(t *testing.T) {
+	data := []byte("hello world tarball content")
+	digest := sha512.Sum512(data)
+	sri := "sha512-" + base64.StdEncoding.EncodeToString(digest[:])
+
+	if err := verifyIntegrity(data, sri); err != nil {
+		t.Fatalf("expected no error for valid hash, got: %v", err)
+	}
+}
+
+func TestVerifyIntegrity_Mismatch(t *testing.T) {
+	data := []byte("legitimate tarball")
+	sri := "sha512-" + base64.StdEncoding.EncodeToString([]byte("not-a-real-hash-value-padding-needed-for-test"))
+
+	err := verifyIntegrity(data, sri)
+	if err == nil {
+		t.Fatal("expected error for mismatched hash")
+	}
+	if !strings.Contains(err.Error(), "integrity check failed") {
+		t.Errorf("error should mention integrity check, got: %v", err)
+	}
+}
+
+func TestVerifyIntegrity_Empty(t *testing.T) {
+	err := verifyIntegrity([]byte("data"), "")
+	if err == nil {
+		t.Fatal("expected error when integrity string is empty")
+	}
+}
+
+func TestVerifyIntegrity_UnsupportedAlgo(t *testing.T) {
+	err := verifyIntegrity([]byte("data"), "sha256-abc123")
+	if err == nil {
+		t.Fatal("expected error for unsupported algorithm")
+	}
+	if !strings.Contains(err.Error(), "unsupported algorithm") {
+		t.Errorf("error should mention unsupported algorithm, got: %v", err)
+	}
+}
+
+func TestIsNpmManagedPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join("/opt/homebrew/lib/node_modules/@blocks-network/cli-darwin-arm64/blocks"), true},
+		{filepath.Join("/home/user/.npm-global/lib/node_modules/@blocks-network/cli-linux-x64/blocks"), true},
+		{filepath.Join("/home/user/.blocks/bin/blocks"), false},
+		{filepath.Join("/usr/local/bin/blocks"), false},
+	}
+
+	for _, tt := range tests {
+		if got := isNpmManagedPath(tt.path); got != tt.want {
+			t.Errorf("isNpmManagedPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestResolveInstallDir_NpmManaged(t *testing.T) {
+	// Create a temp dir mimicking an npm-global install layout
+	tmp := t.TempDir()
+	npmBinDir := filepath.Join(tmp, "lib", "node_modules", "@blocks-network", "cli-darwin-arm64")
+	os.MkdirAll(npmBinDir, 0o755)
+	fakeBinary := filepath.Join(npmBinDir, "blocks")
+	os.WriteFile(fakeBinary, []byte("#!/bin/sh\n"), 0o755)
+
+	// isNpmManagedPath should detect this
+	if !isNpmManagedPath(fakeBinary) {
+		t.Fatal("expected npm-managed path to be detected")
+	}
+}
+
+func TestResolveInstallDir_EnvOverride(t *testing.T) {
+	t.Setenv("BLOCKS_INSTALL_DIR", "/custom/path")
+	dir, err := resolveInstallDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dir != "/custom/path" {
+		t.Errorf("resolveInstallDir() = %q, want %q", dir, "/custom/path")
+	}
+}
+
+func buildTestTarball(t *testing.T, fileName string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	hdr := &tar.Header{
+		Name:     "package/" + fileName,
+		Mode:     0o755,
+		Size:     int64(len(content)),
+		Typeflag: tar.TypeReg,
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gw.Close()
+	return buf.Bytes()
+}
+
+func TestExtractBinaryFromTarball_HappyPath(t *testing.T) {
+	content := []byte("fake binary content")
+	tarball := buildTestTarball(t, "blocks", content)
+
+	result, err := extractBinaryFromTarball(bytes.NewReader(tarball), "blocks")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(result, content) {
+		t.Errorf("extracted content doesn't match: got %d bytes, want %d", len(result), len(content))
+	}
+}
+
+func TestExtractBinaryFromTarball_NotFound(t *testing.T) {
+	tarball := buildTestTarball(t, "other-file", []byte("data"))
+
+	_, err := extractBinaryFromTarball(bytes.NewReader(tarball), "blocks")
+	if err == nil {
+		t.Fatal("expected error when binary not in tarball")
+	}
+	if !strings.Contains(err.Error(), "not found in tarball") {
+		t.Errorf("error should mention not found, got: %v", err)
+	}
+}
+
+func TestDownloadAndInstall_FullPipeline(t *testing.T) {
+	binaryContent := []byte("#!/bin/sh\necho hello\n")
+	tarball := buildTestTarball(t, "blocks", binaryContent)
+
+	digest := sha512.Sum512(tarball)
+	sri := "sha512-" + base64.StdEncoding.EncodeToString(digest[:])
+
+	_, err := platformPackage()
+	if err != nil {
+		t.Fatalf("platformPackage: %v", err)
+	}
+
+	var srvURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/@blocks-network/cli/latest":
+			json.NewEncoder(w).Encode(npmPackageVersion{Version: "1.0.0"})
+		case strings.HasSuffix(r.URL.Path, "/1.0.0"):
+			meta := npmPackageVersion{Version: "1.0.0"}
+			meta.Dist.Tarball = srvURL + "/tarball.tgz"
+			meta.Dist.Integrity = sri
+			json.NewEncoder(w).Encode(meta)
+		case r.URL.Path == "/tarball.tgz":
+			w.Write(tarball)
 		default:
 			t.Errorf("unexpected request: %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
+	srvURL = srv.URL
 
-	orig := githubAPIBase
-	githubAPIBase = srv.URL
-	defer func() { githubAPIBase = orig }()
+	orig := npmRegistryURL
+	npmRegistryURL = srv.URL
+	defer func() { npmRegistryURL = orig }()
 
-	ver, _, err := checkLatestRelease()
+	installDir := t.TempDir()
+	t.Setenv("BLOCKS_INSTALL_DIR", installDir)
+
+	err = downloadAndInstall("1.0.0")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("downloadAndInstall failed: %v", err)
 	}
-	if ver != "v1.3.0" {
-		t.Errorf("version = %q, want %q", ver, "v1.3.0")
+
+	binaryName := "blocks"
+	if runtime.GOOS == "windows" {
+		binaryName = "blocks.exe"
+	}
+	installed, err := os.ReadFile(filepath.Join(installDir, binaryName))
+	if err != nil {
+		t.Fatalf("installed binary not found: %v", err)
+	}
+	if !bytes.Equal(installed, binaryContent) {
+		t.Error("installed binary content doesn't match expected")
 	}
 }
 
-func TestCheckLatestRelease_FallbackSortsByPublishedAt(t *testing.T) {
-	resetTokenCache()
+func TestDownloadAndInstall_IntegrityMismatch(t *testing.T) {
+	tarball := buildTestTarball(t, "blocks", []byte("binary"))
+	wrongSRI := "sha512-" + base64.StdEncoding.EncodeToString([]byte("wrong-hash-padding-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"))
+
+	var srvURL string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/releases/latest":
-			// Latest is not a CLI release
-			json.NewEncoder(w).Encode(githubRelease{
-				TagName:     "sdk/v3.0.0",
-				PublishedAt: "2025-08-01T00:00:00Z",
-			})
-		case "/releases":
-			// Return out of order — older release first in the list
-			json.NewEncoder(w).Encode([]githubRelease{
-				{TagName: "cli-v1.1.0", PublishedAt: "2025-05-01T00:00:00Z"},
-				{TagName: "cli-v1.4.0", PublishedAt: "2025-07-01T00:00:00Z"},
-				{TagName: "cli-v1.2.0", PublishedAt: "2025-06-01T00:00:00Z"},
-			})
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/1.0.0"):
+			meta := npmPackageVersion{Version: "1.0.0"}
+			meta.Dist.Tarball = srvURL + "/tarball.tgz"
+			meta.Dist.Integrity = wrongSRI
+			json.NewEncoder(w).Encode(meta)
+		case r.URL.Path == "/tarball.tgz":
+			w.Write(tarball)
 		default:
-			t.Errorf("unexpected request: %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
+	srvURL = srv.URL
 
-	orig := githubAPIBase
-	githubAPIBase = srv.URL
-	defer func() { githubAPIBase = orig }()
+	orig := npmRegistryURL
+	npmRegistryURL = srv.URL
+	defer func() { npmRegistryURL = orig }()
 
-	ver, _, err := checkLatestRelease()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	t.Setenv("BLOCKS_INSTALL_DIR", t.TempDir())
+
+	err := downloadAndInstall("1.0.0")
+	if err == nil {
+		t.Fatal("expected integrity error")
 	}
-	if ver != "v1.4.0" {
-		t.Errorf("version = %q, want %q (should pick most recent by published_at)", ver, "v1.4.0")
-	}
-}
-
-func TestCheckLatestRelease_SkipsDraftAndPrerelease(t *testing.T) {
-	resetTokenCache()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/releases/latest":
-			json.NewEncoder(w).Encode(githubRelease{
-				TagName:     "sdk/v2.0.0",
-				PublishedAt: "2025-08-01T00:00:00Z",
-			})
-		case "/releases":
-			json.NewEncoder(w).Encode([]githubRelease{
-				{TagName: "cli-v2.0.0-rc1", Prerelease: true, PublishedAt: "2025-07-20T00:00:00Z"},
-				{TagName: "cli-v2.0.0-draft", Draft: true, PublishedAt: "2025-07-15T00:00:00Z"},
-				{TagName: "cli-v1.9.0", PublishedAt: "2025-07-10T00:00:00Z"},
-			})
-		default:
-			t.Errorf("unexpected request: %s", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	orig := githubAPIBase
-	githubAPIBase = srv.URL
-	defer func() { githubAPIBase = orig }()
-
-	ver, _, err := checkLatestRelease()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ver != "v1.9.0" {
-		t.Errorf("version = %q, want %q (should skip draft and prerelease)", ver, "v1.9.0")
-	}
-}
-
-func TestGithubToken_Caching(t *testing.T) {
-	resetTokenCache()
-	t.Setenv("GITHUB_TOKEN", "test-token-123")
-
-	tok1 := githubToken()
-	if tok1 != "test-token-123" {
-		t.Errorf("githubToken() = %q, want %q", tok1, "test-token-123")
-	}
-
-	// Change env — cached value should persist
-	t.Setenv("GITHUB_TOKEN", "different-token")
-	tok2 := githubToken()
-	if tok2 != "test-token-123" {
-		t.Errorf("githubToken() after env change = %q, want cached %q", tok2, "test-token-123")
+	if !strings.Contains(err.Error(), "integrity check failed") {
+		t.Errorf("error should mention integrity, got: %v", err)
 	}
 }

@@ -8,7 +8,7 @@ history-based stream/artifact discovery, and live event handling.
 
 ## Prerequisites
 
-- Node.js 24+
+- Node.js 22+
 - `BLOCKS_API_KEY` in the project `.env`. Get it by running `blocks login --write-env` (or accept the interactive prompt during `blocks login`).
 - A task ID from a previous `sendMessage()` call
 
@@ -20,10 +20,10 @@ npx tsx index.ts <taskId>
 
 ## Environment variables
 
-| Variable | Required | Description |
-|---|---|---|
-| `BLOCKS_API_KEY` | Yes | Blocks API key for authentication |
-| `BLOCKS_CDM_URL` | No | CDM config URL (defaults to production CDN) |
+| Variable         | Required | Description                                 |
+| ---------------- | -------- | ------------------------------------------- |
+| `BLOCKS_API_KEY` | Yes      | Blocks API key for authentication           |
+| `BLOCKS_CDM_URL` | No       | CDM config URL (defaults to production CDN) |
 
 ## SDK concepts demonstrated
 

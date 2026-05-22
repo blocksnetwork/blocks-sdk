@@ -136,6 +136,8 @@ export function makeFakeDeps(overrides: FakeDepsOverrides = {}) {
     .fn()
     .mockResolvedValue(overrides.listAgentsResult ?? { agents: [], totalCount: 0 });
   const validateFilePath = vi.fn((p: string) => p);
+  const resolveSavePath = vi.fn((p: string) => p);
+  const writeFile = vi.fn();
   const fileSize = vi.fn().mockReturnValue(overrides.fileSize ?? 100);
   const filePartFromPath = vi.fn(async (path: string, opts: { partId?: string; contentType?: string }) => ({
     type: 'file' as const,
@@ -156,6 +158,8 @@ export function makeFakeDeps(overrides: FakeDepsOverrides = {}) {
     getAgentByName,
     listAgents,
     validateFilePath,
+    resolveSavePath,
+    writeFile,
     fileSize,
     maxUploadBytes: overrides.maxUploadBytes ?? 25 * 1024 * 1024,
     filePartFromPath: filePartFromPath as unknown as ToolDeps['filePartFromPath'],
@@ -172,6 +176,8 @@ export function makeFakeDeps(overrides: FakeDepsOverrides = {}) {
       getAgentByName,
       listAgents,
       validateFilePath,
+      resolveSavePath,
+      writeFile,
       fileSize,
       filePartFromPath,
       textPart,

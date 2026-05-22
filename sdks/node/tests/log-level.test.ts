@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { _resolveLogLevel, _LOG_LEVEL_ORDER } from '../src/runtime/agent-instance.js';
+import { _resolveLogLevel, _LOG_LEVEL_ORDER } from '../src/runtime/logger.js';
 
 describe('LOG_LEVEL threshold', () => {
   afterEach(() => {

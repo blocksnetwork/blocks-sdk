@@ -277,8 +277,14 @@ describe('P1-3: onError routing', () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('onArtifact'),
-      expect.stringContaining('artifact boom'),
+      '[TaskSession]',
+      expect.objectContaining({
+        level: 'warn',
+        event: 'task_session_callback_error',
+        callbackType: 'onArtifact',
+        error: 'artifact boom',
+        message: expect.stringContaining('onArtifact'),
+      }),
     );
     warnSpy.mockRestore();
   });
@@ -447,8 +453,13 @@ describe('P1-3: subscribeToTask error routing', () => {
     mock._simulateMessage('u.alice.task-1', { type: 'terminal', taskId: 'task-1', state: 'completed' });
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('onTerminal'),
-      expect.stringContaining('terminal error'),
+      '[TaskClient]',
+      expect.objectContaining({
+        level: 'warn',
+        event: 'subscribe_callback_error',
+        callbackType: 'onTerminal',
+        error: 'terminal error',
+      }),
     );
     warnSpy.mockRestore();
   });

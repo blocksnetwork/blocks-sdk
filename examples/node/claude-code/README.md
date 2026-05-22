@@ -10,7 +10,7 @@ Python agent (`claude-code-python`).
 
 ## Prerequisites
 
-- **Node.js 24+**
+- **Node.js 22+**
 - **`claude` CLI** on your PATH -- install with `npm install -g @anthropic/claude-code`
 - **Anthropic API key** from <https://console.anthropic.com/>
 - **`BLOCKS_API_KEY`** (run `blocks login` to generate)
@@ -37,17 +37,17 @@ the agent.
 
 All configuration is via environment variables (set in `.env` or your shell):
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | (required) | Anthropic API key |
-| `CLAUDE_MODEL` | (CLI default) | Model to use (e.g. `sonnet`, `opus`) |
-| `CLAUDE_ALLOWED_TOOLS` | `Read,Write,Edit,Bash,Glob,Grep` | Comma-separated tool allowlist |
-| `CLAUDE_DISALLOWED_TOOLS` | (none) | Comma-separated tool blocklist |
-| `CLAUDE_ALLOWED_PATHS` | (none) | Comma-separated allowed working directories |
-| `CLAUDE_BASH_SAFETY` | `on` | `on` or `off` -- blocks dangerous bash commands |
-| `CLAUDE_BASH_BLOCKLIST` | (none) | Additional blocked bash patterns (comma-separated regexes) |
-| `CLAUDE_MAX_BUDGET_USD` | (none) | Max dollar amount per task |
-| `BLOCKS_API_KEY` | (required) | Blocks authentication token (from `blocks login`) |
+| Variable                  | Default                          | Description                                                |
+| ------------------------- | -------------------------------- | ---------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`       | (required)                       | Anthropic API key                                          |
+| `CLAUDE_MODEL`            | (CLI default)                    | Model to use (e.g. `sonnet`, `opus`)                       |
+| `CLAUDE_ALLOWED_TOOLS`    | `Read,Write,Edit,Bash,Glob,Grep` | Comma-separated tool allowlist                             |
+| `CLAUDE_DISALLOWED_TOOLS` | (none)                           | Comma-separated tool blocklist                             |
+| `CLAUDE_ALLOWED_PATHS`    | (none)                           | Comma-separated allowed working directories                |
+| `CLAUDE_BASH_SAFETY`      | `on`                             | `on` or `off` -- blocks dangerous bash commands            |
+| `CLAUDE_BASH_BLOCKLIST`   | (none)                           | Additional blocked bash patterns (comma-separated regexes) |
+| `CLAUDE_MAX_BUDGET_USD`   | (none)                           | Max dollar amount per task                                 |
+| `BLOCKS_API_KEY`          | (required)                       | Blocks authentication token (from `blocks login`)          |
 
 ## How It Works
 

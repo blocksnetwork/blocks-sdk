@@ -484,7 +484,7 @@ blocks run                                    # Start agent
 
 ## Environment Variables (.env)
 
-Auto-populated by `blocks init` or by `blocks login --write-env` (opt-in). Contains `BLOCKS_API_KEY`.
+Auto-populated by `blocks init` or by `blocks login --write-env` (opt-in). Use `--dir <path>` to target a specific directory. Contains `BLOCKS_API_KEY`.
 
 Additional env vars read by the Python SDK:
 

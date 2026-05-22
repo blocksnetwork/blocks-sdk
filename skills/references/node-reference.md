@@ -275,7 +275,7 @@ client.destroy();
 
 ## Environment Variables (.env)
 
-Auto-populated by `blocks init` or by `blocks login --write-env` (opt-in). Contains `BLOCKS_API_KEY`.
+Auto-populated by `blocks init` or by `blocks login --write-env` (opt-in). Use `--dir <path>` to target a specific directory. Contains `BLOCKS_API_KEY`.
 
 Additional env vars read by the SDK:
 
@@ -528,7 +528,9 @@ Always use `--language node` when scaffolding. Do NOT mkdir before `blocks init`
 ```bash
 blocks init --yes --language node   # Non-interactive scaffold (TypeScript)
 blocks login --write-env            # Authenticate and write BLOCKS_API_KEY to .env
-blocks publish                      # Register agent
+blocks login --write-env --dir ./x  # Write .env to a specific directory
+blocks login --no-write-env         # Authenticate without touching .env (skips prompt)
+blocks publish                      # Register agent (opens dashboard on success)
 blocks run                          # Start agent from ./agent-card.json
 blocks check                        # Validate agent-card.json + handler
 blocks dashboard                    # Open browser dashboard

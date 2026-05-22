@@ -54,11 +54,10 @@ session-authenticated backend that mints a consumer JWT: either a
 **customer-owned proxy** (what this example demonstrates) or a
 **dashboard-embedder** path that points directly at the Blocks
 backend's `/api/v1/auth/agent/consumer-token` endpoint with a
-session cookie. The dashboard-embedder shape is browser-only (uses
-`fetch` cookies) and is documented in `dev_docs/SDK_CONTRACT.md`
-§8.6.4g. In Python server-side code, Mode 1 (API key) or Mode 3
-(custom provider) are usually more natural than either
-`token_endpoint` shape.
+session cookie. The dashboard-embedder shape is browser-only because
+it relies on `fetch` cookies. In Python server-side code, Mode 1
+(API key) or Mode 3 (custom provider) are usually more natural than
+either `token_endpoint` shape.
 
 ### Mode 3: Custom provider (`custom_provider.py`)
 
@@ -75,10 +74,10 @@ proxy endpoints requiring custom headers or credentials.
 
 ## Environment variables
 
-| Variable | Required by | Description |
-|---|---|---|
+| Variable         | Required by              | Description    |
+| ---------------- | ------------------------ | -------------- |
 | `BLOCKS_API_KEY` | api_key, custom_provider | Blocks API key |
-| `BLOCKS_CDM_URL` | all (optional) | CDM config URL |
+| `BLOCKS_CDM_URL` | all (optional)           | CDM config URL |
 
 ## SDK concepts demonstrated
 

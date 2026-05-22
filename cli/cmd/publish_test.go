@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 	"github.com/spf13/pflag"
 )
@@ -31,7 +32,9 @@ func resetPublishFlags() {
 	publishFreeTasks = 0
 	publishFreeMinutes = 0
 	publishAcceptTerms = false
+	publishOrgName = ""
 	publishCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	openBrowserFunc = func(string) error { return nil }
 }
 
 func TestPublishWithListingPublic(t *testing.T) {
@@ -57,6 +60,8 @@ func TestPublishWithListingPublic(t *testing.T) {
 	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
 	t.Setenv("BLOCKS_APP_BASE_URL", "")
 	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_CDM_URL", "http://127.0.0.1:1/nonexistent")
+	cdm.Reset()
 
 	oldDir, _ := os.Getwd()
 	os.Chdir(dir)
@@ -153,6 +158,16 @@ func TestPublishPayloadShape(t *testing.T) {
 
 	var received map[string]interface{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/pricing/limits" {
+			w.WriteHeader(404)
+			return
+		}
+		if r.URL.Path == "/api/v1/registry/publish-context" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"orgId":"org-test","orgName":"Test Org","agentCount":1}`))
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("reading request body: %v", err)
@@ -475,7 +490,7 @@ func TestPublishBillingModeFreeFlag(t *testing.T) {
 func TestPublishedAgentURLResponseWinsOverAppBase(t *testing.T) {
 	t.Setenv("BLOCKS_APP_BASE_URL", "https://app-base.example.com")
 
-	got := publishedAgentURL([]byte(`{"status":"ok","agentUrl":"https://backend.example.com/agents/test_agent"}`), "test_agent")
+	got := publishedAgentURL([]byte(`{"status":"ok","agentUrl":"https://backend.example.com/agents/test_agent"}`), "test_agent", false)
 	want := "https://backend.example.com/agents/test_agent"
 	if got != want {
 		t.Errorf("publishedAgentURL = %q, want %q", got, want)
@@ -485,7 +500,7 @@ func TestPublishedAgentURLResponseWinsOverAppBase(t *testing.T) {
 func TestPublishedAgentURLUsesAppBaseFallback(t *testing.T) {
 	t.Setenv("BLOCKS_APP_BASE_URL", "https://app.example.com/")
 
-	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent")
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", false)
 	want := "https://app.example.com/agents/test_agent"
 	if got != want {
 		t.Errorf("publishedAgentURL = %q, want %q", got, want)
@@ -495,7 +510,7 @@ func TestPublishedAgentURLUsesAppBaseFallback(t *testing.T) {
 func TestPublishedAgentURLRejectsUnsafeBackendURL(t *testing.T) {
 	t.Setenv("BLOCKS_APP_BASE_URL", "https://app.example.com")
 
-	got := publishedAgentURL([]byte(`{"status":"ok","agentUrl":"javascript:alert(1)"}`), "test_agent")
+	got := publishedAgentURL([]byte(`{"status":"ok","agentUrl":"javascript:alert(1)"}`), "test_agent", false)
 	want := "https://app.example.com/agents/test_agent"
 	if got != want {
 		t.Errorf("publishedAgentURL = %q, want safe fallback %q", got, want)
@@ -513,8 +528,10 @@ func TestSafeHTTPURLStripsControlChars(t *testing.T) {
 func TestPublishedAgentURLOmitsWithoutResolution(t *testing.T) {
 	t.Setenv("BLOCKS_APP_BASE_URL", "")
 	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_CDM_URL", "http://127.0.0.1:1/nonexistent")
+	cdm.Reset()
 
-	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent")
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", false)
 	if got != "" {
 		t.Errorf("publishedAgentURL = %q, want empty string", got)
 	}
@@ -581,10 +598,9 @@ func TestPublishBillingModePaidFlag(t *testing.T) {
 	}
 }
 
-// TestPublishMissingBillingModeNonInteractive verifies that --billing-mode is
-// required in non-interactive mode (--accept-terms) and fails with the
-// actionable error message.
-func TestPublishMissingBillingModeNonInteractive(t *testing.T) {
+// TestPublishPaidMissingAcceptTermsNonInteractive verifies that paid agents
+// require --accept-terms in non-interactive mode, while free agents do not.
+func TestPublishPaidMissingAcceptTermsNonInteractive(t *testing.T) {
 	cleanup := setupFakeCredentials(t)
 	defer cleanup()
 
@@ -596,14 +612,24 @@ func TestPublishMissingBillingModeNonInteractive(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(oldDir)
 
+	// Replace stdin with a pipe so isInteractive() returns false.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	w.Close()
+	origStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = origStdin }()
+
 	resetPublishFlags()
 
-	rootCmd.SetArgs([]string{"publish", cardPath, "--listing", "public", "--accept-terms"})
-	err := rootCmd.Execute()
+	rootCmd.SetArgs([]string{"publish", cardPath, "--listing", "public", "--billing-mode", "paid", "--price", "1.00"})
+	err = rootCmd.Execute()
 	if err == nil {
-		t.Fatal("expected error when --billing-mode omitted in non-interactive mode")
+		t.Fatal("expected error when --accept-terms omitted for paid agent in non-interactive mode")
 	}
-	wantSubstr := "Missing --billing-mode"
+	wantSubstr := "--accept-terms"
 	if !strings.Contains(err.Error(), wantSubstr) {
 		t.Errorf("error = %q, want substring %q", err.Error(), wantSubstr)
 	}

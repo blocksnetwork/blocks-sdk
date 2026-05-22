@@ -342,7 +342,12 @@ describe('StreamClient reorder buffer', () => {
       message: { type: 'stream_end', streamId: 'reorder-stream', ts: 1700000000000 },
     });
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('stream_end missing numeric seq'),
+      '[StreamClient]',
+      expect.objectContaining({
+        event: 'stream_client_stream_end_missing_seq',
+        level: 'warn',
+        message: expect.stringContaining('stream_end missing numeric seq'),
+      }),
     );
     warnSpy.mockRestore();
 
