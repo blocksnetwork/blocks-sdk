@@ -1,0 +1,20 @@
+{
+  "name": "bidi-chat",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "blocks run",
+    "check": "blocks check",
+    "consumer": "tsx bidi-chat-consumer.ts"
+  },
+  "dependencies": {
+    "@blocks-network/sdk": "*",
+    "dotenv": "^16.4.5",
+    "pubnub": "^8.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.5"
+  }
+}

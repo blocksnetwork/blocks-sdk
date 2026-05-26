@@ -120,3 +120,34 @@ class TestPamTokenExpiry:
         mock_pubnub.stop.assert_not_called()
 
         result["stop"]()
+
+    def test_emits_neutral_access_denied_message(self, mock_pubnub, monkeypatch) -> None:
+        from blocks_network import agent_instance as ai
+
+        emitted: list[tuple[str, str]] = []
+
+        def _spy(level, message, **kwargs):
+            emitted.append((level, message))
+
+        monkeypatch.setattr(ai, "log_agent_instance_event", _spy)
+
+        result = start_agent_instance(
+            AgentInstanceOptions(
+                card=minimal_card(),
+                pubnub=mock_pubnub,
+                agent_name="test_pam_msg",
+            )
+        )
+        try:
+            _wait_for(lambda: len(mock_pubnub._listeners) > 0)
+            from pubnub.enums import PNStatusCategory
+            _simulate_status_event(mock_pubnub, PNStatusCategory.PNAccessDeniedCategory)
+
+            errors = [(lv, msg) for lv, msg in emitted if lv == "error"]
+            assert len(errors) == 1, f"expected 1 error, got {emitted}"
+            _, message = errors[0]
+            assert message.startswith("access token expired or revoked"), message
+            assert "PAM" not in message, message
+            assert "PubNub" not in message, message
+        finally:
+            result["stop"]()

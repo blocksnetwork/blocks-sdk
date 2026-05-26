@@ -70,6 +70,16 @@ export interface StreamClientFromDescriptorOptions {
   gating?: boolean;
   /** Reorder buffer timeout in ms. Default: 750. Set to 0 to disable. */
   reorderTimeoutMs?: number;
+  /**
+   * Consumer's user ID. When set, used as the publisher-identity prefix in
+   * the StreamClient UUID so that consumer-side publishes carry an identity
+   * derived from the consumer rather than the provider's agentName. Required
+   * for correct self-echo filtering on bidirectional streams where the
+   * consumer and provider share the same agentName. Omitting it falls back
+   * to descriptor.agentName (legacy behavior — safe only for unidirectional
+   * streams).
+   */
+  consumerUserId?: string;
 }
 
 /** Normalized inbound message yielded by the inbound async iterator. */

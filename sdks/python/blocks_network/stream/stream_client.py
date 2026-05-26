@@ -34,28 +34,46 @@ logger = logging.getLogger(__name__)
 _MULTIPART_TTL_S = 30        # 30 seconds
 _MULTIPART_MAX_GROUPS = 64   # max buffered incomplete groups
 
-# Fatal category allowlist — PubNub status categories that force-terminate
-# the stream because the PAM grant is gone and won't come back. Non-fatal
-# error categories (network, timeout, etc.) fire on_error but leave the
-# stream running so PubNub's retry machinery can recover. Kept explicit
-# and small; mirrors Node's FATAL_STREAM_ERROR_CATEGORIES.
+# Neutral transport-category enum surfaced through the public
+# ``StreamError.category`` field. Mirrors the Node SDK's
+# ``TransportCategory`` union so cross-SDK consumers branching on
+# ``category`` see the same labels regardless of runtime. The raw
+# ``PN…Category`` strings (or pubnub-python enum members) emitted by
+# the underlying SDK are mapped at the listener edge via
+# ``_map_transport_category``.
+StreamCategory = str  # Literal['connected','reconnected','network_down','network_issues','timeout','malformed_response','access_denied','bad_request','other']
+
+_CATEGORY_MAP: Dict[str, str] = {
+    "PNConnectedCategory": "connected",
+    "PNReconnectedCategory": "reconnected",
+    "PNNetworkDownCategory": "network_down",
+    "PNNetworkIssuesCategory": "network_issues",
+    "PNTimeoutCategory": "timeout",
+    "PNMalformedResponseCategory": "malformed_response",
+    "PNAccessDeniedCategory": "access_denied",
+    "PNBadRequestCategory": "bad_request",
+}
+
+# Fatal neutral categories — force-terminate the stream because the PAM
+# grant is gone and won't come back. Non-fatal error categories (network,
+# timeout, etc.) fire on_error but leave the stream running so PubNub's
+# retry machinery can recover. Mirrors Node's FATAL_TRANSPORT_CATEGORIES.
 FATAL_STREAM_ERROR_CATEGORIES: FrozenSet[str] = frozenset({
-    "PNAccessDeniedCategory",   # PAM revocation / token denied
-    "PNBadRequestCategory",     # auth config / malformed grant
+    "access_denied",   # PAM revocation / token denied
+    "bad_request",     # auth config / malformed grant
 })
 
 
 def _coerce_category_name(category: Any) -> str:
-    """Normalize a PubNub status category to its canonical string name.
+    """Normalize a PubNub status category to its canonical raw name.
 
     The installed pubnub-python SDK delivers ``status.category`` as a
     ``PNStatusCategory`` enum member (``enum.Enum``, not a ``str``
     subclass), not as a raw string — e.g. 403 subscribe failures come
-    through as ``PNStatusCategory.PNAccessDeniedCategory``. Consumers
-    and classifiers need the bare name (``"PNAccessDeniedCategory"``)
-    so fatal-allowlist membership and UX branching work regardless of
-    whether an older/alternate SDK shape delivered a plain string or
-    the real enum.
+    through as ``PNStatusCategory.PNAccessDeniedCategory``. The raw name
+    (``"PNAccessDeniedCategory"``) is returned so callers can either
+    feed it into ``_map_transport_category`` for the user-facing neutral
+    label or compare it directly when they need the unmapped form.
 
     Returns the empty string for anything that isn't a string or an
     enum-like object exposing a string ``.name``.
@@ -66,12 +84,22 @@ def _coerce_category_name(category: Any) -> str:
     return name if isinstance(name, str) else ""
 
 
+def _map_transport_category(raw: Any) -> str:
+    """Map a raw ``PN…Category`` (string or pubnub-python enum) to the
+    neutral ``StreamCategory`` value. Unknown / empty input maps to
+    ``"other"``. Mirrors Node's ``mapTransportCategory`` in
+    ``transport-categories.ts``.
+    """
+    name = _coerce_category_name(raw)
+    return _CATEGORY_MAP.get(name, "other")
+
+
 def _is_status_error(status: Any) -> bool:
     """Native PubNub error detection.
 
     Prefers ``PNStatus.is_error()`` (the documented native signal on the
-    Python SDK's status object). Falls back to fatal-allowlist membership
-    on ``category`` when an older/alternate SDK shape lacks ``is_error``.
+    Python SDK's status object). Falls back to neutral-fatal-category
+    membership when an older/alternate SDK shape lacks ``is_error``.
 
     Exported for classifier unit tests.
     """
@@ -83,19 +111,20 @@ def _is_status_error(status: Any) -> bool:
             # Defensive: if is_error() raises, fall through to category
             # membership rather than silently dropping the signal.
             pass
-    name = _coerce_category_name(getattr(status, "category", None))
-    return name != "" and name in FATAL_STREAM_ERROR_CATEGORIES
+    return _is_fatal_category(getattr(status, "category", None))
 
 
 def _is_fatal_category(category: Any) -> bool:
-    """True if this category is in the fatal allowlist.
+    """True if this category (raw or pre-mapped) is fatal.
 
-    Accepts either a raw string or a ``PNStatusCategory`` enum member so
-    real pubnub-python payloads (which deliver enum categories) classify
-    correctly alongside the test-friendly string shape.
+    Accepts the same shapes as ``_map_transport_category``: a raw string,
+    a ``PNStatusCategory`` enum member, or a pre-mapped neutral string.
+    Pre-mapped neutral strings short-circuit through the FATAL set
+    directly; raw / enum inputs are mapped first.
     """
-    name = _coerce_category_name(category)
-    return name != "" and name in FATAL_STREAM_ERROR_CATEGORIES
+    if isinstance(category, str) and category in _CATEGORY_MAP.values():
+        return category in FATAL_STREAM_ERROR_CATEGORIES
+    return _map_transport_category(category) in FATAL_STREAM_ERROR_CATEGORIES
 
 
 @dataclass(frozen=True)
@@ -110,7 +139,10 @@ class StreamError:
     Attributes
     ----------
     category : str
-        PubNub status category (e.g., ``"PNAccessDeniedCategory"``).
+        Neutral transport category (e.g., ``"access_denied"``,
+        ``"network_issues"``). One of the values in
+        ``StreamCategory``. Raw ``PN…Category`` strings are mapped via
+        ``_map_transport_category`` before reaching this field.
     error : Any
         Raw PubNub error data (from ``error_data`` or ``error``).
     channel : str
@@ -583,8 +615,8 @@ class StreamClient:
                 try:
                     if not _is_status_error(status):
                         return
-                    category = _coerce_category_name(
-                        getattr(status, "category", ""),
+                    category = _map_transport_category(
+                        getattr(status, "category", None),
                     )
                     fatal = _is_fatal_category(category)
                     error_data = (
@@ -1107,6 +1139,7 @@ class StreamClient:
         max_latency_ms: Optional[int] = None,
         gating: Optional[bool] = None,
         reorder_timeout_ms: Optional[int] = None,
+        consumer_user_id: Optional[str] = None,
     ) -> "StreamClient":
         """Create a StreamClient from a StreamDescriptor.
 
@@ -1115,6 +1148,12 @@ class StreamClient:
 
         Consumer gating policy: when local_direction includes writing and gating
         is not explicitly set, defaults to gating=False.
+
+        ``consumer_user_id`` sets the UUID prefix for the consumer side of a
+        bidirectional stream. When provided, it replaces descriptor.agent_name
+        as the prefix so that provider and consumer UUIDs never collide even
+        when their per-process counters are in sync. An empty string falls back
+        to descriptor.agent_name (truthiness check).
         """
         local_dir = descriptor.local_direction
         can_write = local_dir in ("outbound", "bidirectional")
@@ -1124,7 +1163,7 @@ class StreamClient:
             subscribe_key=subscribe_key,
             publish_key=publish_key,
             token=descriptor.token,
-            agent_name=descriptor.agent_name,
+            agent_name=consumer_user_id or descriptor.agent_name,
             stream_id=descriptor.stream_id,
             channel=descriptor.channel,
             format=descriptor.format,

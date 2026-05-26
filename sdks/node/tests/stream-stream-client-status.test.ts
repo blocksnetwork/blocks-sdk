@@ -8,7 +8,7 @@
  * Covers:
  * - `isStreamStatusError` classifier across both `Status` and
  *   `StatusEvent` shapes (v10.2.x PubNub JS SDK).
- * - `isFatalStreamCategory` fatal-allowlist membership.
+ * - `isFatalTransportCategory` fatal-allowlist membership.
  * - Dispatch: fatal category fires onError with `fatal: true`, forces
  *   termination, iterator exits cleanly.
  * - Dispatch: benign category (`PNConnectedCategory`) does not fire
@@ -24,8 +24,8 @@ import {
   StreamClient,
   _resetUuidCounter,
   isStreamStatusError,
-  isFatalStreamCategory,
-  FATAL_STREAM_ERROR_CATEGORIES,
+  isFatalTransportCategory,
+  FATAL_TRANSPORT_CATEGORIES,
   type StreamError,
 } from '../src/stream/stream-client.js';
 
@@ -194,36 +194,35 @@ describe('isStreamStatusError (classifier)', () => {
   });
 });
 
-describe('isFatalStreamCategory', () => {
-  it('accepts PNAccessDeniedCategory', () => {
-    expect(isFatalStreamCategory('PNAccessDeniedCategory')).toBe(true);
+describe('isFatalTransportCategory', () => {
+  it('accepts access_denied', () => {
+    expect(isFatalTransportCategory('access_denied')).toBe(true);
   });
 
-  it('accepts PNBadRequestCategory', () => {
-    expect(isFatalStreamCategory('PNBadRequestCategory')).toBe(true);
+  it('accepts bad_request', () => {
+    expect(isFatalTransportCategory('bad_request')).toBe(true);
   });
 
   it('rejects non-fatal error categories', () => {
-    expect(isFatalStreamCategory('PNNetworkIssuesCategory')).toBe(false);
-    expect(isFatalStreamCategory('PNTimeoutCategory')).toBe(false);
-    expect(isFatalStreamCategory('PNNetworkDownCategory')).toBe(false);
+    expect(isFatalTransportCategory('network_issues')).toBe(false);
+    expect(isFatalTransportCategory('timeout')).toBe(false);
+    expect(isFatalTransportCategory('network_down')).toBe(false);
   });
 
   it('rejects benign categories', () => {
-    expect(isFatalStreamCategory('PNConnectedCategory')).toBe(false);
-    expect(isFatalStreamCategory('PNReconnectedCategory')).toBe(false);
+    expect(isFatalTransportCategory('connected')).toBe(false);
+    expect(isFatalTransportCategory('reconnected')).toBe(false);
   });
 
-  it('rejects empty / null / undefined', () => {
-    expect(isFatalStreamCategory('')).toBe(false);
-    expect(isFatalStreamCategory(null)).toBe(false);
-    expect(isFatalStreamCategory(undefined)).toBe(false);
+  it('rejects null / undefined', () => {
+    expect(isFatalTransportCategory(null)).toBe(false);
+    expect(isFatalTransportCategory(undefined)).toBe(false);
   });
 
-  it('FATAL_STREAM_ERROR_CATEGORIES is exactly the allowlisted set', () => {
-    expect(FATAL_STREAM_ERROR_CATEGORIES.size).toBe(2);
-    expect(FATAL_STREAM_ERROR_CATEGORIES.has('PNAccessDeniedCategory')).toBe(true);
-    expect(FATAL_STREAM_ERROR_CATEGORIES.has('PNBadRequestCategory')).toBe(true);
+  it('FATAL_TRANSPORT_CATEGORIES is exactly the allowlisted set', () => {
+    expect(FATAL_TRANSPORT_CATEGORIES.size).toBe(2);
+    expect(FATAL_TRANSPORT_CATEGORIES.has('access_denied')).toBe(true);
+    expect(FATAL_TRANSPORT_CATEGORIES.has('bad_request')).toBe(true);
   });
 });
 
@@ -270,7 +269,7 @@ describe('StreamClient status dispatch', () => {
     await Promise.resolve();
 
     expect(received).toHaveLength(1);
-    expect(received[0].category).toBe('PNAccessDeniedCategory');
+    expect(received[0].category).toBe('access_denied');
     expect(received[0].fatal).toBe(true);
     expect(received[0].channel).toBe(client.channel);
     expect(received[0].error).toEqual({ message: 'PAM revoked' });
@@ -404,7 +403,7 @@ describe('StreamClient status dispatch', () => {
     });
 
     expect(received).toHaveLength(1);
-    expect(received[0].category).toBe('PNNetworkIssuesCategory');
+    expect(received[0].category).toBe('network_issues');
     expect(received[0].fatal).toBe(false);
     expect(client.isActive).toBe(true);
   });
@@ -504,5 +503,80 @@ describe('StreamClient status dispatch', () => {
     expect(received[0].channel).toBe(client.channel);
     expect(received[0].timestamp).toBeGreaterThanOrEqual(before);
     expect(received[0].timestamp).toBeLessThanOrEqual(after);
+  });
+
+  it('Event-Engine-wrapped fatal (PNConnectionErrorCategory + PNAccessDeniedCategory) force-terminates', async () => {
+    const client = makeInboundClient();
+    const listener = getRegisteredListener();
+
+    const received: StreamError[] = [];
+    client.onError((e) => received.push(e));
+
+    const inboundDone = vi.fn();
+    client.onInboundDone(inboundDone);
+
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    listener.status!({
+      category: 'PNConnectionErrorCategory',
+      error: 'PNAccessDeniedCategory',
+      statusCode: 403,
+      errorData: { message: 'PAM revoked' },
+      operation: 'PNSubscribeOperation',
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].category).toBe('access_denied');
+    expect(received[0].fatal).toBe(true);
+    expect(client.isActive).toBe(false);
+    expect(inboundDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('Event-Engine-wrapped fatal without statusCode still force-terminates (handshake failure shape)', async () => {
+    // The Event Engine HandshakingState emits { category: 'PNConnectionErrorCategory', error: '<leaf>' }
+    // with no statusCode — that is the actual production shape on a 403 handshake failure.
+    const client = makeInboundClient();
+    const listener = getRegisteredListener();
+
+    const received: StreamError[] = [];
+    client.onError((e) => received.push(e));
+
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    listener.status!({
+      category: 'PNConnectionErrorCategory',
+      error: 'PNAccessDeniedCategory',
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].category).toBe('access_denied');
+    expect(received[0].fatal).toBe(true);
+    expect(client.isActive).toBe(false);
+  });
+
+  it('Event-Engine-wrapped non-fatal (PNDisconnectedUnexpectedlyCategory + PNTimeoutCategory) keeps the stream active', () => {
+    const client = makeInboundClient();
+    const listener = getRegisteredListener();
+
+    const received: StreamError[] = [];
+    client.onError((e) => received.push(e));
+
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    listener.status!({
+      category: 'PNDisconnectedUnexpectedlyCategory',
+      error: 'PNTimeoutCategory',
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].category).toBe('timeout');
+    expect(received[0].fatal).toBe(false);
+    expect(client.isActive).toBe(true);
   });
 });

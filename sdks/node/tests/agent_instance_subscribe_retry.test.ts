@@ -111,20 +111,85 @@ describe('subscribe retry budget per client kind', () => {
     stop();
   });
 
-  it('control client wires an onRetry callback (visibility during outage)', async () => {
+  it('control client has a connectivity status listener (visibility during outage)', async () => {
     const { stop } = await startAgentInstance({
-      agentName: 'subretry_visibility',
+      agentName: 'subretry_connectivity',
       baseUrl: 'http://test-host',
       card: makeTestCard(),
     });
     await new Promise((r) => setTimeout(r, 50));
 
+    // Find the createPubNubClient call for the control client.
     const controlCall = mocked.mock.calls.find(([cfg]) =>
-      typeof cfg.userId === 'string' && cfg.userId.startsWith('AG-subretry_visibility-'),
+      typeof cfg.userId === 'string' && cfg.userId.startsWith('AG-subretry_connectivity-'),
     );
     expect(controlCall, 'control client createPubNubClient call not found').toBeDefined();
-    expect(typeof controlCall![0].onRetry).toBe('function');
 
+    // Get the mock PubNub stub returned for this call.
+    const stubIndex = mocked.mock.calls.indexOf(controlCall!);
+    const stubPn = mocked.mock.results[stubIndex]?.value as {
+      addListener: ReturnType<typeof vi.fn>;
+    };
+    expect(stubPn).toBeDefined();
+
+    // At least one addListener call must include a status handler.
+    const hasConnectivityListener = stubPn.addListener.mock.calls.some(
+      ([arg]) => arg && typeof (arg as Record<string, unknown>).status === 'function',
+    );
+    expect(hasConnectivityListener).toBe(true);
+
+    // Verify no onRetry was passed to createPubNubClient.
+    expect(controlCall![0]).not.toHaveProperty('onRetry');
+
+    stop();
+  });
+
+  it('connectivity listener emits neutral category names and no PubNub vocabulary', async () => {
+    const logSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const { stop } = await startAgentInstance({
+      agentName: 'subretry_hygiene',
+      baseUrl: 'http://test-host',
+      card: makeTestCard(),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Pull the connectivity listener off the stub and synthesize transport
+    // status events.
+    const controlCall = mocked.mock.calls.find(([cfg]) =>
+      typeof cfg.userId === 'string' && cfg.userId.startsWith('AG-subretry_hygiene-'),
+    );
+    const stubIndex = mocked.mock.calls.indexOf(controlCall!);
+    const stubPn = mocked.mock.results[stubIndex]?.value as {
+      addListener: ReturnType<typeof vi.fn>;
+    };
+    const connectivityListener = stubPn.addListener.mock.calls
+      .map(([arg]) => arg as { status?: (e: unknown) => void })
+      .find((l) => typeof l?.status === 'function' && typeof (l as any)?.message !== 'function');
+    expect(connectivityListener).toBeDefined();
+
+    connectivityListener!.status!({ category: 'PNNetworkDownCategory' });
+    connectivityListener!.status!({ category: 'PNReconnectedCategory' });
+
+    const allOutput = [
+      ...logSpy.mock.calls.flat(),
+      ...infoSpy.mock.calls.flat(),
+    ]
+      .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))
+      .join('\n');
+
+    expect(allOutput).toContain('connectivity degraded: network_down');
+    expect(allOutput).toContain('connectivity restored');
+    expect(allOutput).toContain('"event":"transport_degraded"');
+    expect(allOutput).toContain('"event":"transport_restored"');
+    expect(allOutput).not.toContain('PubNub');
+    expect(allOutput).not.toContain('PNNetworkDownCategory');
+    expect(allOutput).not.toContain('PNReconnectedCategory');
+    expect(allOutput).not.toContain('pubnub_');
+
+    logSpy.mockRestore();
+    infoSpy.mockRestore();
     stop();
   });
 });

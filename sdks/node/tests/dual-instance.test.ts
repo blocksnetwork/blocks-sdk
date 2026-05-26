@@ -239,7 +239,7 @@ describe('Single Active PubNub Instance', () => {
   });
 
   it('applies pamToken from SwitchEnvironment message to new control client', async () => {
-    process.env.BLOCKS_DEBUG_INTERNAL = '1';
+    process.env.BLOCKS_DEBUG_INTERNAL = 'diagnostics';
     try {
       const { startAgentInstance } = await import('../src/runtime/agent-instance.js');
 
@@ -269,14 +269,12 @@ describe('Single Active PubNub Instance', () => {
       const lastConfig = pnMock.mock.calls[pnMock.mock.calls.length - 1][0] as Record<string, string>;
       expect(lastConfig.subscribeKey).toBe('sub-c-nw');
 
-      // Two removeListener calls: the primary control listener (from
-      // switchEnvironment's local cleanup) AND the diagnostic listener
-      // (from untrackClient — important when opts.pubnub is externally
-      // supplied so the diag listener doesn't outlive the agent
-      // instance). The diag listener is gated behind BLOCKS_DEBUG_INTERNAL
-      // (see BLOCKS-373), so this test sets it to '1' to exercise the
-      // listener-cleanup path.
-      expect(controlClient.removeListener).toHaveBeenCalledTimes(2);
+      // Three removeListener calls during switchEnvironment cleanup:
+      // 1. the primary control listener (message/status handler)
+      // 2. the connectivity listener (always attached, watches PNNetworkDownCategory etc.)
+      // 3. the diagnostic listener (from untrackClient — gated behind BLOCKS_DEBUG_INTERNAL,
+      //    exercised here because BLOCKS_DEBUG_INTERNAL='diagnostics' is set above).
+      expect(controlClient.removeListener).toHaveBeenCalledTimes(3);
       expect(controlClient.unsubscribe).toHaveBeenCalledWith({
         channels: [`agent.${TEST_AGENT_ID_DUAL}.control`],
       });

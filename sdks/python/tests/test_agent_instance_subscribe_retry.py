@@ -162,13 +162,22 @@ def test_control_client_opts_into_unbounded_retry(monkeypatch):
 
 
 def test_control_client_wires_on_retry_callback(monkeypatch):
-    """The control-client call MUST pass an on_retry callable. Per-task
-    clients MUST NOT.
+    """The control-client call MUST pass an on_retry callable that emits
+    neutral, de-branded transport events through the SDK's structured
+    logger. Per-task clients MUST NOT wire on_retry.
     """
+    from blocks_network import agent_instance as ai
     from blocks_network.agent_instance import start_agent_instance
     from blocks_network.types import AgentInstanceOptions
 
     captured_calls = _bootstrap_construction_path(monkeypatch)
+
+    emitted: list[tuple[str, str, dict]] = []
+
+    def _spy(level, message, **kwargs):
+        emitted.append((level, message, kwargs))
+
+    monkeypatch.setattr(ai, "log_agent_instance_event", _spy)
 
     result = start_agent_instance(
         AgentInstanceOptions(
@@ -180,12 +189,37 @@ def test_control_client_wires_on_retry_callback(monkeypatch):
         control = _find_control_call(captured_calls)
         on_retry = control.get("on_retry")
         assert callable(on_retry)
-        # Driving the callback at each category must not raise (the
-        # callback logs through the SDK's structured logger; we don't
-        # pin the log shape here, only that the callable is well-formed).
+
+        # Snapshot the boot-time emissions so the retry-callback assertions
+        # only see what the on_retry dispatch produces.
+        emitted.clear()
+
         on_retry("retry", "reconnect interval increment at: 2026-05-07 14:38:15")
         on_retry("recovered", "reconnection manager stop due success time endpoint call: 2026-05-07 14:39:00")
         on_retry("failed", "Reconnection retry limit reached. Disconnecting.")
+
+        # Exactly three events, in order, with the neutral vocabulary.
+        levels_msgs_events = [
+            (lv, msg, kw.get("event")) for lv, msg, kw in emitted
+        ]
+        assert levels_msgs_events == [
+            ("warn",  "transport retrying",  "transport_retry"),
+            ("info",  "transport recovered", "transport_recovered"),
+            ("error", "transport failed",    "transport_failed"),
+        ], f"unexpected on_retry emissions: {emitted}"
+
+        # Negative pin: nothing PubNub/PAM-flavored leaks through this
+        # surface in *any* emitted entry — message strings, event slugs,
+        # or any other kwarg value. A regression that dual-emits a
+        # legacy pubnub_transport_* slug alongside the new transport_*
+        # slug would surface here.
+        for lv, msg, kw in emitted:
+            assert "pubnub" not in msg.lower(), msg
+            assert "PAM" not in msg, msg
+            for key, value in kw.items():
+                if isinstance(value, str):
+                    assert "pubnub" not in value.lower(), (key, value)
+                    assert "PAM" not in value, (key, value)
 
         per_task = _find_per_task_call(captured_calls)
         if per_task is not None:

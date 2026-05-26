@@ -19,7 +19,7 @@ Two scenarios:
    ``StreamClient`` constructed with token T7a. Drives a T7a-path error
    (T7a revocation mid-stream OR an agent-side PAM-denied channel) and
    asserts ``stream_object.on_error(spy)`` fires once with a
-   ``StreamError(category='PNAccessDeniedCategory', fatal=True, ...)``.
+   ``StreamError(category='access_denied', fatal=True, ...)``.
    Do NOT use T7c revocation here -- that targets the consumer-side
    ``StreamClient.on_error``. Do NOT use task cancellation either -- it's
    cooperative and not guaranteed to surface a ``StreamError``.
@@ -332,7 +332,7 @@ def test_stream_object_on_error_fires_for_t7a_revocation() -> None:
         assert len(captured) >= 1
         err = captured[0]
         assert isinstance(err, StreamError)
-        assert err.category == "PNAccessDeniedCategory"
+        assert err.category == "access_denied"
         assert err.fatal is True
 
         session.close()

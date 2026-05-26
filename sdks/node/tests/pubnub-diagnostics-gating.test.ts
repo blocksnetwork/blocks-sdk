@@ -1,7 +1,8 @@
 /**
  * BLOCKS-373 — the BLOCKS-129 connectivity-diagnostics subsystem must be
- * silent at default LOG_LEVEL and must restore its output when
- * BLOCKS_DEBUG_INTERNAL=1 (or LOG_LEVEL=debug) is set.
+ * silent by default and must restore its output when
+ * BLOCKS_DEBUG_INTERNAL=diagnostics is set. LOG_LEVEL=debug alone does NOT
+ * enable diagnostics.
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { startAgentInstance } from '../src/runtime/agent-instance.js';
@@ -124,13 +125,13 @@ describe('PubNub diagnostics gating (BLOCKS-373)', () => {
     });
 
     const output = collectAllOutput();
-    expect(output).not.toContain('pubnub_diagnostics_armed');
-    expect(output).not.toContain('pubnub_status_transition');
-    expect(output).not.toContain('pubnub_alive_snapshot');
+    expect(output).not.toContain('transport_diagnostics_armed');
+    expect(output).not.toContain('transport_status_transition');
+    expect(output).not.toContain('transport_alive_snapshot');
   });
 
-  it('emits pubnub_diagnostics_armed at startup when BLOCKS_DEBUG_INTERNAL=1', async () => {
-    process.env.BLOCKS_DEBUG_INTERNAL = '1';
+  it('emits transport_diagnostics_armed at startup when BLOCKS_DEBUG_INTERNAL=diagnostics', async () => {
+    process.env.BLOCKS_DEBUG_INTERNAL = 'diagnostics';
     process.env.LOG_LEVEL = 'info';
 
     const pn = makeFakePubNub();
@@ -141,10 +142,10 @@ describe('PubNub diagnostics gating (BLOCKS-373)', () => {
       card: makeTestCard({ agentName: 'gating_debug_flag' }),
     });
 
-    expect(collectAllOutput()).toContain('pubnub_diagnostics_armed');
+    expect(collectAllOutput()).toContain('transport_diagnostics_armed');
   });
 
-  it('emits pubnub_diagnostics_armed at startup when LOG_LEVEL=debug (no flag needed)', async () => {
+  it('does NOT emit diagnostics when LOG_LEVEL=debug but BLOCKS_DEBUG_INTERNAL is unset', async () => {
     delete process.env.BLOCKS_DEBUG_INTERNAL;
     process.env.LOG_LEVEL = 'debug';
 
@@ -156,10 +157,10 @@ describe('PubNub diagnostics gating (BLOCKS-373)', () => {
       card: makeTestCard({ agentName: 'gating_debug_level' }),
     });
 
-    expect(collectAllOutput()).toContain('pubnub_diagnostics_armed');
+    expect(collectAllOutput()).not.toContain('transport_diagnostics_armed');
   });
 
-  it('does not attach any diag listener to the injected PubNub when gated off', async () => {
+  it('attaches only main + connectivity listeners (no diag listener) when gated off', async () => {
     delete process.env.BLOCKS_DEBUG_INTERNAL;
     process.env.LOG_LEVEL = 'info';
 
@@ -171,12 +172,14 @@ describe('PubNub diagnostics gating (BLOCKS-373)', () => {
       card: makeTestCard({ agentName: 'gating_listener_count' }),
     });
 
-    // Only the main listener (status/message handler) should be attached.
-    expect(pn.__listeners.length).toBe(1);
+    // Two listeners: the main (status/message) handler and the connectivity
+    // listener (always attached, watches PNNetworkDownCategory etc.).
+    // No diag listener when BLOCKS_DEBUG_INTERNAL is unset.
+    expect(pn.__listeners.length).toBe(2);
   });
 
-  it('attaches both main + diag listeners when gated on', async () => {
-    process.env.BLOCKS_DEBUG_INTERNAL = '1';
+  it('attaches main + connectivity + diag listeners when gated on', async () => {
+    process.env.BLOCKS_DEBUG_INTERNAL = 'diagnostics';
     process.env.LOG_LEVEL = 'info';
 
     const pn = makeFakePubNub();
@@ -187,7 +190,9 @@ describe('PubNub diagnostics gating (BLOCKS-373)', () => {
       card: makeTestCard({ agentName: 'gating_listener_count_on' }),
     });
 
-    expect(pn.__listeners.length).toBe(2);
+    // Three listeners: main (status/message) handler + connectivity listener
+    // (always attached) + diag listener (from trackClient, gated on).
+    expect(pn.__listeners.length).toBe(3);
   });
 
   it('stop() emits no PubNub vocabulary at default LOG_LEVEL', async () => {
@@ -211,7 +216,7 @@ describe('PubNub diagnostics gating (BLOCKS-373)', () => {
     instance = undefined;
 
     const output = collectAllOutput();
-    expect(output).not.toContain('pubnub_status_transition');
+    expect(output).not.toContain('transport_status_transition');
     expect(output).not.toContain('PNConnectedCategory');
   });
 });

@@ -16,15 +16,16 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { invertDirection, type StreamDescriptor } from '../src/stream/descriptor.js';
 import { StreamClient, _resetUuidCounter } from '../src/stream/stream-client.js';
 
-// Track publish calls for wire-format assertions
+// Track publish and filter calls for wire-format and filter assertions
 const mockPublish = vi.fn().mockResolvedValue({ timetoken: '17000000000000000' });
+const mockSetFilterExpression = vi.fn();
 
 // Mock PubNub to avoid real connections
 vi.mock('pubnub', () => {
   return {
     default: vi.fn().mockImplementation(() => ({
       setToken: vi.fn(),
-      setFilterExpression: vi.fn(),
+      setFilterExpression: mockSetFilterExpression,
       addListener: vi.fn(),
       removeListener: vi.fn(),
       subscribe: vi.fn(),
@@ -61,6 +62,7 @@ describe('StreamClient.fromDescriptor', () => {
     vi.useFakeTimers();
     _resetUuidCounter();
     mockPublish.mockClear();
+    mockSetFilterExpression.mockClear();
   });
 
   afterEach(() => {
@@ -344,5 +346,110 @@ describe('StreamClient.fromDescriptor', () => {
     // Bytes format accepts raw strings (would throw if events)
     client.write('text data');
     expect(client.isActive).toBe(true);
+  });
+});
+
+describe('StreamClient.fromDescriptor UUID identity', () => {
+  beforeEach(() => {
+    _resetUuidCounter();
+    mockPublish.mockClear();
+    mockSetFilterExpression.mockClear();
+  });
+
+  const descriptor: StreamDescriptor = {
+    taskId: 'task-123',
+    streamId: 'test-stream',
+    agentName: 'weather',
+    channel: 'stream.weather.test-stream',
+    token: 'T7c-token',
+    agentDirection: 'outbound',
+    localDirection: 'inbound',
+    format: 'bytes',
+    affinity: 'dedicated',
+  };
+
+  it('uses consumerUserId as UUID prefix when supplied', () => {
+    _resetUuidCounter();
+    const client = StreamClient.fromDescriptor(descriptor, {
+      subscribeKey: 'sub-key',
+      publishKey: 'pub-key',
+      consumerUserId: 'usr_abc',
+    });
+    expect(client.uuid).toMatch(/^usr_abc-stream-/);
+  });
+
+  it('falls back to descriptor.agentName when consumerUserId is absent', () => {
+    _resetUuidCounter();
+    const client = StreamClient.fromDescriptor(descriptor, {
+      subscribeKey: 'sub-key',
+      publishKey: 'pub-key',
+    });
+    expect(client.uuid).toMatch(/^weather-stream-/);
+  });
+
+  it('produces different UUIDs when counter slots collide but prefixes differ', () => {
+    _resetUuidCounter();
+    const provider = StreamClient.fromDescriptor(descriptor, {
+      subscribeKey: 'sub-key',
+      publishKey: 'pub-key',
+    }); // → weather-stream-0001
+    _resetUuidCounter();
+    const consumer = StreamClient.fromDescriptor(descriptor, {
+      subscribeKey: 'sub-key',
+      publishKey: 'pub-key',
+      consumerUserId: 'usr_abc',
+    }); // → usr_abc-stream-0001
+    expect(provider.uuid).not.toBe(consumer.uuid);
+  });
+
+  it('bidi filter uses consumerUserId-derived UUID', () => {
+    _resetUuidCounter();
+    const bidiDescriptor: StreamDescriptor = {
+      ...descriptor,
+      agentDirection: 'bidirectional',
+      localDirection: 'bidirectional',
+      format: 'events',
+    };
+    StreamClient.fromDescriptor(bidiDescriptor, {
+      subscribeKey: 'sub-key',
+      publishKey: 'pub-key',
+      consumerUserId: 'usr_abc',
+    });
+    expect(mockSetFilterExpression).toHaveBeenCalledWith(
+      expect.stringContaining('usr_abc-stream-'),
+    );
+  });
+
+  it('filter expressions accept cross-side messages after fix', () => {
+    _resetUuidCounter();
+    const providerClient = new StreamClient({
+      subscribeKey: 'sub-key',
+      publishKey: 'pub-key',
+      token: 'T7c-token',
+      agentName: 'weather',
+      streamId: 'test-stream',
+      direction: 'bidirectional',
+      format: 'events',
+    });
+    // providerClient.uuid === 'weather-stream-0001'
+
+    _resetUuidCounter();
+    const consumerClient = StreamClient.fromDescriptor(descriptor, {
+      subscribeKey: 'sub-key',
+      publishKey: 'pub-key',
+      consumerUserId: 'usr_abc',
+    });
+    // consumerClient.uuid === 'usr_abc-stream-0001'
+
+    const providerFilter = `meta.sender != '${providerClient.uuid}'`;
+    const consumerFilter = `meta.sender != '${consumerClient.uuid}'`;
+
+    // Each side's filter accepts the other side's messages
+    expect(providerFilter).not.toContain(consumerClient.uuid);
+    expect(consumerFilter).not.toContain(providerClient.uuid);
+
+    // Each side's filter still rejects its own messages (self-echo)
+    expect(providerFilter).toContain(providerClient.uuid);
+    expect(consumerFilter).toContain(consumerClient.uuid);
   });
 });
