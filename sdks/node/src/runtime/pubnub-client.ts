@@ -1,4 +1,5 @@
 import PubNub from 'pubnub';
+import { createLogger, isDebugSubsystemEnabled } from './logger.js';
 
 export interface PubNubClientConfig {
   subscribeKey: string;
@@ -30,17 +31,6 @@ export interface PubNubClientConfig {
    * §Cross-SDK retry-budget defaults for the contract.
    */
   subscribeRetryUnbounded?: boolean;
-  /**
-   * BLOCKS-129 Phase 2B: surfaces the SDK's transport-layer retry
-   * activity during a network outage. PubNub's middleware logs
-   * `'HTTP request retry #N in Nms.'` at warn level whenever the
-   * transport schedules a retry; with subscribeRetryUnbounded on these
-   * fire continuously through an outage but never bubble up to the
-   * Event Engine listener. Wiring this callback turns those warnings
-   * into a visible signal so a human watching the log can tell the
-   * difference between "agent retrying" and "agent dead".
-   */
-  onRetry?: (message: string) => void;
 }
 
 // 30 days at the 60s exponential-backoff cap = 43_200 retries. PubNub's
@@ -90,37 +80,90 @@ const buildUnboundedRetryPolicy = () => {
   return policy;
 };
 
-// Resolve PubNub.LogLevel.Warn defensively. In production it's always 3.
-// In unit tests with a mocked pubnub module the static may be absent —
-// we fall back to the literal value matching the real enum so the test
-// path doesn't crash.
-const getPubNubLogLevelWarn = (): number => {
-  const enumLike = (PubNub as unknown as { LogLevel?: { Warn?: number } }).LogLevel;
-  return typeof enumLike?.Warn === 'number' ? enumLike.Warn : 3;
+// PubNub's LogLevel enum: Trace=0, Debug=1, Info=2, Warn=3, Error=4, None=5.
+// The numeric values are stable across PubNub JS SDK versions; we keep
+// defensive fallbacks here in case the enum export disappears or shifts
+// (unit tests mock the pubnub module with a bare constructor stub).
+const _pnLogLevel = (key: 'Trace' | 'None' | 'Warn', fallback: number): number => {
+  const enumLike = (PubNub as unknown as { LogLevel?: Record<string, number> }).LogLevel;
+  return typeof enumLike?.[key] === 'number' ? enumLike[key] : fallback;
 };
 
-// PubNub LogMessage shape we care about. We only forward warn-level
-// transport-retry messages; everything else is a no-op so the SDK's
-// chatty internal logs don't bleed into the agent timeline.
+/** Exported for tests. Resolves eagerly so the value can be compared with `toBe`. */
+export const _PUBNUB_LOG_LEVEL_TRACE = _pnLogLevel('Trace', 0);
+/** Exported for tests. */
+export const _PUBNUB_LOG_LEVEL_NONE = _pnLogLevel('None', 5);
+
+// PubNub LogMessage shape used by the forwarder logger.
 interface PubNubLogMessage {
   location?: string;
   messageType?: string;
   message?: unknown;
 }
 
-const buildRetryLogger = (onRetry: (message: string) => void) => ({
+const transportLogger = createLogger('Transport');
+
+const toMessageString = (raw: unknown): string => {
+  if (typeof raw === 'string') return raw;
+  try {
+    return JSON.stringify(raw);
+  } catch {
+    return String(raw);
+  }
+};
+
+/**
+ * Forwarder logger that routes every underlying-transport log entry
+ * through the Blocks log() helper at the matching level (trace/debug ->
+ * debug, info -> info, warn -> warn, error -> error). Used when
+ * BLOCKS_DEBUG_INTERNAL=forward_transport is enabled. The Blocks logger
+ * then filters via LOG_LEVEL.
+ */
+const buildPubNubForwarder = () => ({
+  trace: (entry: PubNubLogMessage) =>
+    transportLogger('debug', toMessageString(entry.message), { location: entry.location }),
+  debug: (entry: PubNubLogMessage) =>
+    transportLogger('debug', toMessageString(entry.message), { location: entry.location }),
+  info: (entry: PubNubLogMessage) =>
+    transportLogger('info', toMessageString(entry.message), { location: entry.location }),
+  warn: (entry: PubNubLogMessage) =>
+    transportLogger('warn', toMessageString(entry.message), { location: entry.location }),
+  error: (entry: PubNubLogMessage) =>
+    transportLogger('error', toMessageString(entry.message), { location: entry.location }),
+});
+
+/** Silent logger — replaces the transport's default console logger so
+ * nothing leaks to stderr when forward_transport is off.
+ * Belt-and-suspenders alongside logLevel=None. */
+const buildSilentLogger = () => ({
   trace: () => {},
   debug: () => {},
   info: () => {},
+  warn: () => {},
   error: () => {},
-  warn: (entry: PubNubLogMessage) => {
-    if (entry.location !== 'PubNubMiddleware') return;
-    if (entry.messageType !== 'text') return;
-    if (typeof entry.message !== 'string') return;
-    if (!entry.message.includes('HTTP request retry')) return;
-    onRetry(entry.message);
-  },
 });
+
+/**
+ * Returns the { logLevel, loggers } pair to spread into every
+ * realtime-client construction site. Forwarding the underlying transport's
+ * own log output requires an explicit BLOCKS_DEBUG_INTERNAL=forward_transport;
+ * LOG_LEVEL=debug alone does not enable it.
+ */
+export function buildPubNubLogConfig(): {
+  logLevel: number;
+  loggers: ReturnType<typeof buildPubNubForwarder>[];
+} {
+  if (isDebugSubsystemEnabled('forward_transport')) {
+    return {
+      logLevel: _PUBNUB_LOG_LEVEL_TRACE,
+      loggers: [buildPubNubForwarder()],
+    };
+  }
+  return {
+    logLevel: _PUBNUB_LOG_LEVEL_NONE,
+    loggers: [buildSilentLogger()],
+  };
+}
 
 export const createPubNubClient = (config: PubNubClientConfig) => {
   if (!config.subscribeKey || !config.publishKey) {
@@ -129,7 +172,7 @@ export const createPubNubClient = (config: PubNubClientConfig) => {
   // Default true; see JSDoc on `subscribeRetryUnbounded` for the contract.
   const unbounded = config.subscribeRetryUnbounded ?? true;
   const retryPolicy = unbounded ? buildUnboundedRetryPolicy() : null;
-  const retryLogger = config.onRetry ? buildRetryLogger(config.onRetry) : null;
+  const { logLevel, loggers } = buildPubNubLogConfig();
   return new PubNub({
     publishKey: config.publishKey,
     subscribeKey: config.subscribeKey,
@@ -145,17 +188,7 @@ export const createPubNubClient = (config: PubNubClientConfig) => {
             retryPolicy as unknown as ConstructorParameters<typeof PubNub>[0]['retryConfiguration'],
         }
       : {}),
-    // PubNub only invokes user-supplied loggers when its own LoggerManager
-    // is configured at the right level; warn covers the transport-retry
-    // signal we care about without flipping on the chatty info/debug fan.
-    // The level MUST be the numeric enum value (Warn=3); passing the
-    // string 'warn' fails the `logLevel < minLogLevel` numeric comparison
-    // and lets Trace/Debug through to the built-in ConsoleLogger.
-    ...(retryLogger !== null
-      ? {
-          logLevel: getPubNubLogLevelWarn() as unknown as ConstructorParameters<typeof PubNub>[0]['logLevel'],
-          loggers: [retryLogger] as unknown as ConstructorParameters<typeof PubNub>[0]['loggers'],
-        }
-      : {}),
+    logLevel: logLevel as unknown as ConstructorParameters<typeof PubNub>[0]['logLevel'],
+    loggers: loggers as unknown as ConstructorParameters<typeof PubNub>[0]['loggers'],
   });
 };

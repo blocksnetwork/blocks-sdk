@@ -119,7 +119,7 @@ describe('stream-context', () => {
       expect(client.onError).toHaveBeenCalledWith(cb);
 
       const err: StreamError = {
-        category: 'PNAccessDeniedCategory',
+        category: 'access_denied',
         error: { message: 'denied' },
         channel: 'stream.echo.test',
         timestamp: Date.now(),

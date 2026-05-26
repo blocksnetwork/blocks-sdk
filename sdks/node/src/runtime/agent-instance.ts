@@ -27,10 +27,19 @@ import { DEFAULTS } from '../defaults.js';
 import { getEnv } from '../env.js';
 import {
   log as baseLog,
-  isInternalDebugEnabled,
+  isDebugSubsystemEnabled,
   _resolveLogLevel,
   _LOG_LEVEL_ORDER,
 } from './logger.js';
+import {
+  mapTransportCategory,
+  mapTransportOperation,
+  isAccessDeniedStatus,
+  DEGRADED_TRANSPORT_CATEGORIES,
+  RESTORED_TRANSPORT_CATEGORIES,
+  type TransportStatusPayload,
+  type TransportOperation,
+} from './transport-categories.js';
 import { uploadFile, type FileUploadAuth } from './file-upload.js';
 import { StaticAuthProvider } from './auth-provider.js';
 import { StreamRegistry } from './stream-registry.js';
@@ -272,7 +281,7 @@ const publishTaskEvent = async (
 /**
  * True when the diag entry is "parked" — past the staleness threshold
  * AND not currently in the connected state. A long-silent
- * PNConnectedCategory entry is healthy by definition: at LOG_LEVEL=info
+ * 'connected' entry is healthy by definition: at LOG_LEVEL=info
  * the SDK suppresses successful-heartbeat status events
  * (announceSuccessfulHeartbeats=false), so lastStatusAt does not
  * advance on a healthy idle client. Without the category gate, the
@@ -290,7 +299,7 @@ export function _isDiagEntryStale(args: {
 }): boolean {
   const { lastStatusAt, lastCategory, now, thresholdMs } = args;
   if (lastStatusAt === null) return false;
-  if (lastCategory === 'PNConnectedCategory') return false;
+  if (lastCategory === 'connected') return false;
   return now - lastStatusAt > thresholdMs;
 }
 
@@ -592,15 +601,15 @@ export const startAgentInstance = async (
   // from the registry above and fail loudly if it's missing.
   const effectiveBillingMode: 'free' | 'paid' = registryBillingMode ?? 'free';
 
-  // === Phase 1 connectivity diagnostics (gated) ===
+  // === Connectivity diagnostics (gated) ===
   //
   // BLOCKS-129 reconnect-investigation surface. Default OFF — set
-  // BLOCKS_DEBUG_INTERNAL=1 or LOG_LEVEL=debug to enable. When OFF every
-  // hook below is a no-op: no listener attached, no timer armed, no
-  // per-status emission, no pubnub_diagnostics_armed boot line. This
-  // keeps PubNub-internal vocabulary out of default-level production logs
-  // and removes the diag listener/timer overhead from the steady-state
-  // path. See BLOCKS-373.
+  // BLOCKS_DEBUG_INTERNAL=diagnostics to enable. When OFF every hook
+  // below is a no-op: no listener attached, no timer armed, no
+  // per-status emission, no transport_diagnostics_armed boot line. This
+  // keeps transport-internal vocabulary out of default-level production
+  // logs and removes the diag listener/timer overhead from the
+  // steady-state path. See BLOCKS-373.
   interface ClientDiag {
     label: string;
     pn: PubNub;
@@ -616,7 +625,7 @@ export const startAgentInstance = async (
     lastConnectedAt: number | null;
     lastMessageAt: number | null;
     lastCategory: string | null;
-    lastOperation: string | null;
+    lastOperation: TransportOperation | null;
     lastStatusCode: number | null;
   }
 
@@ -624,13 +633,47 @@ export const startAgentInstance = async (
   let diagAliveTimer: ReturnType<typeof setInterval> | null = null;
   const DIAG_SNAPSHOT_INTERVAL_MS = 10_000;
   const DIAG_STALE_THRESHOLD_MS = 60_000;
-  const diagEnabled = isInternalDebugEnabled();
+  const diagEnabled = isDebugSubsystemEnabled('diagnostics');
+
+  // Edge-triggered: emit `transport_degraded` only on the entry into the
+  // degraded set, and `transport_restored` only on the first non-degraded
+  // status after a degraded one. PubNub's Event Engine fires status events
+  // repeatedly during a sustained outage (per failed handshake / receive),
+  // so a stateless listener would spam warn lines and dilute the
+  // "agent retrying vs. dead" signal these events exist to provide.
+  const buildConnectivityListener = () => {
+    let degraded = false;
+    return {
+      status: (event: unknown) => {
+        const e = event as Record<string, unknown>;
+        const category = mapTransportCategory(e as TransportStatusPayload);
+        const isDegraded = DEGRADED_TRANSPORT_CATEGORIES.has(category);
+        if (isDegraded && !degraded) {
+          degraded = true;
+          log('warn', `connectivity degraded: ${category}`, {
+            event: 'transport_degraded',
+            category,
+            instanceId,
+          });
+        } else if (!isDegraded && degraded && RESTORED_TRANSPORT_CATEGORIES.has(category)) {
+          degraded = false;
+          log('info', 'connectivity restored', {
+            event: 'transport_restored',
+            category,
+            instanceId,
+          });
+        }
+      },
+    };
+  };
 
   const buildDiagListener = (entry: ClientDiag) => ({
     status: (event: unknown) => {
       const e = event as Record<string, unknown>;
-      const category = String(e.category ?? '');
-      const operation = String(e.operation ?? '');
+      const category = mapTransportCategory(e as TransportStatusPayload);
+      const operation = mapTransportOperation(
+        typeof e.operation === 'string' ? e.operation : undefined,
+      );
       const statusCode = typeof e.statusCode === 'number' ? e.statusCode : null;
       const now = Date.now();
       const previousCategory = entry.lastCategory;
@@ -638,10 +681,10 @@ export const startAgentInstance = async (
       entry.lastCategory = category;
       entry.lastOperation = operation;
       entry.lastStatusCode = statusCode;
-      if (category === 'PNConnectedCategory') entry.lastConnectedAt = now;
+      if (category === 'connected') entry.lastConnectedAt = now;
 
-      log('debug', 'pubnub status event', {
-        event: 'pubnub_status',
+      log('debug', 'transport status event', {
+        event: 'transport_status',
         client: entry.label,
         category,
         operation,
@@ -655,9 +698,9 @@ export const startAgentInstance = async (
       if (category && category !== previousCategory) {
         log(
           'info',
-          `pubnub status transition [${entry.label}]: ${previousCategory ?? '(none)'} -> ${category}`,
+          `transport status transition [${entry.label}]: ${previousCategory ?? '(none)'} -> ${category}`,
           {
-            event: 'pubnub_status_transition',
+            event: 'transport_status_transition',
             client: entry.label,
             from: previousCategory,
             to: category,
@@ -739,11 +782,11 @@ export const startAgentInstance = async (
           stale,
         };
       });
-      const meta = { event: 'pubnub_alive_snapshot', instanceId, clients: snapshots };
+      const meta = { event: 'transport_alive_snapshot', instanceId, clients: snapshots };
       if (anyStale) {
-        log('info', 'pubnub alive snapshot — STALE clients present', meta);
+        log('info', 'transport alive snapshot — STALE clients present', meta);
       } else {
-        log('debug', 'pubnub alive snapshot', meta);
+        log('debug', 'transport alive snapshot', meta);
       }
     }, DIAG_SNAPSHOT_INTERVAL_MS);
     if (typeof diagAliveTimer.unref === 'function') diagAliveTimer.unref();
@@ -766,13 +809,6 @@ export const startAgentInstance = async (
       presenceTimeout: 20,
       announceSuccessfulHeartbeats: _resolveLogLevel() >= _LOG_LEVEL_ORDER.debug,
       subscribeRetryUnbounded: true,
-      onRetry: (message) => {
-        log('warn', 'pubnub transport retrying', {
-          event: 'pubnub_transport_retry',
-          message,
-          instanceId,
-        });
-      },
     });
     ownsControlClient = true;
     if (token) controlClient.setToken(token);
@@ -1782,6 +1818,7 @@ export const startAgentInstance = async (
     // Remove listener and unsubscribe from current client
     try {
       previousControlClient.removeListener(listener);
+      previousControlClient.removeListener(connectivityListener);
       if (controlChannel) previousControlClient.unsubscribe({ channels: [controlChannel] });
     } catch {
       /* ignore */
@@ -1797,13 +1834,6 @@ export const startAgentInstance = async (
       presenceTimeout: 20,
       announceSuccessfulHeartbeats: _resolveLogLevel() >= _LOG_LEVEL_ORDER.debug,
       subscribeRetryUnbounded: true,
-      onRetry: (message) => {
-        log('warn', 'pubnub transport retrying', {
-          event: 'pubnub_transport_retry',
-          message,
-          instanceId,
-        });
-      },
     });
     ownsControlClient = true;
 
@@ -1822,7 +1852,9 @@ export const startAgentInstance = async (
 
     // Add listener and subscribe; diag listener is registered after the
     // primary listener so listeners[0] still points at the message handler.
+    connectivityListener = buildConnectivityListener();
     controlClient.addListener(listener);
+    controlClient.addListener(connectivityListener);
     trackClient('control', controlClient);
     if (controlChannel) controlClient.subscribe({ channels: [controlChannel] });
 
@@ -2123,33 +2155,35 @@ export const startAgentInstance = async (
     userMetadata?: Record<string, unknown>;
   }
 
-  const pamDeniedHandler = (() => {
+  const accessDeniedHandler = (() => {
     let handled = false;
     return (
-      category: string,
+      payload: TransportStatusPayload,
       operation?: string,
-      statusCode?: number | null,
     ): void => {
-      log('debug', 'pamDeniedHandler invoked', {
-        event: 'pam_handler_invoked',
+      const category = mapTransportCategory(payload);
+      const statusCode =
+        typeof payload.statusCode === 'number' ? payload.statusCode : null;
+      log('debug', 'access-denied handler invoked', {
+        event: 'access_denied_handler_invoked',
         category,
-        operation,
+        operation: mapTransportOperation(operation),
         statusCode,
         alreadyHandled: handled,
         instanceId,
       });
-      if (category === 'PNAccessDeniedCategory' && !handled) {
+      if (isAccessDeniedStatus(payload) && !handled) {
         handled = true;
-        log('error', 'PAM access denied — destroying control client (agent will go silent)', {
-          event: 'pam_denied_destroy',
+        log('error', 'access denied — destroying control client (agent will go silent)', {
+          event: 'access_denied_destroy',
           category,
-          operation,
+          operation: mapTransportOperation(operation),
           statusCode,
           instanceId,
           controlChannel,
         });
-        log('error', 'PAM token expired or revoked — agent is no longer receiving tasks. Re-register the agent to resume.', {
-          event: 'pam_denied_user_message',
+        log('error', 'access token expired or revoked — agent is no longer receiving tasks. Re-register the agent to resume.', {
+          event: 'access_denied_user_message',
           instanceId,
         });
         try {
@@ -2164,20 +2198,20 @@ export const startAgentInstance = async (
   // === Single Message Listener ===
   // Status transitions and per-event echoes are emitted by the diag
   // listener registered via trackClient(). This listener handles
-  // legacy human-friendly "connected" output and PAM-denied routing.
+  // legacy human-friendly "connected" output and access-denied routing.
+  let connectivityListener = buildConnectivityListener();
   const listener = {
     status: (event: unknown) => {
       const e = event as Record<string, unknown>;
       const category = String(e.category ?? '');
       const operation = String(e.operation ?? '');
-      const statusCode = typeof e.statusCode === 'number' ? e.statusCode : null;
       if (category === 'PNConnectedCategory') {
-        log('debug', 'pubnub control client connected', {
+        log('debug', 'control client connected', {
           event: 'control_connected',
           controlChannel,
         });
       }
-      pamDeniedHandler(category, operation, statusCode);
+      accessDeniedHandler(e, operation);
     },
     message: (event: MessageEvent): void => {
       const raw = event.message as Record<string, unknown> | undefined;
@@ -2210,12 +2244,13 @@ export const startAgentInstance = async (
   };
 
   controlClient.addListener(listener);
+  controlClient.addListener(connectivityListener);
   trackClient('control', controlClient);
 
   startDiagAliveTimer();
   if (diagEnabled) {
-    log('info', 'pubnub diagnostics armed', {
-      event: 'pubnub_diagnostics_armed',
+    log('info', 'transport diagnostics armed', {
+      event: 'transport_diagnostics_armed',
       snapshotIntervalMs: DIAG_SNAPSHOT_INTERVAL_MS,
       staleThresholdMs: DIAG_STALE_THRESHOLD_MS,
       instanceId,
@@ -2305,9 +2340,16 @@ export const startAgentInstance = async (
         }
       }
       diagRegistry.length = 0;
+      if (diagEnabled) {
+        log('info', 'transport diagnostics disarmed', {
+          event: 'transport_diagnostics_disarmed',
+          instanceId,
+        });
+      }
       consumerAuth?.destroy();
       consumerTaskClient.destroy();
       controlClient.removeListener(listener);
+      controlClient.removeListener(connectivityListener);
       if (controlChannel) controlClient.unsubscribe({ channels: [controlChannel] });
       if (ownsControlClient) {
         controlClient.destroy();

@@ -33,7 +33,7 @@ environment's interactive-question tool. Common names:
 - Other harnesses: any equivalent structured-question tool.
 
 If the only available question tool is multiple-choice (no free-text
-field), still ask the question — present 2–3 plausible options plus an
+field), still ask the question -- present 2-3 plausible options plus an
 "Other / let me type" option, and follow up with a plain-text reply if
 the user picks Other. **Never skip a question step just because the
 question tool is awkward.** If no question tool exists at all, ask in
@@ -43,45 +43,125 @@ proceeding.
 **Do not infer product decisions from environment cues.** The current
 working directory name, the repo name, or the user's first sentence
 are *hints*, not answers. The agent name and description are
-user-owned decisions and must be confirmed in Steps 1–2 even when a
+user-owned decisions and must be confirmed in Steps 1-2 even when a
 plausible default seems obvious. This is different from "don't make
-the user run shell commands" — Steps 1, 2, and the duplicate-name
+the user run shell commands" -- Steps 1, 2, and the duplicate-name
 prompt in Step 6 are the canonical exceptions to that rule.
+
+**No TTY available.** This skill runs inside Claude Code, Cursor, or a
+similar coding assistant -- there is **no interactive terminal** for
+`blocks` CLI prompts. Every `blocks ...` invocation in this skill
+MUST pass explicit non-interactive flags (`--yes`, `--language node`,
+`--write-env`, etc.). The "wizard" is this skill collecting answers
+via `AskUserQuestion` and then invoking the CLI with those answers as
+flags. Never assume the CLI can prompt the user.
 
 ## Step 0: Detect Intent
 
-Determine whether the user wants to **create a new agent** or
-**modify an existing agent**.
+Pick exactly one of three paths based on the user's request. Use
+trigger words from the user's prompt; **never** infer the path from
+the current working directory name, the repo name, or the first
+sentence topic alone.
 
-**Signals for modifying an existing agent:**
-- The user mentions an existing agent by name or refers to "my agent"
-- The user asks to change, update, fix, or add features to an agent
-- An `agent-card.json` exists in the current working directory or a
-  named subdirectory
-- The user provides a path to an existing agent project
+| Path | Triggers | Meaning |
+|---|---|---|
+| **A -- Build a new agent** | "build", "create", "new", "scaffold" | User has nothing yet. Run the full scaffold flow (Steps 1-10). |
+| **B -- Deploy an agent I've built** | "deploy", "connect", "register", "publish", "ship" | User has handler code and wants it on the network. May or may not have an `agent-card.json` yet. |
+| **C -- Modify an existing agent** | "change", "update", "fix", "edit", "modify", "add ... to my agent" | User has a working agent and wants to edit handler / IO schema before re-publishing. |
 
-**If modifying an existing agent:**
+**Detection priority:**
+
+1. If the user's prompt is minimal (see [Minimal entry prompts](#minimal-entry-prompts) below), use the trigger word in their prompt to pick the path. Do not scan the filesystem first.
+2. If the prompt is descriptive but the path is ambiguous, match the strongest trigger word.
+3. If still ambiguous, ask via `AskUserQuestion` with three options: **Build new** / **Deploy mine** / **Modify mine** (see [Asking the User Questions](#asking-the-user-questions)).
+4. Never infer the path from environment cues alone.
+
+### Minimal entry prompts
+
+The dashboard's Connect-Agent surface emits one of these short prompts
+verbatim. When the user's input is exactly or nearly one of them,
+start the wizard cleanly with `AskUserQuestion` and assume **nothing**
+about their environment beyond what they said:
+
+- Path A -- "Help me build an agent" / "Build an agent" / "Create a new agent"
+- Path B -- "Deploy my agent" / "Connect my agent" / "Register my agent"
+- Path C -- "Update my agent" / "Change my agent" / "Edit my agent"
+
+Do not scan the filesystem, do not infer from cwd, and do not assume
+the user has any code, card, or directory in place yet. Start at the
+appropriate path's first substep.
+
+### Path A -- Build a new agent
+
+Proceed to Step 1 and run the full flow (Steps 1-10) as written.
+
+### Path B -- Deploy an agent I've built
+
+The user already has handler code. Card may or may not exist. **Do
+not** assume they want to edit the handler -- production-grade
+providers want to publish as-is.
+
+1. **Locate the project directory.** If the cwd contains exactly one
+   `handler.ts` / `handler.py` (and optionally `agent-card.json`),
+   use cwd. Otherwise list candidate subdirectories (those with a
+   handler file) and ask the user to pick one (see
+   [Asking the User Questions](#asking-the-user-questions)). Never
+   pick based on directory name alone.
+2. **Detect the language.** `handler.ts` -> node. `handler.py` ->
+   python. If both, ask.
+3. **Check for `agent-card.json`:**
+   - **Card present:** Read it. Verify it has the required fields
+     listed in the [Agent Card Reference] minimal example
+     (`identity.{agentName, displayName, description, version,
+     provider.organization}`, `capabilities.taskKinds`, `skills[]`,
+     `runtime.{handler, maxRunningTimeSec}`). If anything required is
+     missing, treat as the "card missing" branch below.
+   - **Card missing:** Read the handler to infer input/output shape.
+     Run **Step 1** (ask agent name) and **Step 2** (confirm
+     description). Draft a minimal `agent-card.json` **in memory**
+     using the template in the [Agent Card Reference], with
+     `runtime.maxRunningTimeSec` chosen per the guidance in Step 5
+     and `io.inputs[]` / `io.outputs[]` populated from handler
+     inspection following [IO Schema Reference]. **Show the drafted
+     card to the user via `AskUserQuestion`** with options "Accept and
+     write to disk" / "Let me edit it first" before writing the file.
+     Production-grade providers must not be silently surprised by
+     auto-generated metadata.
+4. **Ask: deploy as-is, or make changes first?** Use
+   `AskUserQuestion` with "Deploy as-is" (default) and "Edit handler
+   or IO schema first".
+   - **As-is:** Skip Step 5 entirely. Run Step 3 (install/auth CLI),
+     then Step 6 (publish), Step 7 (validate), Step 8 (start), Step 9
+     (test), Step 10 (dashboard).
+   - **Changes first:** Run Step 5, then continue with Steps 6-10.
+5. Set `<your-agent-name>` to `identity.agentName` from the card
+   (NOT the directory basename). Ensure your working directory is the
+   **parent** of the project directory so `cd <your-agent-name> &&
+   ...` commands in later steps resolve correctly. If the directory
+   basename differs from `agent-card.json`'s `identity.agentName`,
+   prefer the agentName for CLI invocations and the actual directory
+   path for `cd`.
+
+### Path C -- Modify an existing agent
+
 1. Identify the agent directory. If ambiguous, list candidate
    directories (those containing `agent-card.json`) and ask the user
    to confirm which one (see [Asking the User Questions](#asking-the-user-questions)).
-2. Set `<name>` to the directory's basename (e.g. if the agent lives
-   at `/home/user/projects/weather_forecast_bot`, then `<name>` is
-   `weather_forecast_bot`). Ensure your working directory is the **parent**
-   of `<name>` so that all `cd <name> && ...` commands in later steps
-   resolve correctly.
+2. Set `<your-agent-name>` to the directory's basename. Ensure your
+   working directory is the **parent** of the project directory so
+   that `cd <your-agent-name> && ...` commands in later steps resolve
+   correctly.
 3. Read the existing `agent-card.json` and handler file (`handler.ts`
    or `handler.py`) to understand the current implementation.
 4. Skip directly to **Step 5** (Implement Handler and IO Schema) to
-   make the requested changes. Then continue with Steps 6–10 as
+   make the requested changes. Then continue with Steps 6-10 as
    normal (publish, validate, start, test, dashboard).
-
-**If creating a new agent**, proceed with Step 1 below.
 
 ## Step 1: Ask Name
 
 Ask the user for the agent name (see
 [Asking the User Questions](#asking-the-user-questions)). Skip **only
-if** the user has already given an explicit name in this conversation —
+if** the user has already given an explicit name in this conversation --
 a workspace/directory name or an inferred topic does **not** count. If
 unsure, ask. Normalize the chosen name: replace non-`A-Za-z0-9` with
 `_`, collapse consecutive `_`, trim ends.
@@ -95,7 +175,7 @@ descriptive, specific name (e.g. `weather_forecast_bot`,
 Propose a one-sentence description based on the name and ask the user
 to accept or customize it (see
 [Asking the User Questions](#asking-the-user-questions)). Do not skip
-this step — the description is shipped to the registry and is hard to
+this step -- the description is shipped to the registry and is hard to
 silently fix later.
 
 ## Step 3: Install & Authenticate CLI
@@ -131,8 +211,8 @@ If the user has not previously authenticated, run `blocks login
 --write-env` before proceeding to publish. The login stores credentials
 to `~/.config/blocks/credentials.json` (used by `blocks publish`) and
 writes `BLOCKS_API_KEY` to the project `.env` (read by `blocks run` at
-agent startup). The canonical sequence — `cd <name>`, `blocks login
---write-env`, `blocks publish` — is in Step 6; run login from inside the
+agent startup). The canonical sequence -- `cd <name>`, `blocks login
+--write-env`, `blocks publish` -- is in Step 6; run login from inside the
 scaffolded project directory so `--write-env` lands in the right `.env`.
 
 **Always pass an explicit `--write-env` or `--no-write-env` flag.** Bare
@@ -144,10 +224,14 @@ the project `.env`).
 
 ## Step 4: Scaffold
 
-Run from the **parent directory** -- do NOT mkdir first:
+(Path A only. Path B users skip to Step 5 or Step 6 depending on the
+"as-is or changes" answer; Path C users have already scaffolded.)
+
+Run from the **parent directory** -- do NOT `mkdir` first. Substitute
+the user-provided agent name for `<your-agent-name>`:
 
 ```bash
-blocks init <name> --yes --language node
+blocks init <your-agent-name> --yes --language node
 ```
 
 For Python agents, use `--language python` instead.
@@ -178,7 +262,7 @@ forms.
 |---|---|---|
 | **form-class** | `application/json`, `*/*+json` | `schema` and `example` **required**. `schema.type` must be `"object"` with a `properties` map. Each property uses `type` and `title`. |
 | **text-class** | `text/plain`, `text/markdown` | `schema`, `accept`, `maxSizeBytes` all **forbidden**. Renders as textarea. |
-| **file-class** | `image/png`, `application/pdf` | `schema` **forbidden**. Optional `accept` (array) and `maxSizeBytes` (1–26214400). |
+| **file-class** | `image/png`, `application/pdf` | `schema` **forbidden**. Optional `accept` (array) and `maxSizeBytes` (1-26214400). |
 
 **Defaults:** For form-class, put default values in
 `schema.properties[*].default`. For text-class, use the top-level
@@ -189,6 +273,12 @@ forms.
 
 #### Example: Single Text Input (scaffold default)
 
+> **Example only -- replace every string value before publishing.**
+> The literal text below (`"Input Text"`, the default string, the
+> `example` payload) is illustrative. Substitute values that match the
+> user's actual agent inputs and outputs. Do not paste this block
+> verbatim into a real `agent-card.json`.
+
 ```json
 "io": {
   "inputs": [
@@ -197,7 +287,7 @@ forms.
       "description": "Task input.",
       "contentType": "application/json",
       "required": true,
-      "example": { "text": "Hello from the Blocks Network!" },
+      "example": { "text": "<your example input here>" },
       "schema": {
         "type": "object",
         "required": ["text"],
@@ -205,7 +295,7 @@ forms.
           "text": {
             "type": "string",
             "title": "Input Text",
-            "default": "Hello from the Blocks Network!"
+            "default": "<your default input here>"
           }
         }
       }
@@ -223,6 +313,12 @@ forms.
 ```
 
 #### Example: Multi-Field Input
+
+> **Example only -- replace every string value before publishing.**
+> The literal text below (`"weather"`, `"Search Query"`, `"Max
+> Results"`, etc.) is illustrative. Substitute names and titles that
+> match the user's actual handler fields. Do not paste this block
+> verbatim into a real `agent-card.json`.
 
 ```json
 "io": {
@@ -265,9 +361,9 @@ integer (seconds) declares the maximum wall-clock time a single task
 invocation may run before the platform considers it timed out. Choose a
 value appropriate for the agent's workload:
 
-- Simple request/response: `30`–`60`
-- LLM-backed or multi-step: `120`–`300`
-- Long-running pipe tasks: `600`–`3600`
+- Simple request/response: `30`-`60`
+- LLM-backed or multi-step: `120`-`300`
+- Long-running pipe tasks: `600`-`3600`
 
 ```json
 "runtime": {
@@ -299,7 +395,7 @@ to improve discoverability, security, and operational behavior:
 | `services` | `webhooks` | Set `true` if the agent accepts webhook triggers |
 | `extensions` | *(any)* | Freeform metadata for custom integrations |
 
-Populate `skills[].examples` whenever possible — they power the
+Populate `skills[].examples` whenever possible -- they power the
 dashboard "Try it" UI and help consumers understand agent capabilities.
 
 If a handler creates a sub-task through `TaskClient` and registers
@@ -319,32 +415,38 @@ If the agent uses streaming, read the [Agent Card Reference]
 (streaming capabilities section) and the [Node Reference]
 (or [Python Reference]) before editing `agent-card.json` and the handler.
 
-> **Streaming I/O — read this before writing a handler that opens a stream.**
+> **Streaming I/O -- read this before writing a handler that opens a stream.**
 >
 > **Writing output (handler side):**
 > - Use `stream.write(data)` to send data to the consumer. Call `stream.end()` when done to flush and publish the `stream_end` marker.
 >
 > **Reading input (consumer/bidirectional side):**
-> - `format: "bytes"` → use `stream.bytes()` (Node yields `Uint8Array`, Python yields `bytes`). Do **not** iterate `stream.inbound` unless you are decoding base64 envelopes by hand.
-> - `format: "events"` → use `stream.events<T>()` in Node, `stream.events()` in Python (yields one event per yield; flattens producer-side batches). Do **not** iterate `stream.inbound` unless you specifically want batched envelopes.
+> - `format: "bytes"` -> use `stream.bytes()` (Node yields `Uint8Array`, Python yields `bytes`). Do **not** iterate `stream.inbound` unless you are decoding base64 envelopes by hand.
+> - `format: "events"` -> use `stream.events<T>()` in Node, `stream.events()` in Python (yields one event per yield; flattens producer-side batches). Do **not** iterate `stream.inbound` unless you specifically want batched envelopes.
 > - For piping into a file or subprocess: Node uses `await stream.readable()` (returns `node:stream.Readable`); Python uses `stream.as_file()` (returns `BufferedReader`).
-> - For stream-level errors (PAM revocation, network failures, fatal categories): subscribe via `stream.onError(cb)` (Node) / `stream.on_error(cb)` (Python). Append-only — register **before** the read path activates; past errors do not replay.
+> - For stream-level errors (PAM revocation, network failures, fatal categories): subscribe via `stream.onError(cb)` (Node) / `stream.on_error(cb)` (Python). Append-only -- register **before** the read path activates; past errors do not replay.
 > - `stream.inbound` is the low-level wire iterator. Its `.data` is an array of strings (bytes streams) or events (events streams), not a single decoded value. Reach for it only when you need raw envelope metadata (`seq`, `ts`, `encoding`).
 
 ## Step 6: Publish
 
-Always publish after editing `agent-card.json` or the handler, even if
-previously published. This pushes the latest metadata (IO schemas,
-streaming capabilities, description) to the registry.
+All three paths reach this step. Always publish:
 
-**Do NOT run `blocks publish` on the user's behalf.** Instead, instruct
-the user to run it themselves. `blocks publish` requires prior
-authentication via `blocks login`:
+- **Path A:** the agent has just been scaffolded and edited.
+- **Path B (as-is):** the agent's metadata may have never been pushed
+  to the registry; publishing is required even if no files changed in
+  this session.
+- **Path B (changes) / Path C:** publishing pushes the latest IO
+  schemas, streaming capabilities, and description.
 
-> Run these commands to authenticate and publish your agent:
+**Do NOT run `blocks publish` on the user's behalf.** Instead,
+instruct the user to run it themselves. `blocks publish` requires
+prior authentication via `blocks login`:
+
+> Run these commands to authenticate and publish your agent.
+> Substitute `<your-agent-name>` for the directory name:
 > ```bash
-> cd <name>
-> blocks login --write-env   # first time only — authenticate and write API key to .env
+> cd <your-agent-name>
+> blocks login --write-env   # first time only -- authenticate and write API key to .env
 > blocks publish
 > ```
 
@@ -358,7 +460,7 @@ directory if needed), then ask the user to re-run `blocks publish`.
 ## Step 7: Validate
 
 ```bash
-cd <name> && blocks check
+cd <your-agent-name> && blocks check
 ```
 
 ## Step 8: Start
@@ -366,10 +468,10 @@ cd <name> && blocks check
 Install dependencies if a package manifest is present:
 
 ```bash
-cd <name>
+cd <your-agent-name>
 [ -f package.json ] && npm install
 [ -f setup.py ] || [ -f setup.cfg ] || [ -f pyproject.toml ] && \
-  PIP_CONFIG_FILE=pip.conf pip install -e .
+  pip install -e . && pip install blocks-network --upgrade
 cd ..
 ```
 
@@ -378,19 +480,19 @@ the user to start the agent themselves:
 
 > Run this command to start your agent:
 > ```bash
-> cd <name> && blocks run
+> cd <your-agent-name> && blocks run
 > ```
 
 ## Step 9: Test
 
 ```bash
-cd <name> && npx tsx trigger.ts
+cd <your-agent-name> && npx tsx trigger.ts
 ```
 
 For Python agents:
 
 ```bash
-cd <name> && python trigger.py
+cd <your-agent-name> && python trigger.py
 ```
 
 Report the result to the user.
@@ -403,12 +505,12 @@ or porting the same pattern into a separate codebase.
 ## Step 10: Dashboard
 
 ```bash
-cd <name> && blocks dashboard
+cd <your-agent-name> && blocks dashboard
 ```
 
 ## Consuming Agents (Trigger / Client Code)
 
-This section covers code that **calls** an agent — the scaffolded
+This section covers code that **calls** an agent -- the scaffolded
 `trigger.ts`, a backend script, or any app that drives Blocks agents.
 The full surface lives in [Node Reference] / [Python Reference]; the
 rules below are the ones a consumer must get right on the first try.
@@ -441,7 +543,7 @@ client.destroy();
   registered `billingMode`. Mismatch is rejected with
   `BillingModeMismatchError`.
 - Always `client.destroy()` (and `session.close()` / `await
-  session.asyncClose()`) when finished — they unsubscribe transports.
+  session.asyncClose()`) when finished -- they unsubscribe transports.
 
 ### Task Kinds
 
@@ -485,13 +587,13 @@ requestParts: [
 ]
 ```
 
-- The second arg to `textPart` is the **`partId`** — it must match a
+- The second arg to `textPart` is the **`partId`** -- it must match a
   property the agent's `io.inputs[].schema` declares (e.g. `'request'`
   for the scaffold default). It is not free-form text.
 - For form-class inputs (`application/json`), the text payload is
   conventionally a JSON-stringified object whose keys match
   `schema.properties`.
-- `filePart()` accepts `Uint8Array | ArrayBuffer | Blob | File` —
+- `filePart()` accepts `Uint8Array | ArrayBuffer | Blob | File` --
   browser callers can pass a `File` straight through. `partId` is
   required on file parts.
 
@@ -537,7 +639,7 @@ for await (const chunk of stream.bytes()) { /* Uint8Array */ }
 > metadata (`seq`, `ts`, `encoding`).
 
 `ref.descriptor.declaredStream` matches the key in the agent card's
-`streams` block — use it to route when an agent declares multiple
+`streams` block -- use it to route when an agent declares multiple
 streams. `ref.open()` throws `StreamUnavailableError` if the session
 is already terminal (live-only data is gone; artifacts persist).
 
@@ -547,7 +649,7 @@ is already terminal (live-only data is gone; artifacts persist).
 |---|---|
 | `BillingModeMismatchError` on `sendMessage` | `TaskClient.create({ billingMode })` does not match the agent's registered billingMode. |
 | Pipe task rejected at `sendMessage` | Missing `duration`, `duration` not an integer in `[1, 43200]` (minutes), or `duration` set on a non-pipe task. |
-| `agentName` rejected | Must match `^[a-zA-Z0-9_]+$` — underscores only, no hyphens. |
+| `agentName` rejected | Must match `^[a-zA-Z0-9_]+$` -- underscores only, no hyphens. |
 | Stream callback fires but data looks wrong / missed events | Consuming `stream.inbound` instead of `stream.events()` / `stream.bytes()`. |
 | `StreamUnavailableError` on `ref.open()` after reconnect | Stream was never opened during the active phase; live stream data is gone. Artifacts remain on the session. |
 | `"Streaming was not negotiated for this task."` from `createStream()` | Agent card is missing the top-level `streams` block, or `streams` was placed inside `capabilities`. Re-publish after fixing. |

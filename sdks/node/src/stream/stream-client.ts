@@ -9,10 +9,17 @@
  */
 
 import PubNub from 'pubnub';
+import { buildPubNubLogConfig } from '../runtime/pubnub-client.js';
 import { StreamBundle } from './stream-bundle.js';
 import { validateStreamId } from './validate.js';
 import { getEnv } from '../env.js';
 import { log as baseLog } from '../runtime/logger.js';
+import {
+  mapTransportCategory,
+  FATAL_TRANSPORT_CATEGORIES,
+  type TransportCategory,
+  type TransportStatusPayload,
+} from '../runtime/transport-categories.js';
 import { base64ToBytes, concatBytes, utf8Decode, utf8Encode } from './bytes.js';
 import type { StreamDescriptor } from './descriptor.js';
 import type {
@@ -67,21 +74,14 @@ function parseBoolean(s: string): boolean {
 const MULTIPART_TTL_MS = 30_000;      // 30 seconds
 const MULTIPART_MAX_GROUPS = 64;       // max buffered incomplete groups
 
-// Fatal category allowlist — PubNub status categories that should
-// force-terminate the stream because the PAM grant is gone and won't
-// come back. Non-fatal error categories (network, timeout, etc.) fire
-// onError but leave the stream running so PubNub's retry machinery can
-// recover. Intentionally small and explicit; expand only with plan
-// justification.
-export const FATAL_STREAM_ERROR_CATEGORIES: ReadonlySet<string> = new Set([
-  'PNAccessDeniedCategory',  // PAM revocation / token denied
-  'PNBadRequestCategory',    // auth config / malformed grant
-]);
+// Re-export so consumers can branch on the canonical set without
+// importing the shared module directly. Source of truth lives in
+// runtime/transport-categories.ts.
+export { FATAL_TRANSPORT_CATEGORIES } from '../runtime/transport-categories.js';
 
 /**
- * Compatibility helper that detects a PubNub status error across the two
- * shapes the pinned `pubnub@10.2.x` JS SDK exposes on the subscribe
- * listener:
+ * Detect a transport status payload that represents an error. The
+ * pinned realtime SDK exposes two shapes on the subscribe listener:
  *
  * - `Status` — has a required `error: boolean` and `statusCode: number`.
  * - `StatusEvent` — has an optional polymorphic
@@ -91,45 +91,44 @@ export const FATAL_STREAM_ERROR_CATEGORIES: ReadonlySet<string> = new Set([
  * Priority:
  *   1. Truthy `status.error` (covers `true`, non-empty string, or
  *      category-name string surfaced by `StatusEvent`).
- *   2. Numeric `statusCode >= 400` (REST-style errors surfaced via
- *      `Status`).
- *   3. Fatal-category membership as a last resort when the payload is
- *      sparse (defensive; keeps PAM detection working even if neither of
- *      the above fields is populated by a future SDK minor release).
+ *   2. Numeric `statusCode >= 400` (REST-style errors).
+ *   3. Mapped-category membership in FATAL_TRANSPORT_CATEGORIES as a
+ *      last resort when the payload is sparse (defensive; keeps
+ *      access-denied detection working even if neither of the above
+ *      fields is populated by a future SDK minor release).
  *
  * Exported so classifier behavior can be unit-tested directly without
  * instantiating a full `StreamClient`.
  */
-export function isStreamStatusError(status: {
-  error?: unknown;
-  statusCode?: unknown;
-  category?: unknown;
-} | null | undefined): boolean {
+export function isStreamStatusError(status: TransportStatusPayload | null | undefined): boolean {
   if (!status) return false;
   if (status.error) return true;
   const statusCode = status.statusCode;
   if (typeof statusCode === 'number' && statusCode >= 400) return true;
-  const category = typeof status.category === 'string' ? status.category : '';
-  return category !== '' && FATAL_STREAM_ERROR_CATEGORIES.has(category);
+  if (typeof status.category !== 'string' || !status.category) return false;
+  // Membership-fallback: pass the full payload so wrappers unwrap.
+  return FATAL_TRANSPORT_CATEGORIES.has(mapTransportCategory(status));
 }
 
-/** True if this category is in the fatal allowlist. */
-export function isFatalStreamCategory(category: string | undefined | null): boolean {
-  return typeof category === 'string' && FATAL_STREAM_ERROR_CATEGORIES.has(category);
+/** True if this neutral category is in the fatal allowlist. */
+export function isFatalTransportCategory(
+  category: TransportCategory | undefined | null,
+): boolean {
+  return category !== undefined && category !== null
+    && FATAL_TRANSPORT_CATEGORIES.has(category);
 }
 
 /**
  * Typed error payload fired to `StreamClient.onError(...)` subscribers.
  *
- * Fires for every PubNub status event classified as an error by
+ * Fires for every transport status event classified as an error by
  * `isStreamStatusError`. Consumers branch on `fatal` for
- * must-terminate conditions (PAM revocation, bad grant) and on
- * `category` for finer-grained UX.
+ * must-terminate conditions and on `category` for finer-grained UX.
  */
 export interface StreamError {
-  /** PubNub status category (e.g., `PNAccessDeniedCategory`). */
-  category: string;
-  /** Raw PubNub error data (`errorData` or `error` payload if present). */
+  /** Neutral transport category (e.g., `'access_denied'`, `'timeout'`). */
+  category: TransportCategory;
+  /** Raw error data from the transport (`errorData` or `error` payload if present). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   error: any;
   /** The stream channel the error applies to. */
@@ -250,6 +249,7 @@ export class StreamClient {
       publishKey: options.publishKey,
       userId: this._uuid,
       enableEventEngine: true,
+      ...buildPubNubLogConfig(),
     });
     this.pubnub.setToken(options.token);
 
@@ -525,8 +525,8 @@ export class StreamClient {
   private handleStatusEvent(status: any): void {
     try {
       if (!isStreamStatusError(status)) return;
-      const category: string = typeof status?.category === 'string' ? status.category : '';
-      const fatal = isFatalStreamCategory(category);
+      const category = mapTransportCategory(status);
+      const fatal = isFatalTransportCategory(category);
       const rawError = status?.errorData ?? status?.error ?? null;
       const err: StreamError = {
         category,
@@ -535,7 +535,7 @@ export class StreamClient {
         timestamp: Date.now(),
         fatal,
       };
-      log('warn', `status error: category=${category} fatal=${fatal} channel=${this._channel}`, {
+      log('warn', `stream status error: category=${category} fatal=${fatal} channel=${this._channel}`, {
         event: 'stream_client_status_error',
         category,
         fatal,
@@ -545,7 +545,7 @@ export class StreamClient {
       this.fireError(err);
       if (fatal && this._isActive) {
         // Fire-and-forget: end() is async but we don't want to block
-        // the PubNub listener thread, and we must not throw. The consumer
+        // the transport listener thread, and we must not throw. The consumer
         // iterator exits via onInboundDone once end() completes.
         this.end().catch((e) => {
           log('error', 'forced end() after fatal error raised', {
@@ -555,7 +555,7 @@ export class StreamClient {
         });
       }
     } catch (e) {
-      log('error', 'status handler raised', {
+      log('error', 'stream status handler raised', {
         event: 'stream_client_status_handler_raised',
         error: e instanceof Error ? e.message : String(e),
       });
@@ -970,7 +970,7 @@ export class StreamClient {
       subscribeKey: options.subscribeKey,
       publishKey: options.publishKey,
       token: descriptor.token,
-      agentName: descriptor.agentName,
+      agentName: options.consumerUserId || descriptor.agentName,
       streamId: descriptor.streamId,
       channel: descriptor.channel,
       direction: descriptor.localDirection,

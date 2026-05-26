@@ -257,7 +257,7 @@ client.destroy();
 
 **sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
 
-**TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter); set to `'provider'` when the caller is the agent owner viewing a received task.
+**TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId`); set to `'provider'` when the caller is the agent owner viewing a received task. Provider-role access is scoped by the caller's active org (BLOCKS-454): the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org. Admins with an admin-typed active org get the cross-org bypass; when no active org is resolved at all (legacy callers), the server falls back to admin-bypass / non-admin membership check on the agent's org.
 
 **TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`. Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)`, `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)`. Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
 
@@ -269,7 +269,7 @@ client.destroy();
 
 **Stream consumer APIs:** `stream.bytes()` (decoded byte iterator, yields `Uint8Array`, browser-safe), `stream.events<T>()` (flattened event iterator, browser-safe), `stream.readable()` (Node Readable adapter, returns `Promise<Readable>` — **Node-only**, not for browser bundles). All iterators deliver messages in sequence order via the SDK's reorder buffer. `ref.open({ reorderTimeoutMs })` configures the gap timeout (default 750ms; 0 disables reordering).
 
-**Stream error surfaces:** `StreamClient.onError(cb: (err: StreamError) => void)` subscribes to per-stream PubNub status errors (PAM revocation, network failures, malformed payloads). `StreamError` is `{ category, error, channel, timestamp, fatal }`; on `fatal: true` the client auto-tears down and signals iterator completion, so handlers typically only react to non-fatal errors. Distinct from `TaskSession.onError` (which surfaces consumer-callback exceptions, not stream-level failures). `StreamUnavailableError` (exported from `@blocks-network/sdk`) is thrown synchronously by `StreamRef.open()` when the owning session is already terminal; it carries `.terminalState` and `.streamId` so callers can branch on `instanceof StreamUnavailableError`.
+**Stream error surfaces:** `StreamClient.onError(cb: (err: StreamError) => void)` subscribes to per-stream PubNub status errors (PAM revocation, network failures, malformed payloads). `StreamError` is `{ category, error, channel, timestamp, fatal }`; `category` is one of the neutral values `"connected"`, `"reconnected"`, `"network_down"`, `"network_issues"`, `"timeout"`, `"malformed_response"`, `"access_denied"`, `"bad_request"`, `"other"`. Fatal categories that force-terminate the stream are `"access_denied"` and `"bad_request"`; on `fatal: true` the client auto-tears down and signals iterator completion, so handlers typically only react to non-fatal errors. Distinct from `TaskSession.onError` (which surfaces consumer-callback exceptions, not stream-level failures). `StreamUnavailableError` (exported from `@blocks-network/sdk`) is thrown synchronously by `StreamRef.open()` when the owning session is already terminal; it carries `.terminalState` and `.streamId` so callers can branch on `instanceof StreamUnavailableError`.
 
 ---
 
@@ -281,6 +281,7 @@ Additional env vars read by the SDK:
 
 - `BLOCKS_CDM_URL` -- CDM config endpoint (defaults to production S3-hosted endpoint)
 - `LOG_LEVEL` -- error/warn/info/debug (default info)
+- `BLOCKS_DEBUG_INTERNAL` -- comma-separated debug subsystems (Node SDK only). Values: `diagnostics` (transport-status listener — connectivity transitions and alive snapshots), `forward_transport` (forward the underlying transport's own log output through the Blocks logger under `[Transport]`). Neither implied by `LOG_LEVEL=debug`. See `dev_docs/SDK_CONTRACT.md` §11.2 for the canonical contract.
 - `STREAM_BUNDLE_SIZE` -- stream flush byte threshold (default 4096)
 - `STREAM_MAX_LATENCY_MS` -- stream flush time threshold in ms (default 250)
 - `STREAM_MAX_MESSAGE_SIZE` -- max message size before multipart splitting (default 16384)
@@ -290,7 +291,7 @@ Additional env vars read by the SDK:
 
 ## Transport-Layer Resilience
 
-The agent's long-lived PubNub control client retries subscribe failures with an unbounded budget by default (~30 days at a 60s cap). Brief network outages — VPN reconnects, gateway flaps, transient ISP failures — no longer silently park the agent after the SDK's vanilla ~4-6 minute retry window exhausts. Each retry attempt is surfaced into the agent log as a structured `pubnub_transport_retry` event so a human watching can distinguish "agent retrying" from "agent dead." (The Python SDK additionally surfaces `pubnub_transport_recovered` and `pubnub_transport_failed` events; the Node SDK currently emits the `retry` event only — recovery is observable by the absence of further retry events.)
+The agent's long-lived PubNub control client retries subscribe failures with an unbounded budget by default (~30 days at a 60s cap). Brief network outages — VPN reconnects, gateway flaps, transient ISP failures — no longer silently park the agent after the underlying transport's vanilla ~4-6 minute retry window exhausts. The control client emits two **always-on** structured log events at the prevailing `LOG_LEVEL`: `transport_degraded` (warn-level) when the mapped neutral category enters `network_down` / `network_issues` / `timeout` / `malformed_response`, and `transport_restored` (info-level) on `reconnected`. These let an operator distinguish "agent retrying" from "agent dead" without opting into anything. Deeper signal — connectivity transitions and per-client alive snapshots — is surfaced as structured `transport_status_transition` and `transport_alive_snapshot` events when `BLOCKS_DEBUG_INTERNAL=diagnostics` is set (off at any `LOG_LEVEL` by default). To additionally see the underlying transport's own log lines, set `BLOCKS_DEBUG_INTERNAL=forward_transport` — those lines route through the Blocks logger under the `[Transport]` tag, filtered by `LOG_LEVEL`. (The Python SDK uses a different mechanism — see `python-reference.md`.)
 
 Per-task and per-stream PubNub clients keep the SDK's default short retry budget — a stuck task should fail fast rather than retry indefinitely. This split is enforced internally and not configurable from the handler.
 
@@ -451,8 +452,13 @@ const providerSession = await client.connect({
 
 - Requires JWT-based auth (`apiKey`, `tokenEndpoint`, or `tokenProvider`
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.
-- `role` defaults to `'consumer'` (task submitter). Set to `'provider'`
-  when the caller owns the agent that received the task.
+- `role` defaults to `'consumer'` (task submitter — server checks
+  `userId === task.ownerId`). Set to `'provider'` when the caller owns
+  the agent that received the task. Provider-role access is scoped by
+  the caller's active org (BLOCKS-454): the agent's org must match the
+  active org from the session `X-Active-Org` header or the credential's
+  org claim, AND the caller must be a current member of that org.
+  Admins with an admin-typed active org get the cross-org bypass.
 - Terminal tasks: preloads events/artifacts/streams from history, no live events
 - Active tasks: preloads history, then subscribes from cursor (no gap)
 

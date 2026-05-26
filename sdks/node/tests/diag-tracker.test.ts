@@ -15,11 +15,11 @@ describe('_isDiagEntryStale', () => {
     ).toBe(false);
   });
 
-  it('returns false when last category is PNConnectedCategory regardless of how long ago', () => {
+  it("returns false when last category is 'connected' regardless of how long ago", () => {
     expect(
       _isDiagEntryStale({
         lastStatusAt: 0,
-        lastCategory: 'PNConnectedCategory',
+        lastCategory: 'connected',
         now: 10 * 60 * 1000,
         thresholdMs: STALE_MS,
       }),
@@ -37,7 +37,7 @@ describe('_isDiagEntryStale', () => {
     ).toBe(false);
   });
 
-  it('returns true when past threshold AND last category is not PNConnectedCategory', () => {
+  it("returns true when past threshold AND last category is not 'connected'", () => {
     expect(
       _isDiagEntryStale({
         lastStatusAt: 1_000_000,

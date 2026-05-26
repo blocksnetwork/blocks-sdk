@@ -89,29 +89,25 @@ The agent card follows the A2A specification with a `runtime` extension:
 Note: `identity.agentName` must use only alphanumeric characters and
 underscores (no hyphens). The pattern is `^[a-zA-Z0-9_]+$`.
 
-## PubNub Subscribe Strategy
+## Subscribe Strategy
 
-The Node SDK uses PubNub Event Engine (`enableEventEngine: true`) on all
-subscribing PubNub clients (control client, per-task client, and per-stream
-client). Event Engine replaces the legacy subscribe manager with a
-deterministic state machine for subscribe, reconnect, and retry. The SDK
-does not set `autoNetworkDetection` or `restore` (both are browser-only
-settings).
+The SDK keeps the control client subscribed for the agent's lifetime
+and configures the underlying realtime transport to retry indefinitely
+on transient failures. The agent therefore resumes within seconds of a
+network outage ending without any manual intervention.
 
-**Control client** (long-lived, drives agent online presence) is
-constructed with `subscribeRetryUnbounded: true`, which configures an
-`ExponentialRetryPolicy` with `maximumRetry: 43_200` (~30 days at the
-60s cap). This prevents the Event Engine from parking in
-`RECEIVE_FAILED`/`HEARTBEAT_FAILED` after the default 6-attempt budget
-is exhausted, so the agent automatically resumes within seconds of a
-network outage ending. Transport-level retry activity is forwarded to
-the SDK log via the `onRetry` hook, surfacing as
-`event: 'pubnub_transport_retry'` warn lines so the agent's log stays
-active during outages instead of going silent.
+Connectivity-state changes are surfaced through the SDK log:
 
-**Per-task and per-stream clients** keep PubNub's default 6-attempt
-retry budget. They are short-lived; a stuck task should fail cleanly
-rather than loop forever.
+- `event: 'transport_degraded'` (warn) — emitted when the transport
+  reports network down, network issues, timeout, or a malformed
+  response. The log line reads `connectivity degraded: <category>`,
+  where `<category>` is one of `network_down`, `network_issues`,
+  `timeout`, `malformed_response`.
+- `event: 'transport_restored'` (info) — emitted on reconnection.
+
+Per-task and per-stream clients keep the default short retry budget.
+They are short-lived; a stuck task should fail cleanly rather than
+loop forever.
 
 ## API
 
@@ -128,9 +124,19 @@ Go CLI's `blocks login` command writes the API key to `.env` when
 invoked with `--write-env` (or by answering "y" to its interactive
 prompt).
 
-PAM tokens for PubNub channel access are managed by the SDK at runtime
+Access tokens for realtime channel access are managed by the SDK at runtime
 (granted at registration, refreshed per-task on the control channel).
-No CLI involvement is needed for PAM.
+No CLI involvement is needed for token management.
+
+### Logging
+
+The SDK respects two log-related environment variables:
+
+- `LOG_LEVEL` (default: `info`) — `error` | `warn` | `info` | `debug`. Threshold for the SDK's own log lines (`[AgentInstance]`, `[Transport]`).
+- `BLOCKS_DEBUG_INTERNAL` (default: unset) — comma-separated list of subsystems to enable. Neither subsystem is implied by `LOG_LEVEL=debug`.
+  - `diagnostics` — Blocks-authored transport-connectivity diagnostics (connection-state transitions, alive snapshots).
+  - `forward_transport` — routes the underlying transport's own log output through the Blocks logger with a `[Transport]` prefix, filtered by `LOG_LEVEL`. Off by default because the forwarded messages reference internal SDK config concepts that aren't meaningful to a Blocks developer. **Security note:** forwarded entries may include constructed transport URLs whose query strings carry the access-token (`auth=…`) or request-signature (`signature=…`) parameters. Do not enable in environments that ship logs to less-trusted sinks (third-party log shippers, public Sentry projects, support-ticket attachments).
+  - Example: `BLOCKS_DEBUG_INTERNAL=diagnostics,forward_transport`
 
 ## Examples
 
@@ -387,7 +393,7 @@ extends `Uint8Array`.
 
 ### Stream Consumer APIs
 
-All consumer iterators (`bytes()`, `events()`, `readable()`, `inbound`) deliver messages in sequence order. The SDK's reorder buffer transparently corrects out-of-order PubNub delivery and drops duplicate messages. To customize or disable reordering, pass `reorderTimeoutMs` to `open()`:
+All consumer iterators (`bytes()`, `events()`, `readable()`, `inbound`) deliver messages in sequence order. The SDK's reorder buffer transparently corrects out-of-order delivery and drops duplicate messages. To customize or disable reordering, pass `reorderTimeoutMs` to `open()`:
 
 ```typescript
 // Default: reorder buffer with 750ms gap timeout
@@ -427,10 +433,10 @@ readable.pipe(createWriteStream('./output.bin'));
 ### Handling Stream Errors
 
 Every `StreamClient` exposes an `onError(cb)` registration method.
-The callback fires whenever the stream's PubNub subscribe loop
-surfaces an error-category status event: PAM revocation, network
-issues, timeouts, or any other category the PubNub SDK marks as an
-error. The payload is a typed `StreamError`:
+The callback fires whenever the stream's subscribe loop surfaces an
+error-category status event: access revocation, network issues,
+timeouts, or any other transport error category. The payload is a
+typed `StreamError`:
 
 ```typescript
 import type { StreamError } from '@blocks-network/sdk/stream';
@@ -450,14 +456,15 @@ the stream so `for await` / `for msg in ...` loops exit cleanly
 instead of hanging waiting for a `stream_end` that will never
 arrive:
 
-- `PNAccessDeniedCategory` — PAM revocation (admin-terminate,
+- `access_denied` — access grant revoked (admin-terminate or
   token denied). This is the signal that the server-side grant is
-  gone even if the cached T7c's `exp` claim has not elapsed.
-- `PNBadRequestCategory` — auth configuration or malformed grant.
+  gone even if the cached token's `exp` claim has not elapsed.
+- `bad_request` — auth configuration or malformed grant.
 
-All other error categories (network transients, timeouts, etc.)
-fire `onError` with `fatal: false` and leave the stream running so
-PubNub's built-in retry machinery can recover.
+All other error categories (`network_down`, `network_issues`,
+`timeout`, `malformed_response`, `other`) fire `onError` with
+`fatal: false` and leave the stream running so the transport's
+built-in retry machinery can recover.
 
 ### Opening Task Streams
 
@@ -519,8 +526,8 @@ The option is supported on both `sendMessage()` and `connect()`.
 
 ### Reconnecting to Terminal Tasks
 
-Stream data is **live-only** — PubNub does not persist stream
-payloads. When `client.connect({ taskId })` returns a session for a
+Stream data is **live-only** — the realtime transport does not persist
+stream payloads. When `client.connect({ taskId })` returns a session for a
 task that has already finished, a stream that was **never opened
 while the task was active** throws a typed `StreamUnavailableError`
 from `StreamRef.open()` instead of subscribing to a dead channel.
@@ -601,8 +608,8 @@ are browser-safe — no Node.js `Buffer` polyfill needed:
   `Blob` field. `fetch` computes the multipart boundary
   automatically — no manual `Content-Type: multipart/form-data`
   header, no `Buffer.concat`.
-- `downloadArtifact()` handles the three PubNub v10 download shapes
-  (raw `Uint8Array`, `Blob`, and legacy `PubNubFile` with
+- `downloadArtifact()` handles the three download shapes returned by
+  the transport (raw `Uint8Array`, `Blob`, and legacy file object with
   `toArrayBuffer()`) with typeof-guarded branches — no
   `Buffer.isBuffer` OR-order short-circuits.
 - `decodeInlineArtifact()` uses `atob` + `Uint8Array` and
@@ -643,4 +650,4 @@ the SDK does not read from `process.env` in browser environments:
 
 ## License
 
-PubNub
+See [LICENSE](./LICENSE).

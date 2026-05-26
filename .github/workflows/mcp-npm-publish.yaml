@@ -34,7 +34,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Stamp version from tag
-        run: npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version
         working-directory: mcp
 
       - name: Install dependencies

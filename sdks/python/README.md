@@ -417,10 +417,10 @@ session = client.send_message(agent_name="echo", request_parts=parts)
 ### Handling Stream Errors
 
 Every `StreamClient` exposes an `on_error(cb)` registration method.
-The callback fires whenever the stream's PubNub subscribe loop
-surfaces an error-category status event: PAM revocation, network
-issues, timeouts, or any other category the PubNub SDK marks as an
-error. The payload is a typed `StreamError` dataclass:
+The callback fires whenever the stream's subscribe loop surfaces
+an error-category status event: access-token revocation, network
+issues, timeouts, or any other category the underlying transport
+marks as an error. The payload is a typed `StreamError` dataclass:
 
 ```python
 from blocks_network.stream import StreamError
@@ -441,14 +441,16 @@ the stream so `for msg in stream.inbound:` / `for chunk in stream.bytes():`
 loops exit cleanly instead of hanging waiting for a `stream_end`
 that will never arrive:
 
-- `PNAccessDeniedCategory` — PAM revocation (admin-terminate,
-  token denied). This is the signal that the server-side grant is
-  gone even if the cached T7c's `exp` claim has not elapsed.
-- `PNBadRequestCategory` — auth configuration or malformed grant.
+- `access_denied` — access-token revocation (admin-terminate, token
+  denied). This is the signal that the server-side grant is gone even
+  if the cached T7c's `exp` claim has not elapsed. (Maps from the
+  underlying transport's `PNAccessDeniedCategory`.)
+- `bad_request` — auth configuration or malformed grant. (Maps from
+  the underlying transport's `PNBadRequestCategory`.)
 
 All other error categories (network transients, timeouts, etc.)
 fire `on_error` with `fatal=False` and leave the stream running so
-PubNub's built-in retry machinery can recover.
+the underlying transport's built-in retry machinery can recover.
 
 ### Opening Task Streams
 

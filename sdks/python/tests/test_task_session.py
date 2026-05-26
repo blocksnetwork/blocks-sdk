@@ -2174,3 +2174,38 @@ class TestOnTerminalImmediateFire:
         session.on_terminal(lambda e: events.append(e))
         assert len(events) == 0
         session.close()
+
+    def test_sdk_options_includes_consumer_user_id(self) -> None:
+        """TaskSession injects owner_id as consumer_user_id into _sdk_options.
+
+        This ensures StreamRef.open() → StreamClient.from_descriptor() receives
+        the consumer's user_id as the UUID prefix, preventing bidi UUID collision
+        when provider and consumer process counters are both at 0.
+        """
+        pn = _make_mock_pubnub()
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="usr_xyz",
+            read_token=None,
+            agent_name="echo",
+            pubnub=pn,
+            sdk_options={"subscribe_key": "sub-key", "publish_key": "pub-key"},
+        )
+        assert session._sdk_options["consumer_user_id"] == "usr_xyz"
+
+    def test_sdk_options_consumer_user_id_does_not_clobber_original(self) -> None:
+        """Injecting consumer_user_id uses a copy and leaves caller's dict unchanged."""
+        pn = _make_mock_pubnub()
+        original_opts = {"subscribe_key": "sub-key", "publish_key": "pub-key"}
+        session = TaskSession(
+            task_id="task-1",
+            owner_id="usr_xyz",
+            read_token=None,
+            agent_name="echo",
+            pubnub=pn,
+            sdk_options=original_opts,
+        )
+        # The original dict passed by the caller must be unmodified.
+        assert "consumer_user_id" not in original_opts
+        # The session's internal copy must carry the key.
+        assert session._sdk_options["consumer_user_id"] == "usr_xyz"

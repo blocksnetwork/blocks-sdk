@@ -7,6 +7,7 @@
  */
 
 import PubNub from 'pubnub';
+import { buildPubNubLogConfig } from './pubnub-client.js';
 import {
   StreamClient,
   invertDirection,
@@ -229,7 +230,7 @@ export class TaskSession {
     this.agentName = opts.agentName;
     this.pubnub = opts.pubnub;
     this.ownsSubscribeClient = opts.ownsSubscribeClient ?? false;
-    this.sdkOptions = opts.sdkOptions;
+    this.sdkOptions = { ...opts.sdkOptions, consumerUserId: opts.ownerId };
     this.rpcConfig = opts.rpcConfig ?? null;
     this.statusChannel = opts.statusChannel ?? taskChannel(opts.taskId, this.orgId);
     this.idempotent = opts.idempotent;
@@ -650,6 +651,7 @@ export class TaskSession {
       subscribeKey: this.subscribeKey,
       publishKey: this.publishKey || undefined,
       userId: sessionId,
+      ...buildPubNubLogConfig(),
     });
     if (this.readToken) {
       tempPubnub.setToken(this.readToken);

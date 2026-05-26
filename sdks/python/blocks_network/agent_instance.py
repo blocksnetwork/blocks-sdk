@@ -289,9 +289,9 @@ def _make_pubnub_retry_logger(instance_id: str):
     sites. Dispatches on the category emitted by _RetryLogForwarder so the
     agent log carries a distinct event for each reconnection state:
 
-    - retry     → warn,  event=pubnub_transport_retry
-    - recovered → info,  event=pubnub_transport_recovered
-    - failed    → error, event=pubnub_transport_failed
+    - retry     → warn,  event=transport_retry
+    - recovered → info,  event=transport_recovered
+    - failed    → error, event=transport_failed
 
     The retry-budget bump (subscribe_retry_unbounded=True, 43_200 attempts)
     means "failed" should not fire in normal operation; surfacing it at
@@ -314,9 +314,9 @@ def _make_pubnub_retry_logger(instance_id: str):
     """
 
     _CATEGORY_DISPATCH = {
-        "retry": ("warn", "pubnub transport retrying", "pubnub_transport_retry"),
-        "recovered": ("info", "pubnub transport recovered", "pubnub_transport_recovered"),
-        "failed": ("error", "pubnub transport failed", "pubnub_transport_failed"),
+        "retry": ("warn", "transport retrying", "transport_retry"),
+        "recovered": ("info", "transport recovered", "transport_recovered"),
+        "failed": ("error", "transport failed", "transport_failed"),
     }
 
     def on_retry(category: str, message: str) -> None:
@@ -1774,7 +1774,7 @@ def start_agent_instance(
         except Exception:
             log_agent_instance_event(
                 "warn",
-                "Could not set filter expression on new PubNub client",
+                "Could not set filter expression on new control client",
             )
 
         # Add listener and subscribe
@@ -2232,7 +2232,7 @@ def start_agent_instance(
                         _access_denied_handled = True
                         log_agent_instance_event(
                             "error",
-                            f"PAM token expired or revoked — agent {instance_id} is no longer receiving tasks. "
+                            f"access token expired or revoked — agent {instance_id} is no longer receiving tasks. "
                             "Re-register the agent to resume.",
                         )
                         try:
@@ -2276,7 +2276,7 @@ def start_agent_instance(
     except Exception:
         log_agent_instance_event(
             "warn",
-            "Could not set filter expression on PubNub config",
+            "Could not set filter expression on control config",
         )
 
     # -- Register then subscribe --------------------------------------------
@@ -2329,7 +2329,7 @@ def start_agent_instance(
                 control_client.set_token(result.pam_token)
                 log_agent_instance_event(
                     "info",
-                    "PAM token applied for control channel",
+                    "access token applied for control channel",
                 )
         except ImportError:
             log_agent_instance_event(

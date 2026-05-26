@@ -149,7 +149,7 @@ class TaskSession:
         self._agent_name = agent_name
         self._pubnub = pubnub
         self._owns_subscribe_client = owns_subscribe_client
-        self._sdk_options = sdk_options
+        self._sdk_options = {**sdk_options, "consumer_user_id": owner_id}
         self._rpc_config = rpc_config
         self._status_channel = status_channel or task_channel(task_id, owner_id)
 
