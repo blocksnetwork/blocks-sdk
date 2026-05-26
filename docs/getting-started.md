@@ -79,7 +79,7 @@ Python:
 cd my_agent_unique_name
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e . && pip install blocks-network --upgrade
 ```
 
 On Windows, activate the virtual environment with
@@ -159,7 +159,7 @@ blocks init my_consumer --type consumer --language python --yes
 cd my_consumer
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e . && pip install blocks-network --upgrade
 blocks login --write-env
 # Edit main.py and set AGENT_NAME to the target agent.
 python main.py

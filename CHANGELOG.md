@@ -10,7 +10,7 @@ Each component (Node SDK, Python SDK, CLI) is versioned independently.
 
 ## Node SDK
 
-### [Unreleased]
+### [0.1.62] — 2026-05-26
 
 #### Added
 - MCP Server support for Consumer SDK — programmatic access to agent capabilities through the Model Context Protocol
@@ -26,11 +26,23 @@ Each component (Node SDK, Python SDK, CLI) is versioned independently.
 - Cross-billing-mode access for A2A agent-to-agent invocations
 - Preserve `contentType` on uploaded-file wire parts
 - Omit cookies on Bearer-authed SDK fetches to avoid same-origin CSRF
+- Bidirectional event streams no longer silently drop messages when the consumer
+  and provider share the same agent name on their first opened stream. The
+  consumer-side `StreamClient` now derives its publisher UUID from the consumer's
+  user ID rather than the provider's agent name, so the self-echo filter
+  correctly distinguishes both sides.
 
 #### Changed
 - ConsumerAuth is now used for `ctx.taskClient` A2A calls, ensuring consistent auth context for orchestrator agents
 - PAM tokens are no longer visible in handler-accessible task objects
 - Default CDM config URL updated to `https://config.blocks.ai/config.json`
+- `StreamError.category` now exposes neutral, transport-agnostic values: `"connected"`, `"reconnected"`, `"network_down"`, `"network_issues"`, `"timeout"`, `"malformed_response"`, `"access_denied"`, `"bad_request"`, `"other"`. Fatal categories that force-terminate the stream are `"access_denied"` and `"bad_request"`. **Migration:** if you previously branched on `err.category === "PNAccessDeniedCategory"` (or any other raw `PN…Category` string), update the comparison to the neutral value (e.g. `"access_denied"`).
+- `meta.sender` on consumer-side stream publishes is now `{userId}-stream-NNNN`
+  instead of `{providerAgentName}-stream-NNNN`. Provider-side and server-side
+  semantics are unchanged.
+
+#### Removed
+- The `onRetry` option on `PubNubClientConfig` (advanced-usage `createPubNubClient`). Connectivity activity is now surfaced automatically through structured log events: `transport_degraded` (warn) on entering a degraded state, `transport_restored` (info) on recovery. **Migration:** drop the `onRetry` option from `createPubNubClient(...)` calls and read the structured log stream instead.
 
 #### Security
 - PAM token isolation from handler-visible task objects
@@ -69,7 +81,7 @@ consumer-side task submission, real-time event subscriptions, streaming
 
 ## Python SDK
 
-### [Unreleased]
+### [0.1.62] — 2026-05-26
 
 #### Added
 - `session.list_events()` for seeding full task timelines from history
@@ -83,11 +95,21 @@ consumer-side task submission, real-time event subscriptions, streaming
 - Cross-billing-mode fix for A2A calls
 - Preserve `content_type` on uploaded-file wire parts
 - PyPI project links corrected
+- Bidirectional event streams no longer silently drop messages when the consumer
+  and provider share the same agent name on their first opened stream. The
+  consumer-side `StreamClient` now derives its publisher UUID from the consumer's
+  user ID rather than the provider's agent name, so the self-echo filter
+  correctly distinguishes both sides.
 
 #### Changed
 - ConsumerAuth used for `ctx.task_client` A2A calls
 - PAM tokens isolated from handler-visible task objects
 - Default CDM config URL updated to `https://config.blocks.ai/config.json`
+- `StreamError.category` now exposes neutral, transport-agnostic values: `"connected"`, `"reconnected"`, `"network_down"`, `"network_issues"`, `"timeout"`, `"malformed_response"`, `"access_denied"`, `"bad_request"`, `"other"`. Fatal categories that force-terminate the stream are `"access_denied"` and `"bad_request"`. **Migration:** if you previously branched on `err.category == "PNAccessDeniedCategory"` (or any other raw `PN…Category` string), update the comparison to the neutral value (e.g. `"access_denied"`).
+- Transport retry log events use neutral, transport-agnostic names. `event="pubnub_transport_retry"` is now `event="transport_retry"`; the recovered/failed counterparts are `transport_recovered` and `transport_failed`. Human-readable messages are `"transport retrying"` / `"transport recovered"` / `"transport failed"`. The access-denied control-client log now reads `"access token expired or revoked — …"`, and the token-applied info log reads `"access token applied for control channel"`. **Migration:** if you matched on `event == "pubnub_transport_retry"` (or the recovered/failed variants) in log analysis or alerting, switch to `event == "transport_retry"` (etc.). The 3-state retry/recovered/failed semantic is preserved.
+- `meta.sender` on consumer-side stream publishes is now `{userId}-stream-NNNN`
+  instead of `{providerAgentName}-stream-NNNN`. Provider-side and server-side
+  semantics are unchanged.
 
 #### Security
 - PAM token isolation from handler-visible task objects

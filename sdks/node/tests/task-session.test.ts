@@ -1570,4 +1570,38 @@ describe('TaskSession', () => {
       expect(cb).toHaveBeenCalledTimes(202);
     });
   });
+
+  describe('sdkOptions consumerUserId injection', () => {
+    it('injects ownerId as consumerUserId into sdkOptions', () => {
+      const s = new TaskSession({
+        taskId: 'task-xyz',
+        ownerId: 'usr_xyz',
+        readToken: null,
+        agentName,
+        pubnub: asTaskSessionPubNub(mockPubNub),
+        sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((s as any).sdkOptions.consumerUserId).toBe('usr_xyz');
+      s.close();
+    });
+
+    it('preserves other sdkOptions fields when injecting consumerUserId', () => {
+      const s = new TaskSession({
+        taskId: 'task-xyz',
+        ownerId: 'usr_xyz',
+        readToken: null,
+        agentName,
+        pubnub: asTaskSessionPubNub(mockPubNub),
+        sdkOptions: { subscribeKey: 'my-sub', publishKey: 'my-pub', maxMessageSize: 8192 },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const opts = (s as any).sdkOptions;
+      expect(opts.subscribeKey).toBe('my-sub');
+      expect(opts.publishKey).toBe('my-pub');
+      expect(opts.maxMessageSize).toBe(8192);
+      expect(opts.consumerUserId).toBe('usr_xyz');
+      s.close();
+    });
+  });
 });

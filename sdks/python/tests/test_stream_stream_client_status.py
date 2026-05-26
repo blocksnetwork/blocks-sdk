@@ -309,41 +309,48 @@ class TestCoerceCategoryName:
 
 
 class TestIsFatalCategory:
-    def test_accepts_pn_access_denied(self):
+    def test_fatal_raw_string_inputs_are_fatal(self):
+        # Raw PN…Category strings still classify correctly because
+        # _is_fatal_category maps them to the neutral form first.
         assert _is_fatal_category("PNAccessDeniedCategory") is True
-
-    def test_accepts_pn_bad_request(self):
         assert _is_fatal_category("PNBadRequestCategory") is True
 
-    def test_rejects_non_fatal_error_categories(self):
+    def test_fatal_neutral_inputs_are_fatal(self):
+        # Pre-mapped neutral strings short-circuit through the FATAL set.
+        assert _is_fatal_category("access_denied") is True
+        assert _is_fatal_category("bad_request") is True
+
+    def test_non_fatal_categories_are_not_fatal(self):
         assert _is_fatal_category("PNNetworkIssuesCategory") is False
         assert _is_fatal_category("PNTimeoutCategory") is False
         assert _is_fatal_category("PNNetworkDownCategory") is False
+        # Neutral form mirror.
+        assert _is_fatal_category("network_issues") is False
+        assert _is_fatal_category("timeout") is False
+        assert _is_fatal_category("network_down") is False
 
-    def test_rejects_benign_categories(self):
+    def test_benign_categories_are_not_fatal(self):
         assert _is_fatal_category("PNConnectedCategory") is False
         assert _is_fatal_category("PNReconnectedCategory") is False
+        assert _is_fatal_category("connected") is False
+        assert _is_fatal_category("reconnected") is False
 
-    def test_rejects_empty_and_none(self):
+    def test_empty_and_invalid_inputs_are_not_fatal(self):
         assert _is_fatal_category("") is False
         assert _is_fatal_category(None) is False
 
-    def test_rejects_non_string(self):
+    def test_numeric_inputs_are_not_fatal(self):
         assert _is_fatal_category(123) is False
 
-    # PNStatusCategory enum members must classify correctly: the installed
-    # pubnub-python SDK delivers categories as enum members, not strings.
-    def test_accepts_pn_access_denied_enum_member(self):
+    def test_pubnub_enum_member_fatal_inputs_are_fatal(self):
         assert (
             _is_fatal_category(_FakePNStatusCategory.PNAccessDeniedCategory) is True
         )
-
-    def test_accepts_pn_bad_request_enum_member(self):
         assert (
             _is_fatal_category(_FakePNStatusCategory.PNBadRequestCategory) is True
         )
 
-    def test_rejects_non_fatal_enum_member(self):
+    def test_pubnub_enum_member_non_fatal_inputs_are_not_fatal(self):
         assert (
             _is_fatal_category(_FakePNStatusCategory.PNTimeoutCategory) is False
         )
@@ -351,10 +358,20 @@ class TestIsFatalCategory:
             _is_fatal_category(_FakePNStatusCategory.PNConnectedCategory) is False
         )
 
-    def test_fatal_set_is_exactly_allowlisted(self):
+    def test_fatal_set_uses_neutral_enum(self):
         assert FATAL_STREAM_ERROR_CATEGORIES == frozenset(
-            {"PNAccessDeniedCategory", "PNBadRequestCategory"}
+            {"access_denied", "bad_request"},
         )
+
+    def test_unknown_raw_category_maps_to_other(self):
+        # Raw PN…Category strings not in the map become "other" via
+        # _map_transport_category and are not fatal.
+        from blocks_network.stream.stream_client import _map_transport_category
+        assert _map_transport_category("PNUnknownCategory") == "other"
+        assert _map_transport_category(None) == "other"
+        assert _map_transport_category("") == "other"
+        assert _is_fatal_category("PNUnknownCategory") is False
+        assert _is_fatal_category("other") is False
 
 
 # -- Dispatch --------------------------------------------------------------
@@ -383,7 +400,7 @@ class TestStatusDispatch:
 
         assert len(received) == 1
         err = received[0]
-        assert err.category == "PNAccessDeniedCategory"
+        assert err.category == "access_denied"
         assert err.fatal is True
         assert err.channel == client.channel
         assert err.error == {"message": "PAM revoked"}
@@ -489,9 +506,9 @@ class TestStatusDispatch:
 
         assert len(received) == 1
         err = received[0]
-        # Canonical string name, NOT "" and NOT
+        # Canonical neutral enum name, NOT "" and NOT
         # "PNStatusCategory.PNAccessDeniedCategory".
-        assert err.category == "PNAccessDeniedCategory"
+        assert err.category == "access_denied"
         assert err.fatal is True
         assert client.is_active is False
 
@@ -525,7 +542,7 @@ class TestStatusDispatch:
         )
 
         assert len(received) == 1
-        assert received[0].category == "PNNetworkIssuesCategory"
+        assert received[0].category == "network_issues"
         assert received[0].fatal is False
         assert client.is_active is True
 

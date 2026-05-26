@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish:
@@ -96,14 +95,7 @@ jobs:
         run: |
           for pkg_dir in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-freebsd-arm64 cli-freebsd-x64 cli-win32-x64; do
             echo "Publishing @blocks-network/${pkg_dir}..."
-            npm publish "./npm/${pkg_dir}" --access public 2>&1 | tee /tmp/npm-publish.log || {
-              if grep -q "EPUBLISHCONFLICT\|You cannot publish over\|already exists" /tmp/npm-publish.log; then
-                echo "Version already published, skipping."
-              else
-                cat /tmp/npm-publish.log
-                exit 1
-              fi
-            }
+            npm publish "./npm/${pkg_dir}" --access public
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -111,13 +103,7 @@ jobs:
       - name: Publish wrapper package to npm
         working-directory: cli
         run: |
-          npm publish ./npm/cli --access public 2>&1 | tee /tmp/npm-publish.log || {
-            if grep -q "EPUBLISHCONFLICT\|You cannot publish over\|already exists" /tmp/npm-publish.log; then
-              echo "Version already published, skipping."
-            else
-              cat /tmp/npm-publish.log
-              exit 1
-            fi
-          }
+          echo "Publishing @blocks-network/cli..."
+          npm publish ./npm/cli --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

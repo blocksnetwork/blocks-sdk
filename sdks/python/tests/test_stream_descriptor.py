@@ -320,3 +320,140 @@ class TestFromDescriptor:
         assert len(calls) >= 1
         msg = calls[0]["message"]
         assert msg["type"] == "stream_data"
+
+
+@pytest.fixture()
+def base_descriptor() -> StreamDescriptor:
+    return _make_descriptor(
+        agent_name="weather",
+        local_direction="bidirectional",
+        agent_direction="bidirectional",
+        format="events",
+    )
+
+
+@pytest.fixture()
+def mock_pubnub_snapshot():
+    """PubNub mock that snapshots filter_expression at construction time.
+
+    Yields (mock_cls, config_snapshots) where config_snapshots is a list of
+    dicts with 'filter_expression' captured at each PubNub() call.
+    """
+    config_snapshots: list[dict] = []
+
+    class _FakeConfig:
+        def __init__(self):
+            self.subscribe_key = None
+            self.publish_key = None
+            self.user_id = None
+
+    def _pubnub_factory(config):
+        config_snapshots.append({
+            "filter_expression": getattr(config, "filter_expression", None),
+        })
+        instance, _calls, _listeners, _subscriptions = create_mock_pubnub()
+        instance.set_token = MagicMock()
+        instance.unsubscribe_all = MagicMock()
+        instance.stop = MagicMock()
+        return instance
+
+    fake_config = _FakeConfig()
+    with patch("blocks_network.stream.stream_client.PubNub") as mock_cls, \
+         patch("blocks_network.stream.stream_client.PNConfiguration", return_value=fake_config):
+        mock_cls.side_effect = _pubnub_factory
+        yield mock_cls, config_snapshots
+
+
+class TestFromDescriptorConsumerUserId:
+    """Tests for the consumer_user_id UUID prefix fix (bidi UUID collision)."""
+
+    def test_from_descriptor_uses_consumer_user_id_as_prefix(self, mock_pubnub, base_descriptor):
+        _reset_uuid_counter()
+        client = StreamClient.from_descriptor(
+            base_descriptor,
+            subscribe_key="sub-key",
+            publish_key="pub-key",
+            consumer_user_id="usr_abc",
+        )
+        assert client.uuid.startswith("usr_abc-stream-")
+
+    def test_from_descriptor_falls_back_to_agent_name(self, mock_pubnub, base_descriptor):
+        _reset_uuid_counter()
+        client = StreamClient.from_descriptor(
+            base_descriptor,
+            subscribe_key="sub-key",
+            publish_key="pub-key",
+        )
+        assert client.uuid.startswith(f"{base_descriptor.agent_name}-stream-")
+
+    def test_from_descriptor_empty_string_falls_back_to_agent_name(self, mock_pubnub, base_descriptor):
+        _reset_uuid_counter()
+        client = StreamClient.from_descriptor(
+            base_descriptor,
+            subscribe_key="sub-key",
+            publish_key="pub-key",
+            consumer_user_id="",
+        )
+        assert client.uuid.startswith(f"{base_descriptor.agent_name}-stream-")
+
+    def test_from_descriptor_no_uuid_collision_across_sides(self, mock_pubnub, base_descriptor):
+        _reset_uuid_counter()
+        provider = StreamClient.from_descriptor(
+            base_descriptor, subscribe_key="sub-key", publish_key="pub-key"
+        )  # → weather-stream-0001
+        _reset_uuid_counter()
+        consumer = StreamClient.from_descriptor(
+            base_descriptor, subscribe_key="sub-key", publish_key="pub-key",
+            consumer_user_id="usr_abc",
+        )  # → usr_abc-stream-0001
+        assert provider.uuid != consumer.uuid
+
+    def test_bidi_filter_uses_consumer_user_id_derived_uuid(
+        self, mock_pubnub_snapshot, base_descriptor
+    ):
+        _mock_cls, config_snapshots = mock_pubnub_snapshot
+        _reset_uuid_counter()
+        StreamClient.from_descriptor(
+            base_descriptor,
+            subscribe_key="sub-key",
+            publish_key="pub-key",
+            consumer_user_id="usr_abc",
+        )
+        assert len(config_snapshots) == 1
+        fe = config_snapshots[0]["filter_expression"]
+        assert fe is not None
+        assert "usr_abc-stream-" in fe
+
+    def test_filter_expressions_accept_cross_side_messages(self, mock_pubnub, base_descriptor):
+        # Both sides must use the same agent_name to reproduce the collision:
+        # pre-fix both UUIDs would be "{agent_name}-stream-0001"; post-fix
+        # the consumer gets "usr_abc-stream-0001" instead.
+        _reset_uuid_counter()
+        provider = StreamClient(
+            subscribe_key="sub-key",
+            publish_key="pub-key",
+            token="provider-token",
+            agent_name=base_descriptor.agent_name,
+            stream_id=base_descriptor.stream_id,
+            direction="bidirectional",
+            format="events",
+        )
+        # provider.uuid == f"{base_descriptor.agent_name}-stream-0001"
+
+        _reset_uuid_counter()
+        consumer = StreamClient.from_descriptor(
+            base_descriptor, subscribe_key="sub-key", publish_key="pub-key",
+            consumer_user_id="usr_abc",
+        )
+        # consumer.uuid == "usr_abc-stream-0001"
+
+        provider_filter = f"meta.sender != '{provider.uuid}'"
+        consumer_filter = f"meta.sender != '{consumer.uuid}'"
+
+        # Each side's filter accepts the other side's messages
+        assert consumer.uuid not in provider_filter
+        assert provider.uuid not in consumer_filter
+
+        # Each side's filter still rejects its own messages (self-echo)
+        assert provider.uuid in provider_filter
+        assert consumer.uuid in consumer_filter

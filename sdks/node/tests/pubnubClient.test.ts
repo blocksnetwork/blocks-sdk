@@ -118,79 +118,27 @@ describe('createPubNubClient', () => {
     expect(instances[0]).not.toHaveProperty('retryConfiguration');
   });
 
-  // BLOCKS-129 Phase 2B: surface the silent-but-retrying state. PubNub
-  // emits a `warn(location='PubNubMiddleware', text)` log every time the
-  // transport schedules an HTTP retry. Forwarding those through `onRetry`
-  // is what proves the SDK is alive during a network outage.
-  it('forwards transport retry warnings to onRetry callback', async () => {
+  it('always installs a silent logger (no onRetry needed)', async () => {
     const { createPubNubClient, instances } = await setup();
-
-    const calls: string[] = [];
     createPubNubClient({
       publishKey: 'pub-key',
       subscribeKey: 'sub-key',
-      onRetry: (msg: string) => calls.push(msg),
     });
-
-    // The synthetic Logger should be installed via `loggers: [Logger]`.
     expect(instances[0]).toHaveProperty('loggers');
-    const loggers = instances[0].loggers as Array<{
-      warn: (m: { location?: string; messageType?: string; message?: unknown }) => void;
-      trace: (m: unknown) => void;
-      debug: (m: unknown) => void;
-      info: (m: unknown) => void;
-      error: (m: unknown) => void;
-    }>;
+    const loggers = instances[0].loggers as unknown[];
     expect(Array.isArray(loggers)).toBe(true);
     expect(loggers).toHaveLength(1);
-
-    // Drive a retry warn — the callback must receive the text message.
-    loggers[0].warn({
-      location: 'PubNubMiddleware',
-      messageType: 'text',
-      message: 'HTTP request retry #1 in 5000ms.',
-    });
-    expect(calls).toEqual(['HTTP request retry #1 in 5000ms.']);
-
-    // A non-retry warn (different location) must NOT be forwarded.
-    loggers[0].warn({
-      location: 'SomeOtherComponent',
-      messageType: 'text',
-      message: 'unrelated noise',
-    });
-    expect(calls).toHaveLength(1);
-
-    // Trace/debug/info/error are no-ops to keep the timeline focused.
-    loggers[0].trace({ messageType: 'text', message: 'trace x' });
-    loggers[0].debug({ messageType: 'text', message: 'debug x' });
-    loggers[0].info({ messageType: 'text', message: 'info x' });
-    loggers[0].error({ messageType: 'text', message: 'error x' });
-    expect(calls).toHaveLength(1);
   });
 
-  it('omits loggers when onRetry is not provided', async () => {
+  it('always uses logLevel None (5) regardless of retryPolicy', async () => {
     const { createPubNubClient, instances } = await setup();
     createPubNubClient({
       publishKey: 'pub-key',
       subscribeKey: 'sub-key',
+      subscribeRetryUnbounded: true,
     });
-    expect(instances[0]).not.toHaveProperty('loggers');
-  });
-
-  // BLOCKS-129 Phase 2C: PubNub's LoggerManager compares logLevel numerically
-  // against its enum (Trace=0, Debug=1, Info=2, Warn=3, Error=4, None=5). If
-  // we pass the string 'warn', the comparison `logLevel < this.minLogLevel`
-  // coerces to NaN and fails open — letting Trace/Debug through to PubNub's
-  // built-in ConsoleLogger. We must pass the numeric value.
-  it('passes numeric LogLevel.Warn (3) to PubNub when onRetry is wired', async () => {
-    const { createPubNubClient, instances } = await setup();
-    createPubNubClient({
-      publishKey: 'pub-key',
-      subscribeKey: 'sub-key',
-      onRetry: () => {},
-    });
-    // PubNub.LogLevel.Warn === 3
-    expect(instances[0]?.logLevel).toBe(3);
+    // _PUBNUB_LOG_LEVEL_NONE = 5
+    expect(instances[0]?.logLevel).toBe(5);
   });
 
   // Future-proofing for BLOCKS-129. If a future PubNub release freezes

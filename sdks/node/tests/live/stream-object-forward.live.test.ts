@@ -281,7 +281,7 @@ describe.skipIf(liveGuard)('StreamObject forwarded surface (live)', () => {
 
     const err = await errorSeen;
     expect(err).toBeDefined();
-    expect(err.category).toBe('PNAccessDeniedCategory');
+    expect(err.category).toBe('access_denied');
     expect(err.fatal).toBe(true);
   }, getTestTimeout(60_000));
 });

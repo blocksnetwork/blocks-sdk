@@ -6,8 +6,8 @@
  *      during normal startup.
  *   2. LOG_LEVEL=error emits NO output at all during a healthy
  *      startup → stop() lifecycle.
- *   3. BLOCKS_DEBUG_INTERNAL=1 restores the diagnostics surface
- *      (pubnub_diagnostics_armed visible).
+ *   3. BLOCKS_DEBUG_INTERNAL=diagnostics restores the diagnostics surface
+ *      (transport_diagnostics_armed visible). LOG_LEVEL=debug alone does not.
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { startAgentInstance } from '../src/runtime/agent-instance.js';
@@ -75,9 +75,9 @@ const makeFakePubNub = () => {
 
 const FORBIDDEN_AT_INFO = [
   'PNConnectedCategory',
-  'pubnub_diagnostics_armed',
-  'pubnub_status_transition',
-  'pubnub_alive_snapshot',
+  'transport_diagnostics_armed',
+  'transport_status_transition',
+  'transport_alive_snapshot',
   'PubNub connected to',          // legacy human line
   'snapshotIntervalMs',
   'staleThresholdMs',
@@ -134,6 +134,8 @@ describe('SDK log hygiene — BLOCKS-373 acceptance criteria', () => {
     for (const forbidden of FORBIDDEN_AT_INFO) {
       expect(output, `forbidden substring "${forbidden}" appeared at LOG_LEVEL=info`).not.toContain(forbidden);
     }
+    // De-brand: no raw PN…Operation strings should leak at any LOG_LEVEL.
+    expect(output, 'raw PN…Operation string leaked at LOG_LEVEL=info').not.toMatch(/PN[A-Z]\w+Operation/);
   });
 
   it('AC2: LOG_LEVEL=error emits no output at all during a healthy startup + stop', async () => {
@@ -155,8 +157,8 @@ describe('SDK log hygiene — BLOCKS-373 acceptance criteria', () => {
     expect(infoSpy).not.toHaveBeenCalled();
   });
 
-  it('AC3: BLOCKS_DEBUG_INTERNAL=1 restores diagnostics surface', async () => {
-    process.env.BLOCKS_DEBUG_INTERNAL = '1';
+  it('AC3: BLOCKS_DEBUG_INTERNAL=diagnostics restores diagnostics surface', async () => {
+    process.env.BLOCKS_DEBUG_INTERNAL = 'diagnostics';
     process.env.LOG_LEVEL = 'info';
 
     instance = await startAgentInstance({
@@ -166,10 +168,10 @@ describe('SDK log hygiene — BLOCKS-373 acceptance criteria', () => {
       card: makeTestCard({ agentName: 'ac3_debug' }),
     });
 
-    expect(collectAllOutput()).toContain('pubnub_diagnostics_armed');
+    expect(collectAllOutput()).toContain('transport_diagnostics_armed');
   });
 
-  it('AC3b: LOG_LEVEL=debug alone (no BLOCKS_DEBUG_INTERNAL) restores diagnostics surface', async () => {
+  it('AC3b: LOG_LEVEL=debug alone does NOT restore diagnostics surface', async () => {
     delete process.env.BLOCKS_DEBUG_INTERNAL;
     process.env.LOG_LEVEL = 'debug';
 
@@ -180,7 +182,7 @@ describe('SDK log hygiene — BLOCKS-373 acceptance criteria', () => {
       card: makeTestCard({ agentName: 'ac3b_debug_level' }),
     });
 
-    expect(collectAllOutput()).toContain('pubnub_diagnostics_armed');
+    expect(collectAllOutput()).not.toContain('transport_diagnostics_armed');
   });
 
   it('AC2 corollary: stop() emits nothing at LOG_LEVEL=error mid-lifecycle', async () => {

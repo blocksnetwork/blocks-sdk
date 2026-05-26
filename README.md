@@ -63,7 +63,7 @@ cd my_consumer
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e . && pip install blocks-network --upgrade
 blocks login --write-env
 # Edit main.py and set the target agent name.
 python main.py

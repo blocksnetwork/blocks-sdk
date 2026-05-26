@@ -137,7 +137,7 @@ func printNextSteps(cfg wizard.Config) {
 	if cfg.Language == "node" {
 		fmt.Println("    npm install")
 	} else {
-		fmt.Println("    pip install -e .")
+		fmt.Println("    pip install -e . && pip install blocks-network --upgrade")
 	}
 
 	if cfg.Type == "consumer" {
