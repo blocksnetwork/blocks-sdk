@@ -2,15 +2,15 @@
  * TaskClient.create — billingMode parity test.
  *
  * Cross-SDK parity: this mapping MUST match the Python SDK's
- * `TaskClient.create` billing_mode routing, and the backend's
- * `BILLING_MODE_TO_KEYSET` map in `afui_mvp_backend/src/lib/pubnub.ts`.
+ * `TaskClient.create` billing_mode routing, and the service's
+ * `BILLING_MODE_TO_KEYSET` map.
  *
  * - `billingMode === 'free'`  → playground keyset
  * - `billingMode === 'paid'`  → network keyset
  * - missing `billingMode`     → rejected with the exact error message
  *   `"TaskClient.create() requires a billingMode option ('free' or 'paid')"`
  *
- * Mirrors the backend's single-source-of-truth policy (PLAN §7.5).
+ * Mirrors the service's single-source-of-truth policy.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskClient } from '../src/runtime/task-client.js';
@@ -36,7 +36,7 @@ const FAKE_CDM = {
 };
 
 // Expected parity rows — must agree with:
-//   backend: `BILLING_MODE_TO_KEYSET` in afui_mvp_backend/src/lib/pubnub.ts
+//   service: `BILLING_MODE_TO_KEYSET` map
 //   python:  TaskClient.create mapping in blocks-sdk/sdks/python/blocks_network/task_client.py
 const BILLING_MODE_TO_KEYSET_ENV: Record<'free' | 'paid', 'playground' | 'network'> = {
   free: 'playground',

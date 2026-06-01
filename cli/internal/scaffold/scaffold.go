@@ -116,14 +116,14 @@ func scaffoldProviderPython(dir string, cfg wizard.Config) error {
 }
 
 // Structs for ordered JSON output of agent-card.json.
-// Field order matches the canonical layout: identity → capabilities → io → streams → skills → runtime.
+// Field order matches the canonical layout: identity → capabilities → io → streams → tags → runtime.
 
 type agentCardJSON struct {
 	Identity     identityJSON          `json:"identity"`
 	Capabilities capabilitiesJSON      `json:"capabilities"`
 	IO           *ioJSON               `json:"io,omitempty"`
 	Streams      map[string]streamJSON `json:"streams,omitempty"`
-	Skills       []skillJSON           `json:"skills"`
+	Tags         []tagJSON             `json:"tags"`
 	Runtime      runtimeJSON           `json:"runtime"`
 }
 
@@ -173,7 +173,7 @@ type streamJSON struct {
 	Affinity    string `json:"affinity,omitempty"`
 }
 
-type skillJSON struct {
+type tagJSON struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -240,10 +240,10 @@ func writeAgentCard(dir string, cfg wizard.Config) error {
 				},
 			},
 		},
-		Skills: []skillJSON{
+		Tags: []tagJSON{
 			{
 				ID:          "main",
-				Name:        "Main Skill",
+				Name:        "Main",
 				Description: "Handles tasks",
 			},
 		},

@@ -60,6 +60,18 @@ func Validate(cardPath string) ValidationResult {
 		return res
 	}
 
+	return ValidateBytes(raw, cardPath)
+}
+
+// ValidateBytes performs all checks on the in-memory agent-card JSON `raw`,
+// resolving relative paths (e.g. runtime.handler) against `cardPath`'s
+// directory. Use this when the caller has already read the file and possibly
+// mutated it (e.g. the publish-time `skills` → `tags` shim — see
+// blocks-sdk/cli/cmd/publish_legacy_skills.go).
+func ValidateBytes(raw []byte, cardPath string) ValidationResult {
+	var res ValidationResult
+	res.Successes = append(res.Successes, "agent-card.json found")
+
 	var card map[string]interface{}
 	if err := json.Unmarshal(raw, &card); err != nil {
 		res.Errors = append(res.Errors, fmt.Sprintf("Invalid JSON: %s", err))
@@ -120,7 +132,7 @@ func Validate(cardPath string) ValidationResult {
 	return res
 }
 
-// checkIDUniqueness validates that io.inputs[].id, io.outputs[].id, and skills[].id
+// checkIDUniqueness validates that io.inputs[].id, io.outputs[].id, and tags[].id
 // contain no duplicates within their respective arrays.
 func checkIDUniqueness(card map[string]interface{}) []string {
 	var errs []string
@@ -134,8 +146,8 @@ func checkIDUniqueness(card map[string]interface{}) []string {
 		}
 	}
 
-	if skills, ok := card["skills"].([]interface{}); ok {
-		errs = append(errs, findDuplicateIDs(skills, "skills")...)
+	if tags, ok := card["tags"].([]interface{}); ok {
+		errs = append(errs, findDuplicateIDs(tags, "tags")...)
 	}
 
 	return errs

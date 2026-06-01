@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pubnub/blocks-sdk/cli/internal/schema"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +27,10 @@ var checkCmd = &cobra.Command{
 			cardPath = filepath.Join(mustCwd(), cardPath)
 		}
 
-		result := schema.Validate(cardPath)
+		// Run the legacy `skills` → `tags` shim before validation so a
+		// stale card surfaces the deprecation warning instead of a
+		// confusing schema rejection (parity with `publish` and `run`).
+		result := validateCardWithLegacyShim(cardPath)
 
 		for _, msg := range result.Successes {
 			fmt.Printf("[OK] %s\n", msg)

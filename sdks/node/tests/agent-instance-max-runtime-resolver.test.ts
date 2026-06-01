@@ -25,7 +25,7 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('resolveMaxRunningTimeSec', () => {
-  // After BLOCKS-373, divergence logs go through the shared `baseLog` helper,
+  // Divergence logs go through the shared `baseLog` helper,
   // which routes `info` entries to `console.log` with a structured entry
   // shape `(tag, { level, message, ts, ...meta })` rather than `console.info`.
   let infoSpy: ReturnType<typeof vi.spyOn>;

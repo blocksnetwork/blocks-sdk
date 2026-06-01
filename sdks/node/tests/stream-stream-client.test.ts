@@ -1167,4 +1167,100 @@ describe('StreamClient', () => {
       expect(fired).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('InboundMessage discriminated union', () => {
+    // These tests compile only when InboundMessage is a discriminated union
+    // by `format`. With `data: unknown`, the per-branch indexing and
+    // method calls below would require explicit casts. Each test also
+    // exercises one of the three runtime branches in `normalizeMessage`,
+    // so the per-format `.data` shape is asserted at runtime — not just
+    // unreachable type assertions.
+    it('narrows bytes data to string[] without casts', async () => {
+      const client = makeClient({ direction: 'inbound', format: 'bytes' });
+
+      const listener = mockAddListener.mock.calls.find((call: any[]) =>
+        call[0]?.message,
+      )?.[0];
+
+      listener.message({
+        channel: client.channel,
+        message: {
+          type: 'stream_data',
+          streamId: 'my-stream',
+          seq: 0,
+          ts: 1700000000000,
+          encoding: 'utf8',
+          chunks: ['hello'],
+        },
+      });
+
+      const iterator = client.inbound[Symbol.asyncIterator]();
+      const result = await iterator.next();
+      if (result.done) throw new Error('expected a message');
+
+      const msg = result.value;
+      expect(msg.format).toBe('bytes');
+      if (msg.format !== 'bytes') return;
+      const first: string = msg.data[0];
+      expect(first.length).toBe(5);
+      expect(msg.encoding === 'utf8' || msg.encoding === 'base64').toBe(true);
+    });
+
+    it('narrows events data to unknown[] without casts', async () => {
+      const client = makeClient({ direction: 'inbound', format: 'events' });
+
+      const listener = mockAddListener.mock.calls.find((call: any[]) =>
+        call[0]?.message,
+      )?.[0];
+
+      listener.message({
+        channel: client.channel,
+        message: {
+          type: 'stream_events',
+          streamId: 'my-stream',
+          seq: 1,
+          ts: 1700000000000,
+          events: [{ kind: 'tick' }, { kind: 'tock' }],
+        },
+      });
+
+      const iterator = client.inbound[Symbol.asyncIterator]();
+      const result = await iterator.next();
+      if (result.done) throw new Error('expected a message');
+
+      const msg = result.value;
+      expect(msg.format).toBe('events');
+      if (msg.format !== 'events') return;
+      expect(msg.data.length).toBe(2);
+    });
+
+    it('narrows raw data to Record<string, unknown> without casts', async () => {
+      const client = makeClient({ direction: 'inbound', format: 'bytes' });
+
+      const listener = mockAddListener.mock.calls.find((call: any[]) =>
+        call[0]?.message,
+      )?.[0];
+
+      listener.message({
+        channel: client.channel,
+        message: {
+          type: 'unknown_type',
+          streamId: 'my-stream',
+          seq: 0,
+          ts: 1700000000000,
+          custom: 'payload',
+        },
+      });
+
+      const iterator = client.inbound[Symbol.asyncIterator]();
+      const result = await iterator.next();
+      if (result.done) throw new Error('expected a message');
+
+      const msg = result.value;
+      expect(msg.format).toBe('raw');
+      if (msg.format !== 'raw') return;
+      expect(msg.data.custom).toBe('payload');
+      expect(msg.data.type).toBe('unknown_type');
+    });
+  });
 });

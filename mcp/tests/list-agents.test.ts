@@ -3,7 +3,7 @@ import { listAgents } from '../src/tools.js';
 import { makeFakeDeps } from './helpers.js';
 
 describe('list_agents', () => {
-  it('renders one row per agent with skill names joined by commas', async () => {
+  it('renders one row per agent with tag names joined by commas', async () => {
     const { deps } = makeFakeDeps({
       listAgentsResult: {
         agents: [
@@ -11,7 +11,7 @@ describe('list_agents', () => {
             agentName: 'alice',
             name: 'Alice',
             listing: 'public',
-            skills: [
+            tags: [
               { id: 'translate', name: 'Translate' },
               { id: 'summarize', name: 'Summarize' },
             ],
@@ -31,21 +31,21 @@ describe('list_agents', () => {
     ]);
   });
 
-  it('forwards baseUrl, apiKey, skill, listing, limit to the registry helper', async () => {
+  it('forwards baseUrl, apiKey, tag, listing, limit to the registry helper', async () => {
     const { deps, mocks } = makeFakeDeps({
       apiKey: 'sk-test',
       baseUrl: 'http://api.test',
     });
 
     await listAgents(
-      { skill: 'translate', listing: 'private', limit: 25 },
+      { tag: 'translate', listing: 'private', limit: 25 },
       deps,
     );
 
     expect(mocks.listAgents).toHaveBeenCalledWith({
       baseUrl: 'http://api.test',
       apiKey: 'sk-test',
-      skill: 'translate',
+      tag: 'translate',
       listing: 'private',
       limit: 25,
     });
@@ -54,7 +54,7 @@ describe('list_agents', () => {
   it('defaults to "public" for missing listing and uses agentName when name is absent', async () => {
     const { deps } = makeFakeDeps({
       listAgentsResult: {
-        agents: [{ agentName: 'naked', skills: [] }],
+        agents: [{ agentName: 'naked', tags: [] }],
         totalCount: 1,
       },
     });

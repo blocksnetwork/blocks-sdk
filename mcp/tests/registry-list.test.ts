@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
+import { listAgentsAuthenticated } from '../src/registry-list.js';
 import {
-  listAgentsAuthenticated,
   PROTOCOL_VERSION_HEADER,
   CURRENT_PROTOCOL_VERSION,
-} from '../src/registry-list.js';
+} from '../src/protocol-headers.js';
 
 function mockResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -57,7 +57,7 @@ describe('listAgentsAuthenticated', () => {
     await listAgentsAuthenticated({
       baseUrl: 'http://api.test/',
       listing: 'private',
-      skill: 'translate',
+      tag: 'translate',
       limit: 50,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
@@ -68,7 +68,7 @@ describe('listAgentsAuthenticated', () => {
     expect(parsed.searchParams.get('include')).toBe('full');
     expect(parsed.searchParams.get('listing')).toBe('private');
     expect(parsed.searchParams.get('scope')).toBe('owned');
-    expect(parsed.searchParams.get('skill')).toBe('translate');
+    expect(parsed.searchParams.get('tag')).toBe('translate');
     expect(parsed.searchParams.get('limit')).toBe('50');
   });
 
@@ -104,7 +104,7 @@ describe('listAgentsAuthenticated', () => {
 
   it('returns parsed JSON body on success', async () => {
     const body = {
-      agents: [{ agentName: 'alice', skills: [] }],
+      agents: [{ agentName: 'alice', tags: [] }],
       totalCount: 1,
     };
     const fetchImpl = vi

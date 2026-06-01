@@ -334,7 +334,7 @@ describe('diag listener — Event Engine wrapper unwrap', () => {
       .flat()
       .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
       .join('\n');
-    // Regression guard for BLOCKS-374: if buildDiagListener regressed to
+    // Regression guard: if buildDiagListener regressed to
     // String(e.category ?? '') the line would carry
     // "category":"PNConnectionErrorCategory" (or "other"), poisoning
     // entry.lastCategory used by _isDiagEntryStale.

@@ -57,7 +57,7 @@ vi.mock('../src/runtime/agent-registry.js', () => ({
   fetchAgentRegistry: vi.fn(async () => ({})),
   getAgent: vi.fn(async () => null),
   removeAgent: vi.fn(async () => {}),
-  fetchAgentsBySkill: vi.fn(async () => []),
+  fetchAgentsByTag: vi.fn(async () => []),
   fetchAgentsByListing: vi.fn(async () => []),
 }));
 
@@ -584,7 +584,7 @@ describe('Phase 3 Agent Instance Runtime', () => {
     });
   });
 
-  describe('PAM token isolation (BLOCKS-232)', () => {
+  describe('PAM token isolation', () => {
     it('handler does not receive writeToken or controlToken', async () => {
       const mockPn = createMockPubNub();
       let receivedTask: StartTaskMessage | undefined;

@@ -1825,7 +1825,7 @@ def start_agent_instance(
                 _switch_environment(new_env, msg_dict.get("pamToken"))
             return
 
-        # Extract PAM tokens before parsing (BLOCKS-232: tokens never on handler-visible object)
+        # Extract PAM tokens before parsing (tokens never on handler-visible object)
         _write_token, _control_token = extract_start_task_tokens(msg_dict)
 
         msg = parse_control_message(msg_dict)
@@ -1962,7 +1962,7 @@ def start_agent_instance(
                 if _write_token:
                     per_task_pn.set_token(_write_token)
 
-                # Cache credentials for post-handler operations (BLOCKS-232: moved here
+                # Cache credentials for post-handler operations (moved here
                 # so tokens never need to be on the StartTaskMessage passed to handlers)
                 credential_cache.set(
                     msg.task_id,
@@ -2296,7 +2296,7 @@ def start_agent_instance(
             connect_options = ConnectAgentOptions(
                 instance_id=instance_id,
                 description=options.description,
-                skills=options.skills,
+                tags=options.tags,
                 scaling=scaling,
                 card=options.card,
                 card_ref=options.card_ref,

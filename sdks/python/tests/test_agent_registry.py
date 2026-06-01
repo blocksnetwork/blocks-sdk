@@ -18,12 +18,12 @@ from blocks_network.agent_registry import (
     AgentScaling,
     ConnectAgentOptions,
     fetch_agent_registry,
-    fetch_agents_by_skill,
+    fetch_agents_by_tag,
     fetch_agents_by_listing,
     get_agent,
     connect_agent,
     registry_all_channel,
-    registry_skill_channel,
+    registry_tag_channel,
     registry_log_channel,
     registry_visibility_channel,
     remove_agent,
@@ -40,8 +40,8 @@ class TestChannelHelpers:
     def test_registry_all(self) -> None:
         assert registry_all_channel() == "registry.all"
 
-    def test_registry_skill(self) -> None:
-        assert registry_skill_channel("image_generation") == "registry.skill.image_generation"
+    def test_registry_tag(self) -> None:
+        assert registry_tag_channel("image_generation") == "registry.tag.image_generation"
 
     def test_registry_visibility_public(self) -> None:
         assert registry_visibility_channel(True) == "registry.public"
@@ -116,6 +116,35 @@ class TestRegisterAgent:
                 ConnectAgentOptions(base_url="http://localhost:8080"),
             )
 
+    def test_rejects_card_with_legacy_skills_field(self) -> None:
+        """Legacy ``skills`` field in card must fail fast at the SDK boundary
+        with an actionable error and no leaked internal references."""
+        mock_auth = MagicMock()
+        legacy_cards = [
+            {"skills": []},
+            {"skills": [{"id": "echo", "name": "Echo"}]},
+            {
+                "identity": {"agentName": "a", "displayName": "A"},
+                "capabilities": {"taskKinds": ["request"]},
+                "skills": [{"id": "echo", "name": "Echo"}],
+            },
+        ]
+        for card in legacy_cards:
+            with pytest.raises(ValueError, match=r"`skills`.*`tags`") as exc_info:
+                connect_agent(
+                    "acme_echo",
+                    ConnectAgentOptions(
+                        base_url="http://localhost:8080",
+                        agent_auth=mock_auth,
+                        card=card,
+                    ),
+                )
+            # Guard: error message must not leak internal references to customers.
+            msg = str(exc_info.value)
+            assert "BLOCKS-" not in msg, f"leaked internal Jira id: {msg!r}"
+            assert "atlassian" not in msg, f"leaked internal URL: {msg!r}"
+        mock_auth.init.assert_not_called()
+
     def test_sends_correct_connect_payload(self) -> None:
         """Verifies payload passed to agentAuth.init() has correct fields."""
         mock_auth = MagicMock()
@@ -135,8 +164,8 @@ class TestRegisterAgent:
         assert payload["agentName"] == "acme_echo"
         assert payload["instanceId"] == "inst-1"
 
-    def test_does_not_send_card_description_skills(self) -> None:
-        """Connect payload must NOT include card, description, skills, cardRef, cardSummary."""
+    def test_does_not_send_card_description_tags(self) -> None:
+        """Connect payload must NOT include card, description, tags, cardRef, cardSummary."""
         mock_auth = MagicMock()
         mock_auth.init.return_value = {"pamToken": "pam-123", "accessToken": "jwt-1", "refreshToken": "rt-1"}
 
@@ -146,7 +175,7 @@ class TestRegisterAgent:
                 base_url="http://localhost:8080",
                 agent_auth=mock_auth,
                 description="should not be sent",
-                skills=["echo"],
+                tags=["echo"],
                 card={"identity": {"displayName": "Echo"}},
                 card_ref="https://example.com/card.json",
                 card_summary="An echo agent",
@@ -158,7 +187,7 @@ class TestRegisterAgent:
         assert payload["agentName"] == "acme_echo"
         assert "card" not in payload
         assert "description" not in payload
-        assert "skills" not in payload
+        assert "tags" not in payload
         assert "cardRef" not in payload
         assert "cardSummary" not in payload
 
@@ -302,7 +331,7 @@ class TestGetAgent:
                 "agentName": "acme_echo",
                 "name": "Echo Agent",
                 "description": "An echo agent",
-                "skills": [{"id": "echo", "name": "Echo"}],
+                "tags": [{"id": "echo", "name": "Echo"}],
                 "listing": "public",
                 "billingMode": "paid",
                 "card": {"name": "Echo Agent"},
@@ -317,7 +346,7 @@ class TestGetAgent:
         assert entry.agent_name == "acme_echo"
         assert entry.name == "Echo Agent"
         assert entry.description == "An echo agent"
-        assert entry.skills == [{"id": "echo", "name": "Echo"}]
+        assert entry.tags == [{"id": "echo", "name": "Echo"}]
         assert entry.listing == "public"
         assert entry.billing_mode == "paid"
         assert entry.card == {"name": "Echo Agent"}
@@ -422,7 +451,7 @@ class TestFetchAgentRegistry:
                     "name": "Agent One",
                     "description": "First",
                     "listing": "public",
-                    "skills": [{"id": "s1", "name": "S1"}],
+                    "tags": [{"id": "s1", "name": "S1"}],
                 },
                 {
                     "agentName": "agent_2",
@@ -489,12 +518,12 @@ class TestFetchAgentRegistry:
 
 
 # ---------------------------------------------------------------------------
-# fetch_agents_by_skill (REST)
+# fetch_agents_by_tag (REST)
 # ---------------------------------------------------------------------------
 
 
-class TestFetchAgentsBySkill:
-    def test_passes_skill_query_param(self) -> None:
+class TestFetchAgentsByTag:
+    def test_passes_tag_query_param(self) -> None:
         captured = {}
 
         def mock_urlopen(req, **kwargs):
@@ -507,9 +536,9 @@ class TestFetchAgentsBySkill:
             return resp
 
         with patch("urllib.request.urlopen", side_effect=mock_urlopen):
-            fetch_agents_by_skill("image-generation", base_url="http://localhost:8080")
+            fetch_agents_by_tag("image-generation", base_url="http://localhost:8080")
 
-        assert "skill=image-generation" in captured["url"]
+        assert "tag=image-generation" in captured["url"]
         assert "include=full" in captured["url"]
 
 

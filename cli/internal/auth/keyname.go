@@ -4,9 +4,9 @@ import "strings"
 
 const (
 	apiKeyNamePrefix = "cli-"
-	// apiKeyNameMaxLen mirrors the backend's maximumNameLength in
-	// afui_mvp_backend/src/lib/auth.ts so two machines with long shared
-	// hostname prefixes don't silently collapse to the same key name.
+	// apiKeyNameMaxLen mirrors the backend's maximumNameLength so two
+	// machines with long shared hostname prefixes don't silently collapse
+	// to the same key name.
 	apiKeyNameMaxLen   = 255
 	apiKeyNameFallback = "cli-default"
 )

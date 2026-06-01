@@ -61,7 +61,7 @@ describe('stream-context', () => {
       expect(mockClient.write).toHaveBeenCalledWith('hello');
     });
 
-    // -- Forwarded surface (BLOCKS-262) --------------------------------------
+    // -- Forwarded surface --------------------------------------
     //
     // These tests assert pure delegation only. Decoding correctness for
     // bytes() / events() / readable() lives in the StreamClient tests; we
@@ -154,7 +154,7 @@ describe('stream-context', () => {
       expect(() => obj.inbound).toThrow('external');
     });
 
-    // -- Forwarded surface throws on external (BLOCKS-262) -------------------
+    // -- Forwarded surface throws on external -------------------
 
     it('uuid throws on external', () => {
       const obj = createExternalStreamObject('ext-1', 'ch', 'tok', async () => {});

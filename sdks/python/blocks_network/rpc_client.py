@@ -201,6 +201,13 @@ def call_rpc(
             raise _maybe_billing_mode_mismatch(base_err)
         return data.get("result") if isinstance(data, dict) else data
 
+    # Pre-flight: when the auth provider has a recorded permanent-refresh
+    # error, attempt one reactive recovery. On failure the typed
+    # AuthRefreshFailedError is raised before any network attempt so
+    # consumers don't see an opaque 401 from the doomed RPC.
+    from .auth_provider import preflight_auth_or_raise
+    preflight_auth_or_raise(auth_provider)
+
     if auth_provider is not None and hasattr(auth_provider, "ensure_ready"):
         auth_provider.ensure_ready()
 

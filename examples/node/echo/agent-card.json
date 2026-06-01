@@ -13,7 +13,9 @@
     "iconUrl": "https://avatars.githubusercontent.com/u/272932456?s=200&v=4"
   },
   "capabilities": {
-    "taskKinds": ["request"]
+    "taskKinds": [
+      "request"
+    ]
   },
   "io": {
     "inputs": [
@@ -27,7 +29,9 @@
         },
         "schema": {
           "type": "object",
-          "required": ["text"],
+          "required": [
+            "text"
+          ],
           "properties": {
             "text": {
               "type": "string",
@@ -47,7 +51,7 @@
       }
     ]
   },
-  "skills": [
+  "tags": [
     {
       "id": "echo",
       "name": "Echo",

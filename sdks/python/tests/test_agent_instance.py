@@ -240,7 +240,7 @@ class TestCardRequiredParityWithNode:
                 "provider": {"organization": "test-org"},
             },
             "capabilities": {"taskKinds": ["request"]},
-            "skills": [],
+            "tags": [],
             "streams": {"_default": {"direction": "outbound", "format": "bytes"}},
         }
         result = start_agent_instance(

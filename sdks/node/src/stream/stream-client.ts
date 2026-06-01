@@ -736,7 +736,7 @@ export class StreamClient {
       const encoding = message.encoding as string | undefined;
       if (encoding !== undefined && encoding !== 'utf8' && encoding !== 'base64') return null;
       return {
-        data: chunks,
+        data: chunks as string[],
         seq: message.seq as number,
         ts: message.ts as number,
         format: 'bytes',

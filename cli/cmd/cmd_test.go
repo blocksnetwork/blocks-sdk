@@ -49,10 +49,10 @@ func writeValidProject(t *testing.T) string {
 		"capabilities": map[string]interface{}{
 			"taskKinds": []interface{}{"request"},
 		},
-		"skills": []interface{}{
+		"tags": []interface{}{
 			map[string]interface{}{
 				"id":   "main",
-				"name": "Main Skill",
+				"name": "Main",
 			},
 		},
 		"runtime": map[string]interface{}{

@@ -250,7 +250,12 @@ class TestBillingModeMismatchMapping:
             "id": "x",
             "error": {
                 "code": -32000,
-                "message": "mismatch",
+                "message": (
+                    "Billing mode mismatch: caller declared 'free', agent is 'paid'. "
+                    "Read the agent's billingMode from the registry "
+                    "(Node: (await getAgent(name)).billingMode; Python: get_agent(agent_name).billing_mode) "
+                    "and pass it into TaskClient.create."
+                ),
                 "data": {
                     "code": "BillingModeMismatch",
                     "details": {"expected": "paid", "got": "free"},

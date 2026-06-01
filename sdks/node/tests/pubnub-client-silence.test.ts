@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import PubNub from 'pubnub';
 import { buildPubNubLogConfig } from '../src/runtime/pubnub-client.js';
 
-describe('PubNub ephemeral client silence (BLOCKS-374)', () => {
+describe('PubNub ephemeral client silence', () => {
   beforeEach(() => {
     delete process.env.BLOCKS_DEBUG_INTERNAL;
   });

@@ -4,8 +4,8 @@ Tests for blocks_network.channel_manager -- channel naming rules.
 Covers:
 - Control, task, obs, task-metadata channel formats
 - Round-trip parse of task-metadata channels
-- Registry channel helpers (registry.all, registry.skill.{slug})
-- Skill slug normalization
+- Registry channel helpers (registry.all, registry.tag.{slug})
+- Tag slug normalization
 - Owner ID validation
 - Error paths for missing parameters
 """
@@ -17,9 +17,9 @@ import pytest
 from blocks_network.channel_manager import (
     ChannelManager,
     create_channel_manager,
-    normalize_skill_slug,
+    normalize_tag_slug,
     registry_all_channel,
-    registry_skill_channel,
+    registry_tag_channel,
     registry_log_channel,
     registry_visibility_channel,
     validate_owner_id,
@@ -90,33 +90,33 @@ class TestRegistryChannels:
     def test_registry_all_channel(self) -> None:
         assert registry_all_channel() == "registry.all"
 
-    def test_registry_skill_channel(self) -> None:
-        assert registry_skill_channel("image-generation") == "registry.skill.image_generation"
+    def test_registry_tag_channel(self) -> None:
+        assert registry_tag_channel("image-generation") == "registry.tag.image_generation"
 
-    def test_registry_skill_channel_preserves_dots(self) -> None:
-        assert registry_skill_channel("text.embeddings") == "registry.skill.text.embeddings"
+    def test_registry_tag_channel_preserves_dots(self) -> None:
+        assert registry_tag_channel("text.embeddings") == "registry.tag.text.embeddings"
 
 
 # ---------------------------------------------------------------------------
-# Skill slug normalization
+# Tag slug normalization
 # ---------------------------------------------------------------------------
 
 
-class TestNormalizeSkillSlug:
+class TestNormalizeTagSlug:
     def test_hyphen_to_underscore(self) -> None:
-        assert normalize_skill_slug("image-generation") == "image_generation"
+        assert normalize_tag_slug("image-generation") == "image_generation"
 
     def test_space_to_underscore_and_lowercase(self) -> None:
-        assert normalize_skill_slug("Image Generation") == "image_generation"
+        assert normalize_tag_slug("Image Generation") == "image_generation"
 
     def test_dots_preserved(self) -> None:
-        assert normalize_skill_slug("text.embeddings") == "text.embeddings"
+        assert normalize_tag_slug("text.embeddings") == "text.embeddings"
 
     def test_multiple_special_chars(self) -> None:
-        assert normalize_skill_slug("--multiple---dashes--") == "multiple_dashes"
+        assert normalize_tag_slug("--multiple---dashes--") == "multiple_dashes"
 
     def test_mixed_case_and_symbols(self) -> None:
-        assert normalize_skill_slug("NLP / Text!Analysis") == "nlp_text_analysis"
+        assert normalize_tag_slug("NLP / Text!Analysis") == "nlp_text_analysis"
 
 
 # ---------------------------------------------------------------------------
@@ -252,13 +252,13 @@ class TestRegistryLogChannel:
 
 class TestSlugNormalizationEdgeCases:
     def test_collapses_multiple_underscores(self) -> None:
-        assert normalize_skill_slug("a___b") == "a_b"
+        assert normalize_tag_slug("a___b") == "a_b"
 
     def test_strips_leading_trailing(self) -> None:
-        assert normalize_skill_slug("_hello_") == "hello"
+        assert normalize_tag_slug("_hello_") == "hello"
 
     def test_complex_case(self) -> None:
-        result = normalize_skill_slug("AI-Powered Image Generation!")
+        result = normalize_tag_slug("AI-Powered Image Generation!")
         assert result == "ai_powered_image_generation"
         # No leading/trailing underscores, no double underscores
         assert not result.startswith("_")

@@ -1,7 +1,7 @@
-"""BLOCKS-456: regression fence on user-visible PubNub/PAM vocabulary.
+"""Regression fence on user-visible PubNub/PAM vocabulary.
 
 Reads agent_instance.py source and asserts that no string literal in the
-file contains the branded substrings that were de-branded by BLOCKS-456.
+file contains the branded substrings that were de-branded.
 Internal identifiers (import statements, type references, parameter
 names, comments) are NOT in scope and are not visible to ``ast.Constant``
 string-literal walks.
@@ -49,6 +49,6 @@ def test_no_branded_user_visible_strings(branded: str) -> None:
     ]
     assert not offenders, (
         f"Found branded substring {branded!r} in agent_instance.py at lines: "
-        f"{[ln for ln, _ in offenders]}. After BLOCKS-456 these must be "
+        f"{[ln for ln, _ in offenders]}. After this de-branding these must be "
         f"de-branded."
     )

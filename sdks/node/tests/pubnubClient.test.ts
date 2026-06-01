@@ -82,7 +82,7 @@ describe('createPubNubClient', () => {
     expect(instances[0]?.userId).toBe('blocks-agent');
   });
 
-  // Silent-park fix (BLOCKS-129): the agent's long-lived control client
+  // Silent-park fix: the agent's long-lived control client
   // must not give up reconnect attempts after the default 6-step
   // ExponentialRetryPolicy budget runs out, because the PubNub Event
   // Engine then parks in RECEIVE_FAILED and stops emitting status events.
@@ -141,7 +141,7 @@ describe('createPubNubClient', () => {
     expect(instances[0]?.logLevel).toBe(5);
   });
 
-  // Future-proofing for BLOCKS-129. If a future PubNub release freezes
+  // Future-proofing. If a future PubNub release freezes
   // the policy object, the current `policy.maximumRetry = X` assignment
   // throws in strict mode (ES modules are always strict). The fix wraps
   // the mutation in try/catch and returns null so createPubNubClient

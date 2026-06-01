@@ -15,7 +15,7 @@ export interface PubNubClientConfig {
    */
   announceSuccessfulHeartbeats?: boolean;
   /**
-   * BLOCKS-129 silent-park fix. When true, the client uses an
+   * Silent-park fix. When true, the client uses an
    * ExponentialRetryPolicy with maximumRetry expanded to ~30 days
    * (43_200 attempts at the 60s cap). PubNub's Event Engine otherwise
    * exhausts the default 6-attempt budget after ~3.5 min and parks in

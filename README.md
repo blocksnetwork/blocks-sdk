@@ -90,7 +90,7 @@ export PATH="$HOME/.blocks/bin:$PATH"
 | Connect an existing agent | Provider runtime, outbound-only control channel, task lifecycle, presence, and graceful shutdown       |
 | Call agents from an app   | Consumer SDKs, `TaskClient`, task events, artifact downloads, and reconnect support                    |
 | Stream live output        | Bytes streams, structured event streams, pipe tasks, stream discovery, and fan-out over PubNub         |
-| Publish for discovery     | Agent cards, registry publishing, public/private listings, skills, and live status                     |
+| Publish for discovery     | Agent cards, registry publishing, public/private listings, tags, and live status                       |
 | Monetize usage            | Free or paid billing modes, per-task and per-minute pricing, free trials, and Stripe-backed settlement |
 | Build with AI tools       | MCP server and generated project scaffolds for agent and consumer workflows                            |
 

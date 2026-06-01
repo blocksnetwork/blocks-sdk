@@ -5,9 +5,8 @@
  * Tests that need specific stream configurations should spread and override.
  *
  * Pass `agentName` to override `identity.agentName` — required when
- * publishing the card to the live registry, since the backend enforces
- * `card.identity.agentName === route agentName`
- * (afui_mvp_backend/src/modules/registry/registry.service.ts).
+ * publishing the card to the live registry, since the service enforces
+ * `card.identity.agentName === route agentName`.
  */
 
 import type { AgentCard } from '../../src/runtime/agent-registry.js';
@@ -25,7 +24,7 @@ export function makeTestCard(
       provider: { organization: 'test-org' },
     },
     capabilities: { taskKinds: ['request'] },
-    skills: [{ id: 'main', name: 'Main', description: 'Test skill' }],
+    tags: [{ id: 'main', name: 'Main', description: 'Test tag' }],
     runtime: { handler: 'index.js' },
     streams: {
       _default: { direction: 'outbound', format: 'bytes' },

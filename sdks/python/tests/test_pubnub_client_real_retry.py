@@ -27,14 +27,14 @@ def test_create_pubnub_client_with_unbounded_retry_does_not_throw():
     # (310s). Lowering it caused the long-poll to abort every N seconds
     # on healthy clients, which the broker observed as a clean socket
     # close → presence leave/join churn at exactly N-second intervals.
-    # See BLOCKS-129 revert commit for evidence and the kept-default rule.
+    # See the revert commit for evidence and the kept-default rule.
     assert pn.config.subscribe_request_timeout == 310
     # Tear down so the daemon thread doesn't leak.
     pn.stop()
 
 
 def test_presence_timeout_is_actually_applied_to_pnconfiguration():
-    """Regression for BLOCKS-129 follow-up: pnconfig.presence_timeout
+    """Regression follow-up: pnconfig.presence_timeout
     is a @property with no setter. Direct attribute assignment
     silently shadows in __dict__ but the getter still returns
     DEFAULT_PRESENCE_TIMEOUT (300s), causing heartbeats to fire only

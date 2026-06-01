@@ -31,6 +31,7 @@ Each component (Node SDK, Python SDK, CLI) is versioned independently.
   consumer-side `StreamClient` now derives its publisher UUID from the consumer's
   user ID rather than the provider's agent name, so the self-echo filter
   correctly distinguishes both sides.
+- Pipe-task duration error now reads "Pipe tasks require an **integer** duration between 1 and 43200 minutes", making the integer requirement explicit when a non-integer value (e.g. `15.5`) is supplied.
 
 #### Changed
 - ConsumerAuth is now used for `ctx.taskClient` A2A calls, ensuring consistent auth context for orchestrator agents
@@ -40,6 +41,7 @@ Each component (Node SDK, Python SDK, CLI) is versioned independently.
 - `meta.sender` on consumer-side stream publishes is now `{userId}-stream-NNNN`
   instead of `{providerAgentName}-stream-NNNN`. Provider-side and server-side
   semantics are unchanged.
+- `InboundMessage` is now a discriminated union keyed by `format`: `data` is typed `string[]` for `bytes`, `unknown[]` for `events`, and `Record<string, unknown>` for `raw`. Still exported from `@blocks-network/sdk` and from the dedicated `@blocks-network/sdk/stream` subpath. Prefer `stream.events()` / `stream.bytes()` for application code; `stream.inbound` is the advanced/raw path.
 
 #### Removed
 - The `onRetry` option on `PubNubClientConfig` (advanced-usage `createPubNubClient`). Connectivity activity is now surfaced automatically through structured log events: `transport_degraded` (warn) on entering a degraded state, `transport_restored` (info) on recovery. **Migration:** drop the `onRetry` option from `createPubNubClient(...)` calls and read the structured log stream instead.
@@ -100,6 +102,7 @@ consumer-side task submission, real-time event subscriptions, streaming
   consumer-side `StreamClient` now derives its publisher UUID from the consumer's
   user ID rather than the provider's agent name, so the self-echo filter
   correctly distinguishes both sides.
+- Pipe-task duration error now reads "Pipe tasks require an **integer** duration between 1 and 43200 minutes", making the integer requirement explicit when a non-integer value (e.g. `15.5`) is supplied.
 
 #### Changed
 - ConsumerAuth used for `ctx.task_client` A2A calls
@@ -110,6 +113,7 @@ consumer-side task submission, real-time event subscriptions, streaming
 - `meta.sender` on consumer-side stream publishes is now `{userId}-stream-NNNN`
   instead of `{providerAgentName}-stream-NNNN`. Provider-side and server-side
   semantics are unchanged.
+- `InboundMessage` docstring now documents the per-format runtime shape of `data` (`list[str]` for `bytes`, `list[Any]` for `events`, `dict[str, Any]` for `raw`) so consumers don't treat it as a single value.
 
 #### Security
 - PAM token isolation from handler-visible task objects

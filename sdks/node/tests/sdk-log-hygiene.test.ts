@@ -1,5 +1,5 @@
 /**
- * BLOCKS-373 end-to-end log-hygiene acceptance test.
+ * End-to-end log-hygiene acceptance test.
  *
  * Enforces three properties against startAgentInstance():
  *   1. LOG_LEVEL=info (default) emits NO PubNub-internal vocabulary
@@ -83,7 +83,7 @@ const FORBIDDEN_AT_INFO = [
   'staleThresholdMs',
 ];
 
-describe('SDK log hygiene — BLOCKS-373 acceptance criteria', () => {
+describe('SDK log hygiene — acceptance criteria', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;

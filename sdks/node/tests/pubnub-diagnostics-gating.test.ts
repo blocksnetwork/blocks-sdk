@@ -1,5 +1,5 @@
 /**
- * BLOCKS-373 — the BLOCKS-129 connectivity-diagnostics subsystem must be
+ * The connectivity-diagnostics subsystem must be
  * silent by default and must restore its output when
  * BLOCKS_DEBUG_INTERNAL=diagnostics is set. LOG_LEVEL=debug alone does NOT
  * enable diagnostics.
@@ -80,7 +80,7 @@ const makeFakePubNub = (): FakePubNub => {
   };
 };
 
-describe('PubNub diagnostics gating (BLOCKS-373)', () => {
+describe('PubNub diagnostics gating', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;

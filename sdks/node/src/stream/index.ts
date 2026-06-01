@@ -15,5 +15,8 @@ export type {
   StreamClientOptions,
   StreamClientFromDescriptorOptions,
   InboundMessage,
+  InboundBytesMessage,
+  InboundEventsMessage,
+  InboundRawMessage,
   StreamBundleConfig,
 } from './types.js';

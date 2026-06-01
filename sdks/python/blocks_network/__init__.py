@@ -42,13 +42,21 @@ Public API exports:
     BillingModeMismatchError - Raised when the backend rejects SendMessage with a BillingModeMismatch.
     RpcError                - Base structured error for JSON-RPC error responses.
     AnonTaskAccessDenied    - Raised when the anon-task-read-token endpoint returns 403.
+    get_agent               - Look up an agent registry entry by name.
+    AgentEntry              - Agent registry entry (carries billing_mode, listing, card, etc.).
 """
 
 from .agent_auth import AgentAuth, AgentAuthFatalError
 from .agent_instance import start_agent_instance
+from .agent_registry import AgentEntry, get_agent
 from .auth_provider import AuthProvider
 from .config import BLOCKS_MAX_UPLOAD_BYTES
-from .consumer_auth import ConsumerAuth, TokenEndpointConfig, TokenResult
+from .consumer_auth import (
+    AuthRefreshFailedError,
+    ConsumerAuth,
+    TokenEndpointConfig,
+    TokenResult,
+)
 from .artifacts import (
     build_artifact_ref,
     decode_inline_artifact,
@@ -126,6 +134,7 @@ __all__ = [
     "ArtifactRef",
     "AgentAuth",
     "AgentAuthFatalError",
+    "AuthRefreshFailedError",
     "AuthProvider",
     "ConsumerAuth",
     "TokenEndpointConfig",
@@ -141,4 +150,6 @@ __all__ = [
     "BillingModeMismatchError",
     "RpcError",
     "AnonTaskAccessDenied",
+    "get_agent",
+    "AgentEntry",
 ]

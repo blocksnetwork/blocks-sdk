@@ -48,4 +48,4 @@ ARTIFACT_INLINE_LIMIT_BYTES: int = _int_env("ARTIFACT_INLINE_LIMIT_BYTES", 16384
 # ---------------------------------------------------------------------------
 # Platform upload ceiling (NOT env-driven — fixed contract with backend)
 # ---------------------------------------------------------------------------
-BLOCKS_MAX_UPLOAD_BYTES: int = 26_214_400  # 25 MB — must match afui_mvp_backend MAX_FILE_SIZE_BYTES
+BLOCKS_MAX_UPLOAD_BYTES: int = 26_214_400  # 25 MB — must match the service's MAX_FILE_SIZE_BYTES

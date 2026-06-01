@@ -3,7 +3,7 @@
   "title": "Agent Card",
   "description": "Agent card authored by developers (agent-card.json).",
   "type": "object",
-  "required": ["identity", "capabilities", "skills", "runtime"],
+  "required": ["identity", "capabilities", "tags", "runtime"],
   "additionalProperties": false,
   "$defs": {
     "catalogFormTypes": {
@@ -489,7 +489,7 @@
         "webhooks": { "type": "boolean" }
       }
     },
-    "skills": {
+    "tags": {
       "type": "array",
       "minItems": 1,
       "items": {
