@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "blocks-network"
 version = "0.0.0"
 description = "Blocks Network Python SDK - Agent Instance Runtime"
+readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
 dependencies = ["pubnub>=10.6.0,<11", "python-dotenv>=1.0", "certifi"]
