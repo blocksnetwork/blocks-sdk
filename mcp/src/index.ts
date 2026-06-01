@@ -15,15 +15,23 @@ import {
 } from '@blocks-network/sdk';
 
 import { listAgentsAuthenticated } from './registry-list.js';
+import { fetchAgentStatus, MAX_AGENT_NAMES } from './agent-status.js';
+import { getConsumerBalance, createConsumerTopUp } from './billing.js';
 import {
   sendTask,
   getTask,
   listTasks,
   cancelTask,
+  pauseTask,
+  resumeTask,
+  retryTask,
   listAgents,
   getAgentCard,
+  getAgentStatus,
   connectTask,
   downloadArtifact,
+  checkBalance,
+  requestTopup,
   defaultFileSize,
   type ToolDeps,
   type TaskClientLike,
@@ -94,10 +102,14 @@ async function getTaskClient(billingMode: 'free' | 'paid' = 'free'): Promise<Tas
 const deps: ToolDeps = {
   getBaseUrl,
   getApiKey: () => process.env.BLOCKS_API_KEY,
+  getOrgId: () => process.env.BLOCKS_ORG_ID,
   getTaskClient,
   getAgentByName: (agentName, options) =>
     getAgent(agentName, options) as Promise<AgentEntryLike | null>,
   listAgents: listAgentsAuthenticated,
+  fetchAgentStatus,
+  getConsumerBalance,
+  createConsumerTopUp,
   validateFilePath,
   resolveSavePath,
   writeFile,
@@ -159,10 +171,31 @@ server.tool(
 );
 
 server.tool(
+  'pause_task',
+  'Pause a running pipe task. Resume later with resume_task.',
+  { taskId: z.string().describe('The task ID to pause') },
+  (params) => pauseTask(params, deps),
+);
+
+server.tool(
+  'resume_task',
+  'Resume a paused pipe task',
+  { taskId: z.string().describe('The task ID to resume') },
+  (params) => resumeTask(params, deps),
+);
+
+server.tool(
+  'retry_task',
+  'Retry a failed task',
+  { taskId: z.string().describe('The task ID to retry') },
+  (params) => retryTask(params, deps),
+);
+
+server.tool(
   'list_agents',
   'List available agents in the Blocks Network registry. Use listing="private" with an API key to discover your private agents.',
   {
-    skill: z.string().optional().describe('Filter by skill name'),
+    tag: z.string().optional().describe('Filter by tag slug'),
     listing: z
       .enum(['public', 'private'])
       .optional()
@@ -177,6 +210,40 @@ server.tool(
   'Get the full agent card for a specific agent',
   { agentName: z.string().describe('Agent name to look up') },
   (params) => getAgentCard(params, deps),
+);
+
+server.tool(
+  'get_agent_status',
+  'Check live availability for one or more agents: how many instances are online, total task count for the agent, and SDK/CLI versions per instance. (Per-instance live activity counters such as `activeTasks`, `concurrentTasksPerInstance`, `startedAt`, and `totalActiveTasks` are reserved in the response shape but not yet populated by the backend — they currently return 0.)',
+  {
+    agentNames: z
+      .array(z.string())
+      .min(1)
+      .max(MAX_AGENT_NAMES)
+      .describe(`Agent names to check (1-${MAX_AGENT_NAMES})`),
+  },
+  (params) => getAgentStatus(params, deps),
+);
+
+server.tool(
+  'check_balance',
+  'Get the consumer billing balance for the configured org (BLOCKS_ORG_ID): ledger balance, active reservations, and available balance.',
+  {},
+  (_params) => checkBalance({}, deps),
+);
+
+server.tool(
+  'request_topup',
+  'Create a Stripe Checkout session to add USD to the consumer balance. Returns a URL the user opens in a browser to complete payment; the MCP server does not handle payment itself. Minimum top-up is $5 (platform `MIN_BILLING_AMOUNT`).',
+  {
+    amountUsd: z
+      .number()
+      .positive()
+      .describe(
+        'Amount to add in USD (e.g. 25 or 19.99). Whole-cent precision. Must be at least $5 (platform minimum).',
+      ),
+  },
+  (params) => requestTopup(params, deps),
 );
 
 server.tool(

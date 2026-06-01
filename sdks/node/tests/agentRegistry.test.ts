@@ -6,13 +6,13 @@ import {
   connectAgent,
   getAgent,
   removeAgent,
-  fetchAgentsBySkill,
+  fetchAgentsByTag,
   fetchAgentsByListing,
   registryAllChannel,
-  registrySkillChannel,
+  registryTagChannel,
   registryVisibilityChannel,
   registryLogChannel,
-  normalizeSkillSlug,
+  normalizeTagSlug,
   type AgentCard,
 } from '../src/runtime/agent-registry.js';
 // import { hasLiveEnv } from './helpers/live-test-config.js';
@@ -64,7 +64,7 @@ const TEST_INSTANCE_ID = 'test-instance-1';
 //           defaultInputModes: ['application/json'],
 //           defaultOutputModes: ['application/json'],
 //           capabilities: { streaming: false },
-//           skills: [{ id: 'test', name: 'Test' }, { id: 'automation', name: 'Automation' }],
+//           tags: [{ id: 'test', name: 'Test' }, { id: 'automation', name: 'Automation' }],
 //           runtime: { agentName, handler: './handler.ts' },
 //         },
 //       });
@@ -78,7 +78,7 @@ const TEST_INSTANCE_ID = 'test-instance-1';
 //
 //       expect(entry).not.toBeNull();
 //       expect(entry?.description).toBe('Test agent for automated tests');
-//       expect(entry?.skills).toEqual([{ id: 'test', name: 'Test' }, { id: 'automation', name: 'Automation' }]);
+//       expect(entry?.tags).toEqual([{ id: 'test', name: 'Test' }, { id: 'automation', name: 'Automation' }]);
 //       expect(entry?.listing).toBe('playground');
 //     }, 30000);
 //
@@ -93,7 +93,7 @@ const TEST_INSTANCE_ID = 'test-instance-1';
 //         defaultInputModes: ['application/json'],
 //         defaultOutputModes: ['application/json'],
 //         capabilities: { streaming: false },
-//         skills: [{ id: 'test-skill', name: 'Test Skill', description: 'A test skill' }],
+//         tags: [{ id: 'test-tag', name: 'Test Tag', description: 'A test tag' }],
 //       };
 //
 //       await connectAgent(agentName, { instanceId, card });
@@ -103,24 +103,24 @@ const TEST_INSTANCE_ID = 'test-instance-1';
 //       const entry = await getAgent(agentName);
 //       expect(entry).not.toBeNull();
 //       expect(entry?.card?.name).toBe('Test Card Agent');
-//       expect(entry?.card?.skills).toHaveLength(1);
-//       expect(entry?.card?.skills[0].id).toBe('test-skill');
+//       expect(entry?.card?.tags).toHaveLength(1);
+//       expect(entry?.card?.tags[0].id).toBe('test-tag');
 //     }, 15000);
 //
-//     it('filters agents by skill', async () => {
-//       const agentName = `skill-test-${testRunId}`;
+//     it('filters agents by tag', async () => {
+//       const agentName = `tag-test-${testRunId}`;
 //       createdAgentNames.push(agentName);
 //       await connectAgent(agentName, {
 //         instanceId,
 //         card: {
-//           name: 'Skill Test Agent',
-//           description: 'Skill test',
+//           name: 'Tag Test Agent',
+//           description: 'Tag test',
 //           version: '1.0.0',
 //           provider: { organization: 'TestOrg' },
 //           defaultInputModes: ['application/json'],
 //           defaultOutputModes: ['application/json'],
 //           capabilities: { streaming: false },
-//           skills: [{ id: 'image-generation', name: 'Image Generation' }, { id: 'text.embeddings', name: 'Text Embeddings' }],
+//           tags: [{ id: 'image-generation', name: 'Image Generation' }, { id: 'text.embeddings', name: 'Text Embeddings' }],
 //         },
 //       });
 //
@@ -132,7 +132,7 @@ const TEST_INSTANCE_ID = 'test-instance-1';
 //       }
 //
 //       expect(entry).not.toBeNull();
-//       expect(entry?.skills).toEqual(
+//       expect(entry?.tags).toEqual(
 //         expect.arrayContaining([
 //           expect.objectContaining({ id: 'image-generation' }),
 //           expect.objectContaining({ id: 'text.embeddings' }),
@@ -215,7 +215,7 @@ const TEST_INSTANCE_ID = 'test-instance-1';
 //           defaultInputModes: ['application/json'],
 //           defaultOutputModes: ['application/json'],
 //           capabilities: { streaming: false },
-//           skills: [{ id: 'audit-test', name: 'Audit Test' }],
+//           tags: [{ id: 'audit-test', name: 'Audit Test' }],
 //         },
 //       });
 //
@@ -234,16 +234,16 @@ const TEST_INSTANCE_ID = 'test-instance-1';
 describe('Agent Registry (unit)', () => {
   it('exports registry channel helpers', () => {
     expect(registryAllChannel()).toBe('registry.all');
-    expect(registrySkillChannel('test')).toBe('registry.skill.test');
+    expect(registryTagChannel('test')).toBe('registry.tag.test');
     expect(registryVisibilityChannel(true)).toBe('registry.public');
     expect(registryVisibilityChannel(false)).toBe('registry.private');
     expect(registryLogChannel()).toBe('registry.log');
   });
 
-  it('normalizes skill slugs correctly', () => {
-    expect(normalizeSkillSlug('image-generation')).toBe('image_generation');
-    expect(normalizeSkillSlug('text.embeddings')).toBe('text.embeddings');
-    expect(normalizeSkillSlug('Image Generation')).toBe('image_generation');
+  it('normalizes tag slugs correctly', () => {
+    expect(normalizeTagSlug('image-generation')).toBe('image_generation');
+    expect(normalizeTagSlug('text.embeddings')).toBe('text.embeddings');
+    expect(normalizeTagSlug('Image Generation')).toBe('image_generation');
   });
 
   describe('connectAgent (REST)', () => {
@@ -302,7 +302,7 @@ describe('Agent Registry (unit)', () => {
           provider: { organization: 'TestOrg' },
         },
         capabilities: { taskKinds: ['request'] },
-        skills: [{ id: 'test', name: 'Test' }],
+        tags: [{ id: 'test', name: 'Test' }],
       };
 
       await connectAgent('test_agent', {
@@ -380,6 +380,34 @@ describe('Agent Registry (unit)', () => {
 
       expect(result.pamToken).toBe('pam-xyz');
     });
+
+    // The legacy `skills` field must fail fast at the SDK boundary with an
+    // actionable error and no leaked internal references.
+    it('throws when card uses legacy `skills` field instead of `tags`', async () => {
+      const auth = mockAgentAuth();
+      const legacyCards: Array<Record<string, unknown>> = [
+        { skills: [] },
+        { skills: [{ id: 'echo', name: 'Echo' }] },
+        {
+          identity: { agentName: 'a', displayName: 'A', description: 'd', version: '1', provider: { organization: 'o' } },
+          capabilities: { taskKinds: ['request'] },
+          skills: [{ id: 'echo', name: 'Echo' }],
+        },
+      ];
+
+      for (const card of legacyCards) {
+        const call = connectAgent('test_agent', {
+          instanceId: TEST_INSTANCE_ID,
+          baseUrl: TEST_BASE_URL,
+          card: card as unknown as AgentCard,
+          agentAuth: auth as any,
+        });
+        await expect(call).rejects.toThrow(/`skills`.*`tags`/s);
+        // Guard: the error message must not leak internal references to customers.
+        await expect(call).rejects.not.toThrow(/BLOCKS-\d+|atlassian/);
+      }
+      expect(auth.init).not.toHaveBeenCalled();
+    });
   });
 
   describe('getAgent (REST)', () => {
@@ -404,9 +432,9 @@ describe('Agent Registry (unit)', () => {
             agentName: 'acme-echo',
             name: 'Echo Agent',
             description: 'An echo agent',
-            skills: [{ id: 'echo', name: 'Echo' }],
+            tags: [{ id: 'echo', name: 'Echo' }],
             listing: 'public',
-            card: { name: 'Echo Agent', skills: [{ id: 'echo', name: 'Echo' }] },
+            card: { name: 'Echo Agent', tags: [{ id: 'echo', name: 'Echo' }] },
             scaling: { expectedInstances: 1, concurrency: 2 },
             registeredAt: '2024-01-01T00:00:00Z',
           },
@@ -423,7 +451,7 @@ describe('Agent Registry (unit)', () => {
       expect(entry?.agentName).toBe('acme-echo');
       expect(entry?.displayName).toBe('Echo Agent');
       expect(entry?.description).toBe('An echo agent');
-      expect(entry?.skills).toEqual([{ id: 'echo', name: 'Echo' }]);
+      expect(entry?.tags).toEqual([{ id: 'echo', name: 'Echo' }]);
       expect(entry?.listing).toBe('public');
       expect(entry?.card?.name).toBe('Echo Agent');
       expect(entry?.scaling?.expectedInstances).toBe(1);
@@ -551,7 +579,7 @@ describe('Agent Registry (unit)', () => {
               agentName: 'agent-1',
               name: 'Agent One',
               description: 'First agent',
-              skills: [{ id: 'cap1', name: 'Cap 1' }, { id: 'cap2', name: 'Cap 2' }],
+              tags: [{ id: 'cap1', name: 'Cap 1' }, { id: 'cap2', name: 'Cap 2' }],
               listing: 'public',
             },
             {
@@ -578,7 +606,7 @@ describe('Agent Registry (unit)', () => {
       const agent1 = result.agents.find((a) => a.agentName === 'agent-1');
       expect(agent1?.displayName).toBe('Agent One');
       expect(agent1?.description).toBe('First agent');
-      expect(agent1?.skills).toEqual([{ id: 'cap1', name: 'Cap 1' }, { id: 'cap2', name: 'Cap 2' }]);
+      expect(agent1?.tags).toEqual([{ id: 'cap1', name: 'Cap 1' }, { id: 'cap2', name: 'Cap 2' }]);
       expect(agent1?.listing).toBe('public');
 
       const agent2 = result.agents.find((a) => a.agentName === 'agent-2');
@@ -625,7 +653,7 @@ describe('Agent Registry (unit)', () => {
     });
   });
 
-  describe('fetchAgentsBySkill (REST)', () => {
+  describe('fetchAgentsByTag (REST)', () => {
     let fetchSpy: ReturnType<typeof vi.fn>;
     const originalFetch = globalThis.fetch;
 
@@ -638,17 +666,17 @@ describe('Agent Registry (unit)', () => {
       globalThis.fetch = originalFetch;
     });
 
-    it('passes skill as query param', async () => {
+    it('passes tag as query param', async () => {
       fetchSpy.mockResolvedValueOnce({
         ok: true,
         status: 200,
         json: async () => ({ agents: [], totalCount: 0, next: null }),
       });
 
-      await fetchAgentsBySkill('image-generation', { baseUrl: TEST_BASE_URL });
+      await fetchAgentsByTag('image-generation', { baseUrl: TEST_BASE_URL });
 
       const [url] = fetchSpy.mock.calls[0];
-      expect(url).toContain('skill=image-generation');
+      expect(url).toContain('tag=image-generation');
       expect(url).toContain('include=full');
     });
   });

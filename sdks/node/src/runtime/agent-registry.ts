@@ -9,10 +9,10 @@
 import os from 'node:os';
 import {
   registryAllChannel,
-  registrySkillChannel,
+  registryTagChannel,
   registryVisibilityChannel,
   registryLogChannel,
-  normalizeSkillSlug,
+  normalizeTagSlug,
 } from './channel-manager.js';
 import { getEnv } from '../env.js';
 import type { AgentAuth, RegistrationPayload } from './agent-auth.js';
@@ -39,9 +39,9 @@ export interface AgentScaling {
 }
 
 /**
- * Skill object within an AgentCard.
+ * Tag object within an AgentCard.
  */
-export interface AgentSkill {
+export interface AgentTag {
   id: string;
   name: string;
   description?: string;
@@ -52,7 +52,7 @@ export interface AgentSkill {
  * Agent card payload (input schema) — authored by developers in agent-card.json.
  *
  * Uses the 9-section structure: identity, capabilities, io, streams,
- * security, services, skills, extensions, runtime.
+ * security, services, tags, extensions, runtime.
  */
 export interface AgentCard {
   identity: {
@@ -109,7 +109,7 @@ export interface AgentCard {
   services?: {
     webhooks?: boolean;
   };
-  skills: AgentSkill[];
+  tags: AgentTag[];
   extensions?: Record<string, unknown>;
   runtime?: {
     handler?: string;
@@ -143,7 +143,7 @@ export interface OutputAgentCard {
   streams?: AgentCard['streams'];
   security?: AgentCard['security'];
   services?: AgentCard['services'];
-  skills: AgentSkill[];
+  tags: AgentTag[];
   extensions?: Record<string, unknown>;
 }
 
@@ -157,8 +157,8 @@ export interface AgentEntry {
   displayName: string;
   /** Human-readable description */
   description?: string;
-  /** Skill objects from agent card */
-  skills?: AgentSkill[];
+  /** Tag objects from agent card */
+  tags?: AgentTag[];
   /** Multi-instance scaling configuration */
   scaling?: AgentScaling;
   /** Full agent card payload */
@@ -191,8 +191,8 @@ export interface ConnectAgentOptions {
   billingMode: 'free' | 'paid';
   /** Human-readable description */
   description?: string;
-  /** Skill objects advertised by this agent */
-  skills?: AgentSkill[];
+  /** Tag objects advertised by this agent */
+  tags?: AgentTag[];
   /** Multi-instance scaling configuration */
   scaling?: AgentScaling;
   /** Full agent card payload */
@@ -236,7 +236,7 @@ export interface RegistryAuditEvent {
   source: string;
   agentName?: string;
   visibility?: 'public' | 'private';
-  skills?: string[];
+  tags?: string[];
   cardHash?: string;
   cardRef?: string;
   summaryHash?: string;
@@ -351,7 +351,7 @@ interface ServerAgent {
   agentName: string;
   name?: string;
   description?: string;
-  skills?: AgentSkill[];
+  tags?: AgentTag[];
   listing?: 'private' | 'public';
   billingMode?: 'free' | 'paid';
   card?: AgentCard;
@@ -366,7 +366,7 @@ function mapServerAgentToEntry(agent: ServerAgent): AgentEntry {
     agentName: agent.agentName,
     displayName: agent.name ?? agent.agentName,
     description: agent.description,
-    skills: agent.skills,
+    tags: agent.tags,
     scaling: agent.scaling,
     card: agent.card,
     cardRef: agent.cardRef,
@@ -380,6 +380,26 @@ function mapServerAgentToEntry(agent: ServerAgent): AgentEntry {
 // ============================================================================
 // Registry Operations
 // ============================================================================
+
+/**
+ * Reject the legacy `skills` field on an agent-card. `skills` was renamed
+ * to `tags`; there is no wire/SDK alias. Without this guard, JS callers
+ * who still pass `{ skills: [...] }` (e.g. reading a stale
+ * `agent-card.json` from disk) would silently send the field over the
+ * wire and only see the backend's generic rejection. This fails fast on
+ * the client side with an actionable error.
+ */
+function assertNoLegacySkillsField(card: unknown): void {
+  if (!card || typeof card !== 'object') return;
+  if (!('skills' in card)) return;
+  throw new Error(
+    '[blocks-sdk] agent-card field `skills` was renamed to `tags`. ' +
+      'Action: rename the field in your code (or in any agent-card.json you load) — ' +
+      'same shape, only the key name changes. This SDK ships no compatibility alias. ' +
+      'If you publish via `blocks-cli`, upgrading the CLI rewrites the field for you, ' +
+      'but programmatic callers (this SDK) must rename.',
+  );
+}
 
 /**
  * Register or update an agent in the registry via REST.
@@ -397,6 +417,8 @@ export async function connectAgent(
       'agentName must contain only alphanumeric characters and underscores (no hyphens)',
     );
   }
+
+  assertNoLegacySkillsField(options.card);
 
   const url = registryUrl(undefined, options.baseUrl);
 
@@ -496,13 +518,13 @@ export async function fetchAgentRegistry(
 }
 
 /**
- * Fetch agents filtered by skill.
+ * Fetch agents filtered by tag.
  */
-export async function fetchAgentsBySkill(
-  skill: string,
+export async function fetchAgentsByTag(
+  tag: string,
   options?: { limit?: number; cursor?: string; baseUrl?: string },
 ): Promise<AgentRegistryResult> {
-  const query: Record<string, string> = { include: 'full', skill };
+  const query: Record<string, string> = { include: 'full', tag };
   if (options?.limit) query.limit = String(options.limit);
   if (options?.cursor) query.cursor = options.cursor;
 
@@ -583,8 +605,8 @@ export async function removeAgent(
 export {
   detectDeviceOs,
   registryAllChannel,
-  registrySkillChannel,
+  registryTagChannel,
   registryVisibilityChannel,
   registryLogChannel,
-  normalizeSkillSlug,
+  normalizeTagSlug,
 };

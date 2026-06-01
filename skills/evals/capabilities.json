@@ -40,7 +40,7 @@
     {
       "id": 5,
       "name": "Agent card configuration",
-      "description": "Correctly configures agent-card.json with name, description, protocolVersions, url, skills, and runtime settings",
+      "description": "Correctly configures agent-card.json with name, description, protocolVersions, url, tags, and runtime settings",
       "complexity": "intermediate",
       "api_elements": ["agent-card.json", "identity.agentName", "runtime.handler", "protocolVersions"]
     },

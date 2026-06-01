@@ -38,7 +38,23 @@ class StreamBundleConfig:
 
 @dataclass
 class InboundMessage:
-    """Normalized inbound message yielded by the inbound async iterator."""
+    """Normalized inbound message yielded by the inbound iterator.
+
+    Discriminated by ``format``. ``data`` runtime shape:
+      - ``format == "bytes"``  → ``list[str]`` (chunks; ``encoding`` is
+        ``"utf8"`` or ``"base64"``)
+      - ``format == "events"`` → ``list[Any]`` (one or more events from a
+        single producer flush)
+      - ``format == "raw"``    → ``dict[str, Any]`` (passthrough for
+        unknown message types)
+
+    The array-vs-single shape is the SDK's own producer-side bundler
+    (``stream_bundle.py``) coalescing writes by size/latency — NOT PubNub
+    transport batching. A single producer ``write()`` already yields a
+    1-element list on the wire. Application code should prefer
+    ``bytes()`` / ``events()`` which flatten on the consumer's behalf;
+    reach for ``inbound`` only when you need raw envelope metadata.
+    """
 
     data: Any
     seq: int

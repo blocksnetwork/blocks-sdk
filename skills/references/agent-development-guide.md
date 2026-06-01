@@ -73,10 +73,14 @@ This opens browser-based OAuth, stores credentials, and writes
 different directory (e.g. `blocks login --write-env --dir ./my_agent`).
 
 **Always pass `--write-env` (or `--no-write-env`) when invoking `blocks
-login` from a coding-agent / non-interactive session.** Bare `blocks
-login` shows a `Write BLOCKS_API_KEY to project .env? (Y/n):` prompt
-that hangs without a TTY answer. `--write-env` opts in unconditionally;
-`--no-write-env` opts out unconditionally. Either skips the prompt.
+login` from a coding-agent / non-interactive session.** The CLI
+auto-detects non-TTY stdin and silently skips the
+`Write BLOCKS_API_KEY to project .env? (Y/n):` prompt without writing
+anything -- so bare `blocks login` does not hang, but it also does not
+populate `.env`, which is rarely what an agent flow wants. Pass the
+flag explicitly so the outcome is deterministic regardless of how the
+harness wires stdin: `--write-env` opts in unconditionally;
+`--no-write-env` opts out unconditionally.
 
 ### Step 4: Publish the Agent
 
@@ -87,11 +91,62 @@ cd <agent-name> && blocks publish
 This validates `agent-card.json` and publishes agent metadata to the
 registry. Requires prior `blocks login`.
 
+#### Non-interactive publish flags
+
+In a TTY, `blocks publish` walks the user through listing visibility,
+billing mode, pricing, and terms acceptance. In CI or coding-agent
+sessions, the same prompts hang. Provide flags up front:
+
+| Flag | Purpose |
+|---|---|
+| `--billing-mode {free\|paid}` | Required (mirrors `agent-card.json`). |
+| `--listing {public\|private}` | Visibility in the registry. |
+| `--price <usd>` | Single-kind agent price (auto-mapped to per-task or per-minute). |
+| `--price-per-task <usd>` / `--price-per-minute <usd>` | Per-kind pricing for dual-kind (request + pipe) agents. |
+| `--free-units <n>` | Free trial units per consumer org (auto-mapped from `taskKinds`). |
+| `--free-tasks <n>` / `--free-minutes <n>` | Per-kind free trial counts for dual-kind agents. |
+| `--accept-terms` | Accept legal attestations non-interactively. |
+| `--org-name <name>` | Set the organization name on first publish. |
+| `--api-key <key>` / `--api-key-stdin` | Authenticate inline without `blocks login`. |
+
+Two recipes:
+
+```bash
+# Free public agent
+blocks publish --billing-mode free --listing public --accept-terms
+
+# Paid private agent
+blocks publish --billing-mode paid --listing private \
+  --price-per-task 0.05 --accept-terms
+```
+
+`blocks publish` re-runs the same schema validation as `blocks check`,
+so you don't need to run `check` first -- but it's still useful as a
+fast pre-flight.
+
 ### Verify Identity
 
 ```bash
 blocks whoami
+blocks whoami --json   # structured output: org_name, org_id, key_id, expires_at, days_remaining, expired
 ```
+
+### Manage Private Agents
+
+When `--listing private` is used, grants are managed via `blocks
+invite`:
+
+```bash
+blocks invite send <agentName> --email user@example.com   # invite a user
+blocks invite send <agentName> --org consumer-org-slug    # invite an org
+blocks invite list <agentName>                            # list pending invitations
+blocks invite grants <agentName>                          # list active grants
+blocks invite revoke <agentName> --email user@example.com # revoke a user grant
+blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org grant
+blocks invite accept <token>                              # consumer-side: accept an invitation
+```
+
+`--email` and `--org` are mutually exclusive on `send` and `revoke`.
 
 ### CI/CD Auth (Reference)
 
@@ -100,6 +155,8 @@ blocks login --api-key "$KEY" --write-env  # non-interactive login + .env write
 blocks publish --api-key "$KEY"            # use a pre-obtained API key
 echo "$KEY" | blocks publish --api-key-stdin  # read from stdin
 blocks logout                              # clear stored credentials
+blocks version                             # print CLI version
+blocks upgrade                             # self-update (POSIX installer flow)
 ```
 
 When an orchestrator reconnects to an existing sub-task, `session.onArtifact(...)`
@@ -118,7 +175,7 @@ parsed from history.
 After the handler is implemented, run the agent and send a test task
 directly.
 
-### Step 4: Start the Agent
+### Step 5: Start the Agent
 
 ```bash
 cd <agent-name> && npm install && npm start
@@ -126,7 +183,7 @@ cd <agent-name> && npm install && npm start
 
 This runs the agent in the foreground. Leave it running.
 
-### Step 5: Send a Test Task
+### Step 6: Send a Test Task
 
 In a **separate terminal**:
 
@@ -175,10 +232,21 @@ blocks init my-agent --yes --language node
 ```
 
 ```bash
-blocks init --yes --language node   # Non-interactive scaffold (TypeScript)
-blocks check                        # Validate agent-card.json + handler
-blocks run                          # Optional: start agent with validation (Go CLI)
+blocks init <name> --yes --language node                  # Provider scaffold (default --type provider)
+blocks init <name> --yes --language node --type consumer  # Consumer script (calls agents via TaskClient)
+blocks check                                              # Validate agent-card.json + handler existence
+blocks run                                                # Start agent (Go CLI delegates to language runner)
 ```
+
+`blocks init` defaults to `--type provider` -- it scaffolds a handler
+agent (`handler.{ts,py}`, `trigger.{ts,py}`, `agent-card.json`).
+Passing `--type consumer` scaffolds a script (`index.ts` or `main.py`)
+that calls other agents via `TaskClient`; consumer projects have no
+`agent-card.json` and no handler, and they don't publish.
+
+`blocks check` validates the card JSON **and** verifies that the file
+referenced by `runtime.handler` exists on disk; missing handlers
+produce a `[FAIL]` even when the JSON is valid.
 
 The default run path after scaffolding is `npm start` (which runs
 `blocks run`). This loads `agent-card.json`, resolves the handler
@@ -215,8 +283,8 @@ my-agent/
   "capabilities": {
     "taskKinds": ["request"]
   },
-  "skills": [
-    { "id": "main", "name": "Main Skill", "description": "Primary skill" }
+  "tags": [
+    { "id": "main", "name": "Main Tag", "description": "Primary tag" }
   ],
   "runtime": {
     "handler": "./handler.ts",
@@ -237,7 +305,7 @@ my-agent/
 | `identity.version` | string | Yes | Semantic version |
 | `identity.provider.organization` | string | Yes | Organization name |
 | `capabilities.taskKinds` | string[] | Yes | `"request"`, `"pipe"`, or both |
-| `skills` | array | Yes | `{ id, name, description?, examples? }` |
+| `tags` | array | Yes | `{ id, name, description?, examples? }` |
 | `runtime.handler` | string | Yes | Path to handler module |
 | `runtime.handlerExport` | string | No | Named export (default: `"default"`) |
 | `runtime.concurrency` | number | No | Max concurrent tasks (default: 1, 0 = unlimited) |

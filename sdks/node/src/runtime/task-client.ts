@@ -17,6 +17,7 @@ import { TaskSession, type CallbackErrorContext } from './task-session.js';
 import type { TaskEvent as SessionTaskEvent } from './task-session.js';
 import type { AgentAuth } from './agent-auth.js';
 import type { AuthProvider } from './auth-provider.js';
+import { preflightAuthOrThrow } from './auth-provider.js';
 import { ConsumerAuth, type TokenResult, type TokenEndpointConfig } from './consumer-auth.js';
 import { shouldInlineArtifact, buildArtifactRef, type ArtifactRef } from './artifacts.js';
 import { uploadFile, type FileUploadAuth, type ConsumerUploadParams } from './file-upload.js';
@@ -836,6 +837,7 @@ export class TaskClient {
     if (this._anonFingerprint) {
       throw new Error('anon-mode TaskClient does not support sendMessage()');
     }
+    await preflightAuthOrThrow(this.config.authProvider);
     if (this.config.authProvider?.ensureReady) {
       await this.config.authProvider.ensureReady();
     }
@@ -852,7 +854,7 @@ export class TaskClient {
         duration > 43200
       ) {
         throw new Error(
-          'Pipe tasks require a duration between 1 and 43200 minutes',
+          'Pipe tasks require an integer duration between 1 and 43200 minutes',
         );
       }
     } else if (duration !== undefined && duration !== null) {
@@ -1224,6 +1226,8 @@ export class TaskClient {
         drainWindowMs: params.drainWindowMs,
       });
     }
+
+    await preflightAuthOrThrow(this.config.authProvider);
 
     // Step 1: Validate auth -- connect() requires JWT auth (via authProvider)
     if (!this.config.authProvider?.getAuthHeader()) {

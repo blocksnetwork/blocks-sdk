@@ -848,6 +848,9 @@ class TaskClient:
                 "anon-mode TaskClient does not support send_message()"
             )
 
+        from .auth_provider import preflight_auth_or_raise
+        preflight_auth_or_raise(self._auth_provider)
+
         from .artifacts import build_artifact_ref, should_inline_artifact
         from .file_upload import presigned_upload_flow
 
@@ -877,7 +880,7 @@ class TaskClient:
                 or duration > 43200
             ):
                 raise ValueError(
-                    "Pipe tasks require a duration between 1 and 43200 minutes"
+                    "Pipe tasks require an integer duration between 1 and 43200 minutes"
                 )
         elif duration is not None:
             raise ValueError(
@@ -1274,6 +1277,14 @@ class TaskClient:
             pam_token = token_resp.get("pamToken", "")
             status_channel = token_resp.get("channel", "")
         else:
+            # Fail fast when ConsumerAuth has recorded a permanent refresh
+            # failure — placed AFTER the anon-fingerprint short-circuit so
+            # anon mode never observes the guard (matches Node task-client.ts
+            # connect() placement). Uses the shared preflight helper so a
+            # transient outage that resolves before connect() can recover.
+            from .auth_provider import preflight_auth_or_raise
+            preflight_auth_or_raise(self._auth_provider)
+
             has_auth = (
                 self._auth_provider is not None
                 and self._auth_provider.get_auth_header()

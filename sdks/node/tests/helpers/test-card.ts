@@ -25,7 +25,7 @@ export function makeTestCard(
       provider: { organization: 'test-org' },
     },
     capabilities: { taskKinds: ['request'] },
-    skills: [{ id: 'main', name: 'Main', description: 'Test skill' }],
+    tags: [{ id: 'main', name: 'Main', description: 'Test tag' }],
     runtime: { handler: 'index.js' },
     streams: {
       _default: { direction: 'outbound', format: 'bytes' },

@@ -10,6 +10,7 @@
 
 import type { AgentAuth } from './agent-auth.js';
 import type { AuthProvider } from './auth-provider.js';
+import { preflightAuthOrThrow } from './auth-provider.js';
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from './protocol-version.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
 
@@ -260,6 +261,13 @@ export async function callRpc<T>(
 
     return json.result as T;
   };
+
+  // Pre-flight: when the auth provider has a recorded permanent-refresh
+  // error, attempt one reactive recovery. If the recovery succeeds the
+  // error clears and we proceed with the new token; if it doesn't, the
+  // typed AuthRefreshFailedError is thrown before any network attempt
+  // so consumers don't see an opaque 401 from the doomed RPC.
+  await preflightAuthOrThrow(config.authProvider);
 
   if (config.authProvider?.ensureReady) {
     await config.authProvider.ensureReady();

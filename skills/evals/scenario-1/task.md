@@ -16,5 +16,5 @@ The handler should validate that the input is valid JSON and return an error res
 Produce the following files:
 
 1. **`handler.ts`** — The complete Blocks Network handler for JSON transformation.
-2. **`agent-card.json`** — Agent card with a descriptive skill definition including tags and examples.
+2. **`agent-card.json`** — Agent card with a descriptive tag definition including examples.
 3. **`package.json`** — Correct package.json with type: "module" and @blocks-network/sdk dependency.

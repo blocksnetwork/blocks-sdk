@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/pubnub/blocks-sdk/cli/internal/schema"
 	"github.com/spf13/cobra"
 )
 
@@ -36,23 +34,15 @@ For Python projects (detected by pyproject.toml): uses venv walk-up with "python
 
 		cardPath := filepath.Join(cwd, "agent-card.json")
 
-		// Read agent card to determine project type
-		raw, err := os.ReadFile(cardPath)
-		if err != nil {
+		if _, statErr := os.Stat(cardPath); os.IsNotExist(statErr) {
 			return fmt.Errorf("could not read %s\nCreate an agent-card.json or run: blocks init <name>", cardPath)
 		}
 
-		var card struct {
-			Runtime struct {
-				Handler string `json:"handler"`
-			} `json:"runtime"`
-		}
-		if err := json.Unmarshal(raw, &card); err != nil {
-			return fmt.Errorf("invalid JSON in %s", cardPath)
-		}
-
-		// Validate agent card against schema before running
-		res := schema.Validate(cardPath)
+		// Validate agent card against schema before running. The shim runs
+		// the legacy `skills` → `tags` rewrite first so a stale card
+		// boots locally with a warning instead of failing on a confusing
+		// schema rejection — same UX as `blocks publish`.
+		res := validateCardWithLegacyShim(cardPath)
 		if len(res.Errors) > 0 {
 			fmt.Fprintf(os.Stderr, "agent-card.json validation failed:\n")
 			for _, e := range res.Errors {
@@ -61,8 +51,16 @@ For Python projects (detected by pyproject.toml): uses venv walk-up with "python
 			return fmt.Errorf("fix validation errors or run 'blocks check' for details")
 		}
 
-		// Detect project type from handler extension and project files
-		projectType := detectProjectType(cwd, card.Runtime.Handler)
+		// Detect project type from handler extension and project files.
+		// The handler path comes from the validated (and possibly shimmed)
+		// card so a `skills`-only legacy card can still resolve its handler.
+		var handler string
+		if rt, ok := res.Card["runtime"].(map[string]interface{}); ok {
+			if h, ok := rt["handler"].(string); ok {
+				handler = h
+			}
+		}
+		projectType := detectProjectType(cwd, handler)
 
 		switch projectType {
 		case "node":

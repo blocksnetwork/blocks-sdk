@@ -81,6 +81,13 @@ def _authenticated_json_post(
 
     Returns the parsed JSON response body.
     """
+    # Pre-flight: when the auth provider has a recorded permanent-refresh
+    # error, attempt one reactive recovery. On failure the typed
+    # AuthRefreshFailedError is raised so file uploads surface it instead
+    # of an opaque 401 from the request-upload / confirm-upload endpoints.
+    from .auth_provider import preflight_auth_or_raise
+    preflight_auth_or_raise(auth_provider)
+
     payload = json.dumps(body).encode("utf-8")
     headers: Dict[str, str] = {
         "Content-Type": "application/json",

@@ -289,7 +289,11 @@ describe('rpc-client', () => {
       id: 'x',
       error: {
         code: -32000,
-        message: `Billing mode mismatch: caller declared '${got}', agent is '${expected}'`,
+        message:
+          `Billing mode mismatch: caller declared '${got}', agent is '${expected}'. ` +
+          `Read the agent's billingMode from the registry ` +
+          `(Node: (await getAgent(name)).billingMode; Python: get_agent(agent_name).billing_mode) ` +
+          `and pass it into TaskClient.create.`,
         data: {
           code: 'BillingModeMismatch',
           details: { expected, got },
@@ -315,7 +319,10 @@ describe('rpc-client', () => {
         // Generic RpcError fields are still populated.
         expect(err.code).toBe(-32000);
         expect(err.rpcMessage).toBe(
-          "Billing mode mismatch: caller declared 'free', agent is 'paid'",
+          "Billing mode mismatch: caller declared 'free', agent is 'paid'. " +
+            "Read the agent's billingMode from the registry " +
+            '(Node: (await getAgent(name)).billingMode; Python: get_agent(agent_name).billing_mode) ' +
+            'and pass it into TaskClient.create.',
         );
         // The raw structured `data` envelope is also reachable for debugging.
         expect(err.data).toEqual({

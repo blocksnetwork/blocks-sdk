@@ -311,7 +311,7 @@ describe('Fix 10: Card affinity enforcement', () => {
           provider: { organization: 'test-org' },
         },
         capabilities: { taskKinds: ['request'] },
-        skills: [],
+        tags: [],
         streams: { _default: { direction: 'outbound', format: 'bytes' } },
       },
     };
@@ -336,7 +336,7 @@ describe('Fix 11: getAgentCard on TaskClient', () => {
         provider: { organization: 'test-org' },
       },
       capabilities: { taskKinds: ['request'] },
-      skills: [],
+      tags: [],
       streams: { _default: { direction: 'outbound', format: 'bytes' } },
     };
 

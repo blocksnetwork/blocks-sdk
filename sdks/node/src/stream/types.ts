@@ -82,11 +82,46 @@ export interface StreamClientFromDescriptorOptions {
   consumerUserId?: string;
 }
 
-/** Normalized inbound message yielded by the inbound async iterator. */
-export interface InboundMessage {
-  data: unknown;
+/**
+ * Normalized inbound message yielded by the inbound async iterator.
+ *
+ * Discriminated by `format`. `data` shape:
+ *  - `format: 'bytes'`  → `string[]` (chunks; `encoding` is `'utf8'` or `'base64'`)
+ *  - `format: 'events'` → `unknown[]` (one or more events from a single producer flush)
+ *  - `format: 'raw'`    → `Record<string, unknown>` (passthrough for unknown message types)
+ *
+ * Note: the array-vs-single shape is the SDK's own producer-side bundler
+ * (`stream-bundle.ts`) coalescing writes by size/latency — NOT PubNub transport
+ * batching. A single producer `write()` already yields a 1-element array on
+ * the wire. Application code should prefer `bytes()` / `events()` which
+ * flatten on the consumer's behalf; reach for `inbound` only when you
+ * need raw envelope metadata.
+ */
+export type InboundMessage =
+  | InboundBytesMessage
+  | InboundEventsMessage
+  | InboundRawMessage;
+
+export interface InboundBytesMessage {
+  format: 'bytes';
+  data: string[];
   seq: number;
   ts: number;
-  format: 'bytes' | 'events' | 'raw';
+  encoding: string;
+}
+
+export interface InboundEventsMessage {
+  format: 'events';
+  data: unknown[];
+  seq: number;
+  ts: number;
+  encoding: string;
+}
+
+export interface InboundRawMessage {
+  format: 'raw';
+  data: Record<string, unknown>;
+  seq: number;
+  ts: number;
   encoding: string;
 }

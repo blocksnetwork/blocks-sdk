@@ -34,7 +34,7 @@ Create an `agent-card.json`:
     "provider": { "organization": "Your Org" }
   },
   "capabilities": { "taskKinds": ["request"] },
-  "skills": [{ "id": "main", "name": "Main Skill" }],
+  "tags": [{ "id": "main", "name": "Main" }],
   "runtime": {
     "handler": "./handler.ts"
   }
@@ -77,7 +77,7 @@ The agent card follows the A2A specification with a `runtime` extension:
     "provider": { "organization": "Your Org" }
   },
   "capabilities": { "taskKinds": ["request"] },
-  "skills": [{ "id": "main", "name": "Main Skill" }],
+  "tags": [{ "id": "main", "name": "Main" }],
   "runtime": {
     "handler": "./handler.ts",
     "handlerExport": "default",

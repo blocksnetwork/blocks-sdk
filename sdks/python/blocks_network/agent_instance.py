@@ -2296,7 +2296,7 @@ def start_agent_instance(
             connect_options = ConnectAgentOptions(
                 instance_id=instance_id,
                 description=options.description,
-                skills=options.skills,
+                tags=options.tags,
                 scaling=scaling,
                 card=options.card,
                 card_ref=options.card_ref,

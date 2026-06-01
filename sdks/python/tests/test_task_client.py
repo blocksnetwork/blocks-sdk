@@ -579,7 +579,7 @@ class TestSendMessage:
     def test_rejects_pipe_without_duration(self, mock_urlopen):
         client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
 
-        with pytest.raises(ValueError, match="Pipe tasks require a duration"):
+        with pytest.raises(ValueError, match="Pipe tasks require an integer duration between 1 and 43200 minutes"):
             client.send_message(
                 agent_name="agent-b",
                 request_parts=[],
@@ -593,7 +593,7 @@ class TestSendMessage:
     def test_rejects_pipe_with_duration_zero(self, mock_urlopen):
         client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
 
-        with pytest.raises(ValueError, match="Pipe tasks require a duration"):
+        with pytest.raises(ValueError, match="Pipe tasks require an integer duration between 1 and 43200 minutes"):
             client.send_message(
                 agent_name="agent-b",
                 request_parts=[],
@@ -605,10 +605,40 @@ class TestSendMessage:
         mock_urlopen.assert_not_called()
 
     @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_rejects_pipe_with_non_integer_duration(self, mock_urlopen):
+        client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
+
+        with pytest.raises(ValueError, match="Pipe tasks require an integer duration between 1 and 43200 minutes"):
+            client.send_message(
+                agent_name="agent-b",
+                request_parts=[],
+                owner_id="test-user",
+                task_kind="pipe",
+                duration=15.5,
+            )
+
+        mock_urlopen.assert_not_called()
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_rejects_pipe_with_negative_duration(self, mock_urlopen):
+        client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
+
+        with pytest.raises(ValueError, match="Pipe tasks require an integer duration between 1 and 43200 minutes"):
+            client.send_message(
+                agent_name="agent-b",
+                request_parts=[],
+                owner_id="test-user",
+                task_kind="pipe",
+                duration=-1,
+            )
+
+        mock_urlopen.assert_not_called()
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
     def test_rejects_pipe_with_duration_bool(self, mock_urlopen):
         client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
 
-        with pytest.raises(ValueError, match="Pipe tasks require a duration"):
+        with pytest.raises(ValueError, match="Pipe tasks require an integer duration between 1 and 43200 minutes"):
             client.send_message(
                 agent_name="agent-b",
                 request_parts=[],
@@ -623,7 +653,7 @@ class TestSendMessage:
     def test_rejects_pipe_with_duration_exceeding_max(self, mock_urlopen):
         client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
 
-        with pytest.raises(ValueError, match="Pipe tasks require a duration"):
+        with pytest.raises(ValueError, match="Pipe tasks require an integer duration between 1 and 43200 minutes"):
             client.send_message(
                 agent_name="agent-b",
                 request_parts=[],
@@ -2066,7 +2096,12 @@ class TestSendMessageBillingModeMismatch:
             "id": "x",
             "error": {
                 "code": -32000,
-                "message": "Billing mode mismatch: caller declared 'free', agent is 'paid'",
+                "message": (
+                    "Billing mode mismatch: caller declared 'free', agent is 'paid'. "
+                    "Read the agent's billingMode from the registry "
+                    "(Node: (await getAgent(name)).billingMode; Python: get_agent(agent_name).billing_mode) "
+                    "and pass it into TaskClient.create."
+                ),
                 "data": {
                     "code": "BillingModeMismatch",
                     "details": {"expected": "paid", "got": "free"},
@@ -2134,3 +2169,181 @@ class TestSendMessageBillingModeMismatch:
 
         # Exactly ONE urlopen call — no auto-retry, no auto-correct
         assert mock_urlopen.call_count == 1
+
+
+class TestAuthRefreshFailFast:
+    """BLOCKS-433: every authenticated TaskClient entrypoint must throw
+    AuthRefreshFailedError when the underlying ConsumerAuth is in a
+    known-broken refresh state.
+
+    Constructs the broken client through the public ``TaskClient.create()``
+    factory so the production wiring (auth_provider <-> _consumer_auth)
+    is exercised — assigning the private ``_consumer_auth`` directly
+    would leave that wiring unproven against future refactors.
+    """
+
+    def _make_broken_client(self):
+        from blocks_network.cdm_config import (
+            CdmApiConfig,
+            CdmConfig,
+            CdmKeyset,
+        )
+        from blocks_network.consumer_auth import (
+            AuthRefreshFailedError,
+            TokenResult,
+        )
+        from blocks_network.task_client import TaskClient
+        from unittest.mock import patch
+        import threading
+        import time
+
+        call_count = [0]
+        done = threading.Event()
+
+        def provider_fn():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return TokenResult(token="jwt-init", expires_in=1, user_id="u-1")
+            if call_count[0] - 1 == 3:
+                done.set()
+            raise RuntimeError(f"fail {call_count[0] - 1}")
+
+        fake_cdm = CdmConfig(
+            playground=CdmKeyset(
+                subscribe_key="sub-test", publish_key="pub-test"
+            ),
+            network=CdmKeyset(
+                subscribe_key="sub-test", publish_key="pub-test"
+            ),
+            api=CdmApiConfig(base_url="http://localhost:3001"),
+        )
+
+        with patch(
+            "blocks_network.cdm_config.fetch_cdm_config",
+            return_value=fake_cdm,
+        ), patch("blocks_network.consumer_auth.time.sleep"):
+            client = TaskClient.create(
+                billing_mode="free",
+                token_provider=provider_fn,
+            )
+            done.wait(timeout=5)
+            # Poll until _last_auth_error is written by the exception
+            # handler — the provider raises AFTER setting `done`, so
+            # observing `done` doesn't guarantee state has been recorded.
+            deadline = time.monotonic() + 1.0
+            auth = client._consumer_auth
+            assert auth is not None
+            while time.monotonic() < deadline:
+                if auth.get_last_auth_error() is not None:
+                    break
+                time.sleep(0.01)
+
+        assert isinstance(auth.get_last_auth_error(), AuthRefreshFailedError)
+        return client, AuthRefreshFailedError
+
+    def test_send_message_raises_auth_refresh_failed(self):
+        client, AuthRefreshFailedError = self._make_broken_client()
+        with pytest.raises(AuthRefreshFailedError):
+            client.send_message(agent_name="echo", request_parts=[])
+
+    def test_connect_raises_auth_refresh_failed(self):
+        client, AuthRefreshFailedError = self._make_broken_client()
+        with pytest.raises(AuthRefreshFailedError):
+            client.connect(task_id="task-1")
+
+    def test_get_task_raises_auth_refresh_failed(self):
+        client, AuthRefreshFailedError = self._make_broken_client()
+        with pytest.raises(AuthRefreshFailedError):
+            client.get_task("task-1")
+
+    def test_list_tasks_raises_auth_refresh_failed(self):
+        client, AuthRefreshFailedError = self._make_broken_client()
+        with pytest.raises(AuthRefreshFailedError):
+            client.list_tasks()
+
+    def test_cancel_task_raises_auth_refresh_failed(self):
+        client, AuthRefreshFailedError = self._make_broken_client()
+        with pytest.raises(AuthRefreshFailedError):
+            client.cancel_task("task-1")
+
+    def test_preflight_recovery_clears_error_and_proceeds(self):
+        """A reactive recovery on the preflight path must clear
+        ``_last_auth_error`` so the call proceeds past the guard.
+        Regression: an earlier draft short-circuited every authenticated
+        call once the error was recorded, so the documented recovery
+        path could never run and the client stayed wedged after a
+        transient outage. With the preflight helper, a successful
+        provider call recovers the client.
+        """
+        from blocks_network.cdm_config import (
+            CdmApiConfig,
+            CdmConfig,
+            CdmKeyset,
+        )
+        from blocks_network.consumer_auth import (
+            AuthRefreshFailedError,
+            TokenResult,
+        )
+        from blocks_network.task_client import TaskClient
+        from unittest.mock import patch
+        import threading
+        import time
+
+        call_count = [0]
+        proactive_done = threading.Event()
+
+        def provider_fn():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return TokenResult(token="jwt-init", expires_in=1, user_id="u-1")
+            if 2 <= call_count[0] <= 4:
+                if call_count[0] == 4:
+                    proactive_done.set()
+                raise RuntimeError(f"proactive fail {call_count[0] - 1}")
+            return TokenResult(
+                token="jwt-recovered",
+                expires_in=60,
+                user_id="u-1",
+            )
+
+        fake_cdm = CdmConfig(
+            playground=CdmKeyset(
+                subscribe_key="sub-test", publish_key="pub-test"
+            ),
+            network=CdmKeyset(
+                subscribe_key="sub-test", publish_key="pub-test"
+            ),
+            api=CdmApiConfig(base_url="http://localhost:3001"),
+        )
+
+        with patch(
+            "blocks_network.cdm_config.fetch_cdm_config",
+            return_value=fake_cdm,
+        ), patch("blocks_network.consumer_auth.time.sleep"):
+            client = TaskClient.create(
+                billing_mode="free",
+                token_provider=provider_fn,
+            )
+            proactive_done.wait(timeout=5)
+
+            auth = client._consumer_auth
+            assert auth is not None
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                if auth.get_last_auth_error() is not None:
+                    break
+                time.sleep(0.01)
+            assert isinstance(
+                auth.get_last_auth_error(), AuthRefreshFailedError
+            )
+
+            # Drive the preflight directly so we exercise the shared
+            # helper that all authenticated paths funnel through. The
+            # SDK-level guard in send_message/connect and the
+            # transport-level guard in call_rpc/file-upload all share
+            # this code path.
+            from blocks_network.auth_provider import preflight_auth_or_raise
+            preflight_auth_or_raise(auth)
+
+            assert auth.get_last_auth_error() is None
+            assert auth.get_auth_header() == "Bearer jwt-recovered"

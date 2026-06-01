@@ -28,8 +28,8 @@ my-agent/
   "capabilities": {
     "taskKinds": ["request"]
   },
-  "skills": [
-    { "id": "main", "name": "Main Skill", "description": "Primary skill" }
+  "tags": [
+    { "id": "main", "name": "Main Tag", "description": "Primary tag" }
   ],
   "runtime": {
     "handler": "./handler.ts",
@@ -43,13 +43,13 @@ my-agent/
 
 ## Key Fields
 
-Required top-level: `identity`, `capabilities`, `skills`, `runtime`.
+Required top-level: `identity`, `capabilities`, `tags`, `runtime`.
 
 Required in `identity`: `agentName` (pattern `^[a-zA-Z0-9_]+$`), `displayName`, `description`, `version`, `provider` (`{ organization }`). Optional in `identity`: `documentationUrl`, `repositoryUrl`, `iconUrl`. Optional in `provider`: `url`.
 
 Required in `capabilities`: `taskKinds` (array of `"request"`, `"pipe"`, or both).
 
-Required in `skills`: at least one `{ id, name }`. Optional per skill: `description`, `examples`.
+Required in `tags`: at least one `{ id, name }`. Optional per tag: `description`, `examples`.
 
 Required in `runtime`: `handler`, `maxRunningTimeSec`. Optional: `handlerExport` (default `"default"`), `concurrency` (default 1), `expectedInstances` (default 1), `maxPendingBacklog`.
 
@@ -157,7 +157,7 @@ Without the `streams` block, `ctx.createStream()` throws at runtime:
       }
     ]
   },
-  "skills": [
+  "tags": [
     { "id": "main", "name": "Stream Data", "description": "Streams data" }
   ],
   "runtime": {
@@ -194,7 +194,7 @@ Pipe-only agents use a named stream with dedicated affinity:
       "affinity": "dedicated"
     }
   },
-  "skills": [
+  "tags": [
     { "id": "main", "name": "Stream Data", "description": "Streams events" }
   ],
   "runtime": {

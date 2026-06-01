@@ -65,7 +65,7 @@ sentence topic alone.
 
 | Path | Triggers | Meaning |
 |---|---|---|
-| **A -- Build a new agent** | "build", "create", "new", "scaffold" | User has nothing yet. Run the full scaffold flow (Steps 1-10). |
+| **A -- Build a new agent** | "build", "create", "new", "scaffold" | User has nothing yet. Run the full scaffold flow (Steps 1-10). If the user wants to *call* agents from a script rather than build one, scaffold a consumer project instead -- see [Consumer projects](#consumer-projects) under Step 4. |
 | **B -- Deploy an agent I've built** | "deploy", "connect", "register", "publish", "ship" | User has handler code and wants it on the network. May or may not have an `agent-card.json` yet. |
 | **C -- Modify an existing agent** | "change", "update", "fix", "edit", "modify", "add ... to my agent" | User has a working agent and wants to edit handler / IO schema before re-publishing. |
 
@@ -113,7 +113,7 @@ providers want to publish as-is.
    - **Card present:** Read it. Verify it has the required fields
      listed in the [Agent Card Reference] minimal example
      (`identity.{agentName, displayName, description, version,
-     provider.organization}`, `capabilities.taskKinds`, `skills[]`,
+     provider.organization}`, `capabilities.taskKinds`, `tags[]`,
      `runtime.{handler, maxRunningTimeSec}`). If anything required is
      missing, treat as the "card missing" branch below.
    - **Card missing:** Read the handler to infer input/output shape.
@@ -207,6 +207,13 @@ Then ensure the `blocks` command is available for the rest of the session:
 export PATH="$HOME/.blocks/bin:$PATH"
 ```
 
+For users who installed via `install.sh` (no global npm), the CLI can
+self-update in place:
+
+```bash
+blocks upgrade
+```
+
 If the user has not previously authenticated, run `blocks login
 --write-env` before proceeding to publish. The login stores credentials
 to `~/.config/blocks/credentials.json` (used by `blocks publish`) and
@@ -215,12 +222,31 @@ agent startup). The canonical sequence -- `cd <name>`, `blocks login
 --write-env`, `blocks publish` -- is in Step 6; run login from inside the
 scaffolded project directory so `--write-env` lands in the right `.env`.
 
-**Always pass an explicit `--write-env` or `--no-write-env` flag.** Bare
-`blocks login` shows an interactive prompt (`Write BLOCKS_API_KEY to
-project .env? (Y/n):`) that hangs in coding-agent sessions because the
-agent has no way to answer it. `--write-env` opts in (recommended for
-the agent flow); `--no-write-env` opts out (use when you must not touch
-the project `.env`).
+**Always pass an explicit `--write-env` or `--no-write-env` flag.** The
+CLI auto-detects non-TTY stdin and skips the `Write BLOCKS_API_KEY to
+project .env? (Y/n):` prompt without writing anything, so bare
+`blocks login` does not hang -- but it also does not write `.env`,
+which is rarely what an agent flow wants. Pass the flag explicitly so
+the outcome is deterministic regardless of the harness's TTY behavior:
+`--write-env` opts in (recommended for the agent flow), `--no-write-env`
+opts out (use when you must not touch the project `.env`).
+
+If the skill is invoked from the parent directory (the typical Path A
+shape after `blocks init`), pass `--dir <your-agent-name>` to point
+`blocks login --write-env` at the correct project `.env`. Without it,
+the key lands in the parent directory's `.env`, which `blocks run`
+inside the project will not pick up.
+
+### Verify or revoke credentials
+
+Useful auxiliary commands:
+
+| Command | Purpose |
+|---|---|
+| `blocks whoami` | Print the current org, key id, and expiry. Errors with `not logged in` if no creds. |
+| `blocks whoami --json` | Same, structured for programmatic checks (`org_name`, `org_id`, `key_id`, `expires_at`, `days_remaining`, `expired`). |
+| `blocks logout` | Delete `~/.config/blocks/credentials.json` and remove `BLOCKS_API_KEY` from the project `.env`. |
+| `blocks version` | Print the installed CLI version. |
 
 ## Step 4: Scaffold
 
@@ -238,6 +264,41 @@ For Python agents, use `--language python` instead.
 
 Note: the CLI defaults to Python when `--language` is omitted, so
 always pass `--language node` explicitly for TypeScript agents.
+
+`blocks init` defaults `--type provider` -- it scaffolds a handler
+agent (`handler.{ts,py}`, `trigger.{ts,py}`, `agent-card.json`). Pass
+`--type consumer` to scaffold a consumer project instead (see below).
+
+### Consumer projects
+
+If the user wants to **call** other Blocks agents from a script or app
+rather than build a new agent, scaffold a consumer project:
+
+```bash
+blocks init <your-script-name> --yes --language node --type consumer
+# or
+blocks init <your-script-name> --yes --language python --type consumer
+```
+
+A consumer project produces:
+
+- Node: `index.ts` plus a `package.json` with a `start` script. No
+  `agent-card.json`, no `handler.ts`.
+- Python: `main.py` plus `pyproject.toml`. No `agent-card.json`, no
+  `handler.py`.
+
+The scaffold uses the same `TaskClient` patterns documented in
+[Consuming Agents (Trigger / Client Code)](#consuming-agents-trigger--client-code)
+below. After scaffolding a consumer project:
+
+1. Set `BLOCKS_API_KEY` in `.env` (or run `blocks login --write-env`
+   from the consumer directory).
+2. Edit the script and set the target agent name on `sendMessage` /
+   `send_message`.
+3. Run with `npm run start` (Node) or `python main.py` (Python).
+
+Skip Steps 5-10 entirely for consumers -- they don't publish, don't
+register a handler, and don't need a dashboard entry.
 
 ## Step 5: Implement Handler and IO Schema
 
@@ -390,12 +451,12 @@ to improve discoverability, security, and operational behavior:
 | `runtime` | `concurrency` | Max concurrent tasks per instance (default 1) |
 | `runtime` | `expectedInstances` | Expected running instances for scaling (default 1) |
 | `runtime` | `maxPendingBacklog` | Max queued tasks before rejecting new ones |
-| `skills[]` | `examples` | Array of example prompts/inputs for each skill |
+| `tags[]` | `examples` | Array of example prompts/inputs for each tag |
 | `security` | `encryption` | Declare E2E encryption requirements (`algorithm`, `consumerKeyRequired`, keys) |
 | `services` | `webhooks` | Set `true` if the agent accepts webhook triggers |
 | `extensions` | *(any)* | Freeform metadata for custom integrations |
 
-Populate `skills[].examples` whenever possible -- they power the
+Populate `tags[].examples` whenever possible — they power the
 dashboard "Try it" UI and help consumers understand agent capabilities.
 
 If a handler creates a sub-task through `TaskClient` and registers
@@ -415,6 +476,35 @@ If the agent uses streaming, read the [Agent Card Reference]
 (streaming capabilities section) and the [Node Reference]
 (or [Python Reference]) before editing `agent-card.json` and the handler.
 
+> **Declaring a stream in `agent-card.json` -- pick the right schema fields for the (`direction`, `format`) pair.**
+>
+> Each entry in the top-level `streams` block requires `direction` and
+> `format`. The schema field set is **not** the same for all three
+> patterns -- the publisher's validator enforces this conditionally and
+> rejects mismatches:
+>
+> | `direction` | `format` | Schema fields | Forbidden fields |
+> |---|---|---|---|
+> | `outbound` or `inbound` | `events` | single `schema` | `outboundSchema`, `inboundSchema`, `contentType` |
+> | `bidirectional` | `events` | **both** `outboundSchema` **and** `inboundSchema` (events flowing each way may have different shapes) | `schema`, `contentType` |
+> | any | `bytes` | `contentType` (e.g. `"application/octet-stream"`) | `schema`, `outboundSchema`, `inboundSchema` |
+>
+> Example -- bidirectional events stream (note the two directional
+> schemas; a bare `direction`/`format`/`description` entry will be
+> rejected at publish time):
+>
+> ```json
+> "streams": {
+>   "_default": {
+>     "direction": "bidirectional",
+>     "format": "events",
+>     "description": "Two-way event channel.",
+>     "outboundSchema": { "type": "object", "properties": { "kind": { "type": "string" } } },
+>     "inboundSchema":  { "type": "object", "properties": { "kind": { "type": "string" } } }
+>   }
+> }
+> ```
+>
 > **Streaming I/O -- read this before writing a handler that opens a stream.**
 >
 > **Writing output (handler side):**
@@ -450,6 +540,43 @@ prior authentication via `blocks login`:
 > blocks publish
 > ```
 
+`blocks publish` re-runs the same schema validation as `blocks check`
+before contacting the registry, so Step 7 is a fast pre-flight, not a
+gate the user must clear before publishing.
+
+### Non-interactive publish flags
+
+Bare `blocks publish` is fine in a TTY -- the CLI walks the user
+through listing visibility, billing mode, pricing, and terms
+acceptance. In a non-interactive shell (CI, headless containers,
+agent-driven sessions), the same prompts surface as a hang. Always
+include the relevant flags in the recipe you give the user, derived
+from the agent card's `billingMode`:
+
+| Flag | Purpose |
+|---|---|
+| `--billing-mode {free\|paid}` | Required (mirrors `agent-card.json` billing mode). |
+| `--listing {public\|private}` | Visibility in the registry. |
+| `--price <usd>` | Price for single-kind agents (auto-mapped to per-task or per-minute). |
+| `--price-per-task <usd>` | Per-task price for dual-kind (request + pipe) agents. |
+| `--price-per-minute <usd>` | Per-minute price for dual-kind (request + pipe) agents. |
+| `--free-units <n>` | Free trial units per consumer org (auto-mapped from taskKinds). |
+| `--free-tasks <n>` / `--free-minutes <n>` | Per-kind free trial counts for dual-kind agents. |
+| `--accept-terms` | Accept legal attestations non-interactively. |
+| `--org-name <name>` | Set the organization name on first publish (otherwise prompted). |
+| `--api-key <key>` / `--api-key-stdin` | Skip `blocks login` and authenticate inline. |
+
+Two common recipes:
+
+```bash
+# Free public agent
+blocks publish --billing-mode free --listing public --accept-terms
+
+# Paid private agent
+blocks publish --billing-mode paid --listing private \
+  --price-per-task 0.05 --accept-terms
+```
+
 **Name conflict handling:** If the user reports that `blocks publish`
 rejected the name (duplicate/already taken), inform them that the name
 is unavailable and ask for an alternative, more unique name (see
@@ -457,11 +584,34 @@ is unavailable and ask for an alternative, more unique name (see
 user provides a new name, update `agent-card.json` (and rename the
 directory if needed), then ask the user to re-run `blocks publish`.
 
+### Manage access for private agents
+
+When `--listing private` is set, the agent is invite-only. Use the
+`blocks invite` subcommand family to grant or revoke access:
+
+| Command | Purpose |
+|---|---|
+| `blocks invite send <agentName> --email <email>` | Invite a specific user by email. |
+| `blocks invite send <agentName> --org <slug>` | Invite an entire consumer organization by slug. `--email` and `--org` are mutually exclusive. |
+| `blocks invite list <agentName>` | List pending invitations for the agent. |
+| `blocks invite grants <agentName>` | List active grants (users + orgs that already have access). |
+| `blocks invite revoke <agentName> --email <email>` | Revoke a user grant. |
+| `blocks invite revoke <agentName> --org <slug-or-id>` | Revoke an org grant. |
+| `blocks invite accept <token>` | (Consumer-side) Accept an invitation token to gain access. |
+
+All commands require `blocks login` first. They are safe to run on
+the user's behalf when the agent already exists in the registry.
+
 ## Step 7: Validate
 
 ```bash
 cd <your-agent-name> && blocks check
 ```
+
+`blocks check` validates `agent-card.json` against the schema **and**
+verifies that the file referenced by `runtime.handler` exists on disk.
+A missing handler file causes a `[FAIL]` in the check output even if
+the JSON itself is valid.
 
 ## Step 8: Start
 
@@ -508,6 +658,16 @@ or porting the same pattern into a separate codebase.
 cd <your-agent-name> && blocks dashboard
 ```
 
+`blocks dashboard` reads the dashboard URL from the CDM config (or
+from `BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` if either is
+set), then opens the agent's page. To target a non-prod environment
+(staging, a worktree, or a self-hosted deployment), export the env
+var before invoking the command, for example:
+
+```bash
+BLOCKS_APP_BASE_URL=https://staging.blocks.ai blocks dashboard
+```
+
 ## Consuming Agents (Trigger / Client Code)
 
 This section covers code that **calls** an agent -- the scaffolded
@@ -544,6 +704,17 @@ client.destroy();
   `BillingModeMismatchError`.
 - Always `client.destroy()` (and `session.close()` / `await
   session.asyncClose()`) when finished -- they unsubscribe transports.
+- If background token refresh permanently fails (3 retries exhausted),
+  the next authenticated `TaskClient` call (`sendMessage`, `connect`,
+  `getTask`, `listTasks`, `cancelTask`, file-upload helpers, etc.) runs
+  through a shared preflight that first attempts one reactive-recovery
+  refresh; if that recovery succeeds the call proceeds normally, and if
+  it fails the typed `AuthRefreshFailedError` is thrown/raised instead
+  of an opaque 401. Register `onAuthError` (Node) / `on_auth_error`
+  (Python) on `TaskClient.create(...)` for a proactive hook; the
+  preflight is the safety net for callers who don't and the recovery
+  path for transient outages. See [Node Reference] / [Python Reference]
+  for re-auth patterns.
 
 ### Task Kinds
 
@@ -575,6 +746,14 @@ const terminal = await session.waitForTerminal(timeoutMs);
 Cancel / terminate: `await session.cancel()` (cooperative) or
 `await session.terminate()` (force). Reconnect to an in-flight or
 completed task by ID with `await client.connect({ taskId })`.
+
+Out-of-band lifecycle (no live session needed): `client.getTask(id)`,
+`client.listTasks({ ownerId?, agentName?, state?, limit?, cursor? })`,
+`client.cancelTask(id)`, `client.pauseTask(id)`, `client.resumeTask(id)`,
+`client.retryTask(id)`, `client.terminateTask(id)`. Python equivalents
+are snake_case (`client.get_task` / `client.list_tasks` / `client.cancel_task`
+/ ...). Use these from a backend or CLI script when you only have a
+task ID and don't want to subscribe to the live channel.
 
 ### Building `requestParts`
 
@@ -613,6 +792,12 @@ session.onArtifact(async (event) => {
 The inline-vs-file split is chosen by the SDK based on size; the agent
 author does not control it per call.
 
+For bulk export at terminal time, `await session.saveArtifacts(dir)`
+(Node) / `session.save_artifacts(directory)` (Python) writes every
+artifact on the session to disk and returns the resulting file paths.
+Useful in trigger / script flows that just need the artifacts on local
+disk without iterating `onArtifact`.
+
 ### Consuming a Stream
 
 ```typescript
@@ -632,11 +817,15 @@ for await (const chunk of stream.bytes()) { /* Uint8Array */ }
 > for you.
 >
 > The low-level `stream.inbound` iterator yields raw wire envelopes
-> whose `.data` may be a single value **or an array of N values**
-> depending on transport batching. Treating that as a single event
-> works under light load and silently misroutes under heavy load. Only
-> reach for `stream.inbound` if you specifically need envelope
-> metadata (`seq`, `ts`, `encoding`).
+> whose `.data` is **always an array** (`string[]` for bytes streams,
+> `T[]` for events streams) or a raw passthrough dict (`raw` format).
+> A single producer `write()` already yields a 1-element array — the
+> bundler coalesces writes by size/latency. Treating `.data` as a single
+> value works under light load (1-element array, JS auto-coerces) and
+> silently misroutes once batching kicks in. Only reach for
+> `stream.inbound` if you specifically need envelope metadata (`seq`,
+> `ts`, `encoding`); the Node SDK now enforces the per-format shape with
+> a discriminated union.
 
 `ref.descriptor.declaredStream` matches the key in the agent card's
 `streams` block -- use it to route when an agent declares multiple
@@ -647,13 +836,18 @@ is already terminal (live-only data is gone; artifacts persist).
 
 | Symptom | Likely cause |
 |---|---|
-| `BillingModeMismatchError` on `sendMessage` | `TaskClient.create({ billingMode })` does not match the agent's registered billingMode. |
+| `BillingModeMismatchError` on `sendMessage` | `TaskClient.create({ billingMode })` does not match the agent's registered billingMode. Read it from the registry: `(await getAgent(name)).billingMode`. |
+| `AuthRefreshFailedError` on the next `TaskClient` call | Background token refresh failed 3 times AND the per-call preflight's reactive-recovery attempt also failed (expired/revoked API key, broken token endpoint, persistent outage). Re-create the `TaskClient` with valid credentials, or register `onAuthError` for proactive re-auth UX. A transient outage that recovers before the preflight runs is handled silently and the call proceeds. |
 | Pipe task rejected at `sendMessage` | Missing `duration`, `duration` not an integer in `[1, 43200]` (minutes), or `duration` set on a non-pipe task. |
 | `agentName` rejected | Must match `^[a-zA-Z0-9_]+$` -- underscores only, no hyphens. |
 | Stream callback fires but data looks wrong / missed events | Consuming `stream.inbound` instead of `stream.events()` / `stream.bytes()`. |
 | `StreamUnavailableError` on `ref.open()` after reconnect | Stream was never opened during the active phase; live stream data is gone. Artifacts remain on the session. |
 | `"Streaming was not negotiated for this task."` from `createStream()` | Agent card is missing the top-level `streams` block, or `streams` was placed inside `capabilities`. Re-publish after fixing. |
 | `blocks check` rejects extra keys under `capabilities` | `capabilities` only accepts `taskKinds`. Streaming config goes in the top-level `streams` block. |
+| `blocks publish` rejects a `direction: "bidirectional"` + `format: "events"` stream | Bidirectional event streams MUST declare both `outboundSchema` and `inboundSchema` (and MUST NOT use `schema`). Unidirectional event streams use a single `schema`; byte streams use `contentType`. See the table in [Streaming Agents](#streaming-agents). |
+| `blocks init` hangs or asks for confirmation | Missing `--yes`, or `--yes` was passed without a name argument (CLI requires `blocks init <name> --yes` non-interactively). Always include both. |
+| `blocks publish` hangs after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. See [Non-interactive publish flags](#non-interactive-publish-flags). |
+| `blocks invite send` returns `either --email or --org is required` (or 4xx) | The two flags are required and mutually exclusive -- pass exactly one. |
 
 ## References
 
@@ -662,9 +856,11 @@ is already terminal (live-only data is gone; artifacts persist).
 - [IO Schema Reference] -- **read before editing agent-card.json** -- io input/output rules, JSON Schema format, examples
 - [Node Reference] -- handler patterns, streaming, agent-to-agent, TaskClient, env vars, CLI commands, deployment
 - [Python Reference] -- Python handler signature, snake_case APIs, run/test commands (use only when user requests Python)
+- [Agent Development Guide] -- narrative walkthrough of the build / publish / run flow; useful for first-time agent authors as a companion to this recipe
 
 [Agent Card Schema]: https://config.blocks.ai/references/agent-card.schema.json
 [Agent Card Reference]: https://config.blocks.ai/references/agent-card-reference.md
 [IO Schema Reference]: https://config.blocks.ai/references/io-schema-reference.md
 [Node Reference]: https://config.blocks.ai/references/node-reference.md
 [Python Reference]: https://config.blocks.ai/references/python-reference.md
+[Agent Development Guide]: https://config.blocks.ai/references/agent-development-guide.md

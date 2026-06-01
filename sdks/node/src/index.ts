@@ -17,7 +17,7 @@ export type {
 export type { StreamObject, OnActivateCallback } from './runtime/stream-context.js';
 export type { InboundMessage, StreamError } from './stream/index.js';
 
-export type { AgentCard, OutputAgentCard, AgentSkill } from './runtime/agent-registry.js';
+export type { AgentCard, OutputAgentCard, AgentTag } from './runtime/agent-registry.js';
 
 // Runtime utilities (for advanced usage)
 export { createPubNubClient, type PubNubClientConfig } from './runtime/pubnub-client.js';
@@ -35,8 +35,9 @@ export {
   fetchAgentRegistry,
   getAgent,
   removeAgent,
-  fetchAgentsBySkill,
+  fetchAgentsByTag,
   fetchAgentsByListing,
+  type AgentEntry,
   type AgentRegistryResult,
 } from './runtime/agent-registry.js';
 export { DEFAULTS } from './defaults.js';
@@ -84,7 +85,7 @@ export type { RegistrationPayload, RegistrationResult } from './runtime/agent-au
 
 // Auth provider (consumer/transport auth abstraction)
 export type { AuthProvider } from './runtime/auth-provider.js';
-export { ConsumerAuth } from './runtime/consumer-auth.js';
+export { ConsumerAuth, AuthRefreshFailedError } from './runtime/consumer-auth.js';
 export type {
   ConsumerAuthOptions,
   TokenEndpointConfig,

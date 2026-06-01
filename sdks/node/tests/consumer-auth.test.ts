@@ -3,7 +3,7 @@
  * concurrent 401, retry with backoff, permanent failure, destroy.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ConsumerAuth, type TokenResult } from '../src/runtime/consumer-auth.js';
+import { ConsumerAuth, AuthRefreshFailedError, type TokenResult } from '../src/runtime/consumer-auth.js';
 
 describe('ConsumerAuth', () => {
   const originalFetch = globalThis.fetch;
@@ -633,6 +633,189 @@ describe('ConsumerAuth', () => {
 
       auth.destroy();
     });
+
+    it('logs a warn on permanent proactive failure even when onAuthError is registered', async () => {
+      // SDK_CONTRACT.md §8.6.4 promises a warn-level log "either way" —
+      // registered callback or not. Without this, observability tooling
+      // that scrapes the [ConsumerAuth] logger goes silent the moment a
+      // consumer wires up onAuthError.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const onAuthError = vi.fn();
+      const provider = vi.fn<() => Promise<TokenResult>>()
+        .mockResolvedValueOnce({ token: 'jwt-init', expiresIn: 100 })
+        .mockRejectedValueOnce(new Error('fail 1'))
+        .mockRejectedValueOnce(new Error('fail 2'))
+        .mockRejectedValueOnce(new Error('fail 3'));
+
+      const auth = new ConsumerAuth({ tokenProvider: provider, onAuthError });
+      await auth.init();
+
+      await vi.advanceTimersByTimeAsync(80_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(onAuthError).toHaveBeenCalledTimes(1);
+      const warnEntries = warnSpy.mock.calls.filter((c) => c[0] === '[ConsumerAuth]');
+      const permanentFailureEntry = warnEntries
+        .map((c) => c[1] as Record<string, unknown>)
+        .find((entry) => entry.message === 'proactive refresh permanently failed');
+      expect(permanentFailureEntry).toBeDefined();
+      expect(permanentFailureEntry?.event).toBe(
+        'consumer_auth_proactive_refresh_failed',
+      );
+      expect(permanentFailureEntry?.error).toBe('fail 3');
+
+      warnSpy.mockRestore();
+      auth.destroy();
+    });
+  });
+
+  // ==========================================================================
+  // Last-auth-error state (BLOCKS-433)
+  // ==========================================================================
+
+  describe('lastAuthError state', () => {
+    it('sets lastAuthError to AuthRefreshFailedError after 3 proactive retries exhaust', async () => {
+      const provider = vi.fn<() => Promise<TokenResult>>()
+        .mockResolvedValueOnce({ token: 'jwt-init', expiresIn: 100 })
+        .mockRejectedValueOnce(new Error('fail 1'))
+        .mockRejectedValueOnce(new Error('fail 2'))
+        .mockRejectedValueOnce(new Error('fail 3'));
+
+      const auth = new ConsumerAuth({ tokenProvider: provider });
+      await auth.init();
+
+      // No callback registered — without the fix this would be silent.
+      expect(auth.getLastAuthError()).toBeNull();
+
+      // Advance to proactive refresh + 3 retries (80s + 5s + 10s).
+      await vi.advanceTimersByTimeAsync(80_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const err = auth.getLastAuthError();
+      expect(err).toBeInstanceOf(AuthRefreshFailedError);
+      expect(err?.cause).toBeInstanceOf(Error);
+      expect((err?.cause as Error).message).toBe('fail 3');
+
+      auth.destroy();
+    });
+
+    it('logs a warn when reactive refresh fails (no callback registered)', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const provider = vi.fn<() => Promise<TokenResult>>()
+        .mockResolvedValueOnce({ token: 'jwt-init', expiresIn: 100 })
+        .mockRejectedValueOnce(new Error('reactive-boom'));
+
+      const auth = new ConsumerAuth({ tokenProvider: provider });
+      await auth.init();
+
+      const refreshed = await auth.onAuthFailure();
+      expect(refreshed).toBe(false);
+
+      // Logger writes `[ConsumerAuth] { level: 'warn', message: 'reactive refresh failed', ... }`
+      const warnEntries = warnSpy.mock.calls.filter((c) => c[0] === '[ConsumerAuth]');
+      expect(warnEntries.length).toBeGreaterThan(0);
+      const entry = warnEntries[warnEntries.length - 1][1] as Record<string, unknown>;
+      expect(entry.message).toBe('reactive refresh failed');
+      expect(entry.error).toBe('reactive-boom');
+
+      warnSpy.mockRestore();
+      auth.destroy();
+    });
+
+    it('clears lastAuthError on a successful reactive refresh', async () => {
+      const provider = vi.fn<() => Promise<TokenResult>>()
+        .mockResolvedValueOnce({ token: 'jwt-init', expiresIn: 100 })
+        .mockRejectedValueOnce(new Error('fail 1'))
+        .mockRejectedValueOnce(new Error('fail 2'))
+        .mockRejectedValueOnce(new Error('fail 3'))
+        // Reactive refresh recovers.
+        .mockResolvedValueOnce({ token: 'jwt-recovered', expiresIn: 100 });
+
+      const auth = new ConsumerAuth({ tokenProvider: provider });
+      await auth.init();
+
+      await vi.advanceTimersByTimeAsync(80_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(auth.getLastAuthError()).not.toBeNull();
+
+      const refreshed = await auth.onAuthFailure();
+      expect(refreshed).toBe(true);
+      expect(auth.getLastAuthError()).toBeNull();
+      expect(auth.getAuthHeader()).toBe('Bearer jwt-recovered');
+
+      auth.destroy();
+    });
+
+    it('clears lastAuthError when API-key reactive refresh falls back to consumer-token re-bootstrap', async () => {
+      // Init: succeed.
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          accessToken: 'jwt-init',
+          refreshToken: 'rt-init',
+          expiresIn: 100,
+          userId: 'user-1',
+        }),
+      });
+
+      const auth = new ConsumerAuth({
+        apiKey: 'bk_key',
+        baseUrl: 'http://localhost:3001',
+      });
+      await auth.init();
+
+      // Simulate 3 failed proactive refreshes (refresh endpoint 5xx).
+      const fail = {
+        ok: false,
+        status: 500,
+        json: async () => ({ error: 'transient', code: 'INTERNAL' }),
+      };
+      fetchSpy
+        .mockResolvedValueOnce(fail)
+        .mockResolvedValueOnce(fail)
+        .mockResolvedValueOnce(fail);
+
+      await vi.advanceTimersByTimeAsync(80_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(auth.getLastAuthError()).toBeInstanceOf(AuthRefreshFailedError);
+
+      // Reactive refresh: refresh endpoint returns REFRESH_TOKEN_INVALID,
+      // SDK falls back to /consumer-token re-bootstrap which succeeds.
+      fetchSpy
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          json: async () => ({
+            error: 'Refresh token invalid or expired',
+            code: 'REFRESH_TOKEN_INVALID',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            accessToken: 'jwt-recovered',
+            refreshToken: 'rt-recovered',
+            expiresIn: 100,
+            userId: 'user-1',
+          }),
+        });
+
+      const refreshed = await auth.onAuthFailure();
+      expect(refreshed).toBe(true);
+      expect(auth.getAuthHeader()).toBe('Bearer jwt-recovered');
+      // Regression: the re-bootstrap path bypassed _applyTokenResult, so
+      // _lastAuthError stayed set even after a successful recovery.
+      expect(auth.getLastAuthError()).toBeNull();
+
+      auth.destroy();
+    });
   });
 
   // ==========================================================================
@@ -804,5 +987,17 @@ describe('ConsumerAuth', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       expect(auth.getAuthHeader()).toBe('Bearer jwt-dedup');
     });
+  });
+});
+
+describe('BLOCKS-433: AuthRefreshFailedError public export', () => {
+  it('is re-exported from the package entrypoint', async () => {
+    const mod = await import('../src/index.js');
+    expect(mod.AuthRefreshFailedError).toBeDefined();
+    const inst = new mod.AuthRefreshFailedError(new Error('boom'));
+    expect(inst).toBeInstanceOf(Error);
+    expect(inst.name).toBe('AuthRefreshFailedError');
+    expect(inst.cause).toBeInstanceOf(Error);
+    expect((inst.cause as Error).message).toBe('boom');
   });
 });

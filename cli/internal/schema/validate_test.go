@@ -33,10 +33,10 @@ func validCard() map[string]interface{} {
 		"capabilities": map[string]interface{}{
 			"taskKinds": []interface{}{"request"},
 		},
-		"skills": []interface{}{
+		"tags": []interface{}{
 			map[string]interface{}{
 				"id":   "main",
-				"name": "Main Skill",
+				"name": "Main",
 			},
 		},
 		"runtime": map[string]interface{}{
@@ -97,7 +97,7 @@ func TestValidateValidCard(t *testing.T) {
 }
 
 func TestValidateMissingRequiredFields(t *testing.T) {
-	requiredFields := []string{"identity", "capabilities", "skills", "runtime"}
+	requiredFields := []string{"identity", "capabilities", "tags", "runtime"}
 
 	for _, field := range requiredFields {
 		t.Run(field, func(t *testing.T) {
@@ -235,8 +235,8 @@ func TestValidateOldFormatCardRejected(t *testing.T) {
 		"defaultInputModes":  []string{"application/json"},
 		"defaultOutputModes": []string{"application/json"},
 		"capabilities":       map[string]interface{}{"streaming": false},
-		"skills": []interface{}{
-			map[string]interface{}{"id": "main", "name": "Main Skill"},
+		"tags": []interface{}{
+			map[string]interface{}{"id": "main", "name": "Main"},
 		},
 		"runtime": map[string]interface{}{
 			"agentName": "test_agent",
@@ -313,29 +313,29 @@ func TestValidateDuplicateOutputIDs(t *testing.T) {
 	}
 }
 
-func TestValidateDuplicateSkillIDs(t *testing.T) {
+func TestValidateDuplicateTagIDs(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "handler.py"), []byte("# handler"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	card := validCard()
-	card["skills"] = []interface{}{
-		map[string]interface{}{"id": "main", "name": "Main Skill"},
-		map[string]interface{}{"id": "main", "name": "Duplicate Skill"},
+	card["tags"] = []interface{}{
+		map[string]interface{}{"id": "main", "name": "Main"},
+		map[string]interface{}{"id": "main", "name": "Duplicate"},
 	}
 	path := writeCard(t, dir, card)
 
 	res := Validate(path)
 	found := false
 	for _, e := range res.Errors {
-		if strings.Contains(e, "Duplicate id") && strings.Contains(e, "skills") {
+		if strings.Contains(e, "Duplicate id") && strings.Contains(e, "tags") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected duplicate skill ID error, got: %v", res.Errors)
+		t.Errorf("expected duplicate tag ID error, got: %v", res.Errors)
 	}
 }
 

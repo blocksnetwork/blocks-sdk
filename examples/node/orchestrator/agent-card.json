@@ -9,7 +9,9 @@
     }
   },
   "capabilities": {
-    "taskKinds": ["request"]
+    "taskKinds": [
+      "request"
+    ]
   },
   "io": {
     "inputs": [
@@ -25,7 +27,11 @@
         },
         "schema": {
           "type": "object",
-          "required": ["echoText", "a", "b"],
+          "required": [
+            "echoText",
+            "a",
+            "b"
+          ],
           "properties": {
             "echoText": {
               "type": "string",
@@ -56,7 +62,7 @@
       }
     ]
   },
-  "skills": [
+  "tags": [
     {
       "id": "orchestrate",
       "name": "Orchestrate",

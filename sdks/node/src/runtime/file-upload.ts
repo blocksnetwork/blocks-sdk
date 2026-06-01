@@ -13,6 +13,7 @@
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from './protocol-version.js';
 import type { AgentAuth } from './agent-auth.js';
 import type { AuthProvider } from './auth-provider.js';
+import { preflightAuthOrThrow } from './auth-provider.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
 
 // ============================================================================
@@ -102,6 +103,12 @@ async function backendFetch(
   path: string,
   body: Record<string, unknown>,
 ): Promise<Response> {
+  // Pre-flight: when the auth provider has a recorded permanent-refresh
+  // error, attempt one reactive recovery. On failure the typed
+  // AuthRefreshFailedError is thrown so file uploads surface it instead
+  // of an opaque 401 from the request-upload / confirm-upload endpoints.
+  await preflightAuthOrThrow(auth.authProvider);
+
   const url = `${auth.baseUrl.replace(/\/+$/, '')}${path}`;
 
   // agentAuth injects/captures affinity inside authenticatedFetch; the

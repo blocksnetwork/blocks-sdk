@@ -484,7 +484,10 @@ class AgentInstanceOptions:
     user_id: Optional[str] = None
     agent_name: Optional[str] = None
     description: Optional[str] = None
-    skills: Optional[List[str]] = None
+    # AgentTag objects ({id, name, description?, examples?}), matching Node
+    # AgentInstanceOptions.tags: AgentTag[]. (The pre-rename `skills` field was
+    # List[str] here, which diverged from Node; the rename aligns the shape.)
+    tags: Optional[List[Dict[str, Any]]] = None
 
     # Callbacks
     on_start_task: Optional[Callable] = None

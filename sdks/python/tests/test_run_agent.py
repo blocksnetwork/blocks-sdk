@@ -28,7 +28,7 @@ def _write_card(path: Path) -> None:
                     "provider": {"organization": "Test"},
                 },
                 "capabilities": {"taskKinds": ["request"]},
-                "skills": [{"id": "main", "name": "Main"}],
+                "tags": [{"id": "main", "name": "Main"}],
                 "runtime": {
                     "handler": "./handler.py",
                     "handlerExport": "handler",
@@ -55,7 +55,7 @@ def test_run_from_agent_card_reads_identity_block(tmp_path, monkeypatch) -> None
     assert start_mock.call_args.kwargs["agent_name"] == "test_agent"
 
 
-def test_run_from_agent_card_reads_skills_from_top_level(tmp_path, monkeypatch) -> None:
+def test_run_from_agent_card_reads_tags_from_top_level(tmp_path, monkeypatch) -> None:
     card_path = tmp_path / "agent-card.json"
     handler_path = tmp_path / "handler.py"
     _write_card(card_path)
@@ -64,7 +64,7 @@ def test_run_from_agent_card_reads_skills_from_top_level(tmp_path, monkeypatch) 
     with patch("scripts.run_agent._start_and_block") as start_mock:
         run_agent._run_from_agent_card(str(card_path))
 
-    assert start_mock.call_args.kwargs["skills"] == [{"id": "main", "name": "Main"}]
+    assert start_mock.call_args.kwargs["tags"] == [{"id": "main", "name": "Main"}]
 
 
 def test_main_invokes_run_from_agent_card(tmp_path, monkeypatch) -> None:

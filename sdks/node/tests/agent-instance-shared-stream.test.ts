@@ -181,7 +181,7 @@ vi.mock('../src/runtime/agent-registry.js', () => ({
   fetchAgentRegistry: async () => ({}),
   getAgent: async () => null,
   removeAgent: async () => {},
-  fetchAgentsBySkill: async () => [],
+  fetchAgentsByTag: async () => [],
   fetchAgentsByListing: async () => [],
 }));
 

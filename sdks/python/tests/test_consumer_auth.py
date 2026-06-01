@@ -12,7 +12,12 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 
 from blocks_network.auth_provider import AuthProvider
-from blocks_network.consumer_auth import ConsumerAuth, TokenEndpointConfig, TokenResult
+from blocks_network.consumer_auth import (
+    AuthRefreshFailedError,
+    ConsumerAuth,
+    TokenEndpointConfig,
+    TokenResult,
+)
 
 
 # ============================================================================
@@ -1088,3 +1093,120 @@ class TestConsumerAuthEnsureReady:
         assert mock_urlopen.call_count == 1
 
         auth.destroy()
+
+
+# ============================================================================
+# BLOCKS-433: last_auth_error surface
+# ============================================================================
+
+
+class TestLastAuthError:
+    """BLOCKS-433: consumer-auth must surface refresh failures."""
+
+    def test_last_auth_error_set_after_3_proactive_retries(self):
+        call_count = [0]
+        done = threading.Event()
+
+        def provider_fn():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return TokenResult(token="jwt-init", expires_in=1)
+            err = RuntimeError(f"fail {call_count[0] - 1}")
+            if call_count[0] - 1 == 3:
+                done.set()
+            raise err
+
+        # No on_auth_error registered — pre-fix this was silent on Python
+        # because logging.warning needs a configured handler.
+        auth = ConsumerAuth(token_provider=provider_fn)
+        with patch("blocks_network.consumer_auth.time.sleep"):
+            auth.init()
+            assert done.wait(timeout=5), "proactive retries did not run"
+            # Allow the exception handler to write _last_auth_error after done.set().
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                if auth.get_last_auth_error() is not None:
+                    break
+                time.sleep(0.01)
+
+        err = auth.get_last_auth_error()
+        assert err is not None
+        assert isinstance(err, AuthRefreshFailedError)
+        assert "fail 3" in str(err)
+        assert err.__cause__ is not None
+        assert "fail 3" in str(err.__cause__)
+
+        auth.destroy()
+
+    def test_last_auth_error_cleared_on_successful_reactive_refresh(self):
+        call_count = [0]
+        done = threading.Event()
+
+        def provider_fn():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return TokenResult(token="jwt-init", expires_in=1)
+            if call_count[0] <= 4:
+                if call_count[0] - 1 == 3:
+                    done.set()
+                raise RuntimeError(f"fail {call_count[0] - 1}")
+            # Reactive refresh recovers.
+            return TokenResult(token="jwt-recovered", expires_in=60)
+
+        auth = ConsumerAuth(token_provider=provider_fn)
+        with patch("blocks_network.consumer_auth.time.sleep"):
+            auth.init()
+            assert done.wait(timeout=5)
+            # Allow the exception handler to write _last_auth_error after done.set().
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                if auth.get_last_auth_error() is not None:
+                    break
+                time.sleep(0.01)
+
+        assert auth.get_last_auth_error() is not None
+        assert auth.on_auth_failure() is True
+        assert auth.get_last_auth_error() is None
+        assert auth.get_auth_header() == "Bearer jwt-recovered"
+
+        auth.destroy()
+
+    def test_reactive_refresh_failure_emits_warn_log(self, caplog):
+        call_count = [0]
+
+        def provider_fn():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return TokenResult(token="jwt-init", expires_in=60)
+            raise RuntimeError("reactive-boom")
+
+        auth = ConsumerAuth(token_provider=provider_fn)
+        auth.init()
+
+        with caplog.at_level("WARNING", logger="blocks_network.consumer_auth"):
+            assert auth.on_auth_failure() is False
+
+        warn_records = [
+            r for r in caplog.records
+            if r.name == "blocks_network.consumer_auth" and r.levelname == "WARNING"
+        ]
+        assert any("reactive refresh failed" in r.getMessage() for r in warn_records)
+        assert any("reactive-boom" in r.getMessage() for r in warn_records)
+
+        auth.destroy()
+
+
+# ============================================================================
+# Package-level export
+# ============================================================================
+
+
+def test_auth_refresh_failed_error_is_exported_from_package():
+    import blocks_network
+
+    assert hasattr(blocks_network, "AuthRefreshFailedError")
+    cls = blocks_network.AuthRefreshFailedError
+    err = cls(RuntimeError("boom"))
+    assert isinstance(err, RuntimeError)
+    assert "boom" in str(err)
+    assert "AuthRefreshFailedError" in blocks_network.__all__

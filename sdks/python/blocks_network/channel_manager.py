@@ -11,7 +11,7 @@ Channel topology (org-scoped, 3-level max):
 Registry channels (App Context membership indexes):
 - ``registry.all``
 - ``registry.public`` / ``registry.private``
-- ``registry.skill.{skill}``
+- ``registry.tag.{tag}``
 - ``registry.log``
 """
 
@@ -38,10 +38,10 @@ def registry_all_channel() -> str:
     return "registry.all"
 
 
-def registry_skill_channel(skill: str) -> str:
-    """``registry.skill.{slug}`` -- membership index for a skill."""
-    slug = normalize_skill_slug(skill)
-    return f"registry.skill.{slug}"
+def registry_tag_channel(tag: str) -> str:
+    """``registry.tag.{slug}`` -- membership index for a tag."""
+    slug = normalize_tag_slug(tag)
+    return f"registry.tag.{slug}"
 
 
 def registry_visibility_channel(is_public: bool) -> str:
@@ -54,8 +54,8 @@ def registry_log_channel() -> str:
     return "registry.log"
 
 
-def normalize_skill_slug(skill: str) -> str:
-    """Normalize a skill string to a stable slug.
+def normalize_tag_slug(tag: str) -> str:
+    """Normalize a tag string to a stable slug.
 
     - Lowercase
     - Replace non-alphanumeric (except ``.`` and ``_``) with ``_``
@@ -68,7 +68,7 @@ def normalize_skill_slug(skill: str) -> str:
         "text.embeddings"   -> "text.embeddings"
         "Image Generation"  -> "image_generation"
     """
-    slug = skill.lower()
+    slug = tag.lower()
     slug = re.sub(r"[^a-z0-9._]", "_", slug)
     slug = re.sub(r"_+", "_", slug)
     slug = slug.strip("_")
