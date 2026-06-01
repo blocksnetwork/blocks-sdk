@@ -1,4 +1,4 @@
-"""Live A2A test for BLOCKS-262: handler-side StreamObject is a strict
+"""Live A2A test: handler-side StreamObject is a strict
 subset of StreamClient -- forward the full read/observability surface.
 
 Two scenarios:

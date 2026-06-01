@@ -62,7 +62,7 @@ class TestStreamObject:
         obj.on_end(cb)
         client.on_end.assert_called_once_with(cb)
 
-    # -- BLOCKS-262: forwarded read / error / uuid surface ----------------
+    # -- forwarded read / error / uuid surface ----------------
 
     def test_uuid_delegates(self) -> None:
         """``uuid`` reads through to the underlying StreamClient.uuid."""

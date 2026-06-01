@@ -12,7 +12,7 @@ from __future__ import annotations
 class TestBlocksMaxUploadBytes:
     def test_value_is_25_mib(self) -> None:
         """BLOCKS_MAX_UPLOAD_BYTES must equal 25 * 1024 * 1024 (25 MiB)
-        — must match afui_mvp_backend MAX_FILE_SIZE_BYTES."""
+        — must match the service's MAX_FILE_SIZE_BYTES."""
         from blocks_network.config import BLOCKS_MAX_UPLOAD_BYTES
 
         assert BLOCKS_MAX_UPLOAD_BYTES == 26_214_400

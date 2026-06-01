@@ -603,13 +603,13 @@ export const startAgentInstance = async (
 
   // === Connectivity diagnostics (gated) ===
   //
-  // BLOCKS-129 reconnect-investigation surface. Default OFF — set
+  // Reconnect-investigation surface. Default OFF — set
   // BLOCKS_DEBUG_INTERNAL=diagnostics to enable. When OFF every hook
   // below is a no-op: no listener attached, no timer armed, no
   // per-status emission, no transport_diagnostics_armed boot line. This
   // keeps transport-internal vocabulary out of default-level production
   // logs and removes the diag listener/timer overhead from the
-  // steady-state path. See BLOCKS-373.
+  // steady-state path.
   interface ClientDiag {
     label: string;
     pn: PubNub;
@@ -2019,7 +2019,7 @@ export const startAgentInstance = async (
 
         await updatePresenceState();
 
-        // Strip PAM tokens before passing to handler code (BLOCKS-232)
+        // Strip PAM tokens before passing to handler code
         const { writeToken: _w, controlToken: _c, ...handlerTask } = msg;
 
         if (opts.onStartTask) {

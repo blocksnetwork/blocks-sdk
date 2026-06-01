@@ -11,6 +11,6 @@ For this exercise, implement a basic extractive summarizer (pick the first N sen
 Produce the following files:
 
 1. **`handler.ts`** — The complete Blocks Network handler that summarizes input text.
-2. **`agent-card.json`** — Agent card with appropriate name, description, skills, and runtime configuration.
+2. **`agent-card.json`** — Agent card with appropriate name, description, tags, and runtime configuration.
 3. **`trigger.js`** — A Node.js script that sends a sample task to the agent and prints the result.
 4. **`setup.md`** — Brief instructions covering how to scaffold the project, install dependencies, run the agent locally, and trigger it.

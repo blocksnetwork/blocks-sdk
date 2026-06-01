@@ -17,7 +17,6 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
-	"github.com/pubnub/blocks-sdk/cli/internal/schema"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 )
@@ -77,7 +76,12 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		cardPath = filepath.Join(mustCwd(), cardPath)
 	}
 
-	result := schema.Validate(cardPath)
+	// Rewrite the deprecated `skills` field to `tags` in-memory before
+	// validation so customers still on the old card layout get a warning
+	// + working publish, not a confusing schema rejection. The source
+	// file is left untouched. Same shim is used by `blocks run` and
+	// `blocks check`.
+	result := validateCardWithLegacyShim(cardPath)
 	if len(result.Errors) > 0 {
 		for _, e := range result.Errors {
 			fmt.Fprintf(os.Stderr, "  [FAIL] %s\n", e)

@@ -15,6 +15,8 @@ import {
 } from '@blocks-network/sdk';
 
 import type { ListAgentsResult } from './registry-list.js';
+import type { AgentStatusResponse } from './agent-status.js';
+import type { ConsumerBalance, TopUpSession } from './billing.js';
 
 // ============================================================================
 // Types — minimal local shapes mirroring @blocks-network/sdk surfaces.
@@ -85,6 +87,9 @@ export interface TaskClientLike {
     limit?: number;
   }): Promise<{ tasks: TaskInfo[]; totalCount?: number }>;
   cancelTask(taskId: string): Promise<unknown>;
+  pauseTask(taskId: string): Promise<unknown>;
+  resumeTask(taskId: string): Promise<unknown>;
+  retryTask(taskId: string): Promise<unknown>;
   connect(params: { taskId: string }): Promise<TaskSessionLike>;
 }
 
@@ -115,7 +120,7 @@ export interface ToolDeps {
   listAgents(options: {
     baseUrl: string;
     apiKey?: string;
-    skill?: string;
+    tag?: string;
     listing?: 'public' | 'private';
     limit?: number;
   }): Promise<ListAgentsResult>;
@@ -126,6 +131,23 @@ export interface ToolDeps {
   maxUploadBytes: number;
   filePartFromPath: typeof filePartFromPath;
   textPart: typeof textPart;
+  getOrgId(): string | undefined;
+  fetchAgentStatus(options: {
+    baseUrl: string;
+    apiKey?: string;
+    agentNames: string[];
+  }): Promise<AgentStatusResponse>;
+  getConsumerBalance(options: {
+    baseUrl: string;
+    apiKey: string;
+    orgId: string;
+  }): Promise<ConsumerBalance>;
+  createConsumerTopUp(options: {
+    baseUrl: string;
+    apiKey: string;
+    orgId: string;
+    amountUsd: number;
+  }): Promise<TopUpSession>;
 }
 
 // ============================================================================
@@ -198,7 +220,7 @@ export interface CancelTaskParams {
 }
 
 export interface ListAgentsParams {
-  skill?: string;
+  tag?: string;
   listing?: 'public' | 'private';
   limit?: number;
 }
@@ -216,6 +238,18 @@ export interface DownloadArtifactParams {
   taskId: string;
   fileName: string;
   savePath?: string;
+}
+
+export interface TaskIdParams {
+  taskId: string;
+}
+
+export interface GetAgentStatusParams {
+  agentNames: string[];
+}
+
+export interface RequestTopUpParams {
+  amountUsd: number;
 }
 
 // ============================================================================
@@ -377,14 +411,14 @@ export async function listAgents(
   const result = await deps.listAgents({
     baseUrl,
     apiKey,
-    skill: params.skill,
+    tag: params.tag,
     listing: params.listing,
     limit: params.limit,
   });
 
   const lines = result.agents.map((a) => {
-    const skills = a.skills?.map((s) => s.name).join(', ') ?? '';
-    return `${a.agentName} | ${a.name ?? a.agentName} | ${a.listing ?? 'public'} | ${skills}`;
+    const tags = a.tags?.map((t) => t.name).join(', ') ?? '';
+    return `${a.agentName} | ${a.name ?? a.agentName} | ${a.listing ?? 'public'} | ${tags}`;
   });
   const header = `Agents (${result.totalCount ?? result.agents.length}):`;
   return { content: [{ type: 'text', text: [header, ...lines].join('\n') }] };
@@ -579,6 +613,121 @@ export async function downloadArtifact(
   } finally {
     session.close();
   }
+}
+
+// ============================================================================
+// pause_task / resume_task / retry_task
+// ============================================================================
+
+export async function pauseTask(
+  params: TaskIdParams,
+  deps: ToolDeps,
+): Promise<ToolResult> {
+  const client = await deps.getTaskClient();
+  await client.pauseTask(params.taskId);
+  return { content: [{ type: 'text', text: `Task ${params.taskId} paused.` }] };
+}
+
+export async function resumeTask(
+  params: TaskIdParams,
+  deps: ToolDeps,
+): Promise<ToolResult> {
+  const client = await deps.getTaskClient();
+  await client.resumeTask(params.taskId);
+  return { content: [{ type: 'text', text: `Task ${params.taskId} resumed.` }] };
+}
+
+export async function retryTask(
+  params: TaskIdParams,
+  deps: ToolDeps,
+): Promise<ToolResult> {
+  const client = await deps.getTaskClient();
+  await client.retryTask(params.taskId);
+  return { content: [{ type: 'text', text: `Task ${params.taskId} retry requested.` }] };
+}
+
+// ============================================================================
+// get_agent_status
+// ============================================================================
+
+export async function getAgentStatus(
+  params: GetAgentStatusParams,
+  deps: ToolDeps,
+): Promise<ToolResult> {
+  const baseUrl = await deps.getBaseUrl();
+  const apiKey = deps.getApiKey();
+  const result = await deps.fetchAgentStatus({
+    baseUrl,
+    apiKey,
+    agentNames: params.agentNames,
+  });
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+  };
+}
+
+// ============================================================================
+// check_balance / request_topup
+// ============================================================================
+
+function requireBillingContext(deps: ToolDeps): { apiKey: string; orgId: string } | ToolResult {
+  const apiKey = deps.getApiKey();
+  if (!apiKey) {
+    return {
+      content: [{ type: 'text', text: 'BLOCKS_API_KEY is required for billing operations.' }],
+      isError: true,
+    };
+  }
+  const orgId = deps.getOrgId();
+  if (!orgId) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'BLOCKS_ORG_ID is required for billing operations. Set it from your dashboard URL or `blocks whoami --json`.',
+        },
+      ],
+      isError: true,
+    };
+  }
+  return { apiKey, orgId };
+}
+
+export async function checkBalance(
+  _params: Record<string, never>,
+  deps: ToolDeps,
+): Promise<ToolResult> {
+  const ctx = requireBillingContext(deps);
+  if ('content' in ctx) return ctx;
+  const baseUrl = await deps.getBaseUrl();
+  const balance = await deps.getConsumerBalance({
+    baseUrl,
+    apiKey: ctx.apiKey,
+    orgId: ctx.orgId,
+  });
+  return {
+    content: [{ type: 'text', text: JSON.stringify(balance, null, 2) }],
+  };
+}
+
+export async function requestTopup(
+  params: RequestTopUpParams,
+  deps: ToolDeps,
+): Promise<ToolResult> {
+  const ctx = requireBillingContext(deps);
+  if ('content' in ctx) return ctx;
+  const baseUrl = await deps.getBaseUrl();
+  const session = await deps.createConsumerTopUp({
+    baseUrl,
+    apiKey: ctx.apiKey,
+    orgId: ctx.orgId,
+    amountUsd: params.amountUsd,
+  });
+  const url = session.checkoutUrl;
+  const body = url
+    ? `Open this URL in a browser to complete the $${params.amountUsd.toFixed(2)} top-up:\n${url}`
+    : JSON.stringify(session, null, 2);
+  return { content: [{ type: 'text', text: body }] };
 }
 
 // ============================================================================

@@ -513,7 +513,7 @@ describe('TaskClient', () => {
         requestParts: [],
         ownerId: 'test-user',
         taskKind: 'pipe',
-      })).rejects.toThrow('Pipe tasks require a duration between 1 and 43200 minutes');
+      })).rejects.toThrow('Pipe tasks require an integer duration between 1 and 43200 minutes');
 
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -527,7 +527,35 @@ describe('TaskClient', () => {
         ownerId: 'test-user',
         taskKind: 'pipe',
         duration: 0,
-      })).rejects.toThrow('Pipe tasks require a duration between 1 and 43200 minutes');
+      })).rejects.toThrow('Pipe tasks require an integer duration between 1 and 43200 minutes');
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects pipe task with non-integer duration 15.5 before sending RPC', async () => {
+      const client = new TaskClient({ billingMode: 'free', subscribeKey: 'sub-c-test', baseUrl: 'http://localhost:3001' });
+
+      await expect(client.sendMessage({
+        agentName: 'agent-b',
+        requestParts: [],
+        ownerId: 'test-user',
+        taskKind: 'pipe',
+        duration: 15.5,
+      })).rejects.toThrow('Pipe tasks require an integer duration between 1 and 43200 minutes');
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects pipe task with negative duration -1 before sending RPC', async () => {
+      const client = new TaskClient({ billingMode: 'free', subscribeKey: 'sub-c-test', baseUrl: 'http://localhost:3001' });
+
+      await expect(client.sendMessage({
+        agentName: 'agent-b',
+        requestParts: [],
+        ownerId: 'test-user',
+        taskKind: 'pipe',
+        duration: -1,
+      })).rejects.toThrow('Pipe tasks require an integer duration between 1 and 43200 minutes');
 
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -541,7 +569,7 @@ describe('TaskClient', () => {
         ownerId: 'test-user',
         taskKind: 'pipe',
         duration: 43201,
-      })).rejects.toThrow('Pipe tasks require a duration between 1 and 43200 minutes');
+      })).rejects.toThrow('Pipe tasks require an integer duration between 1 and 43200 minutes');
 
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -1308,7 +1336,7 @@ describe('TaskClient', () => {
   });
 
   // ==========================================================================
-  // Cross-billing-mode subscribeKey routing (BLOCKS-234)
+  // Cross-billing-mode subscribeKey routing
   // ==========================================================================
 
   describe('cross-billing-mode subscribeKey routing', () => {

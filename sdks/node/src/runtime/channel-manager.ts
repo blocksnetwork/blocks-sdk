@@ -6,14 +6,14 @@
  * - agent.{agentId}.control         - Control plane per agent ID
  * - obs.{agentName}.log            - Agent-level observability
  *
- * Registry channels (App Context membership indexes):
+ * Registry channels (membership indexes):
  * - registry.all                   - All agents (membership index)
  * - registry.public                - Public agents (membership index)
  * - registry.private               - Private agents (membership index)
- * - registry.skill.{skill}         - Agents with specific skill (membership index)
+ * - registry.tag.{tag}             - Agents with specific tag (membership index)
  * - registry.log                   - Audit log channel (pub/sub with history)
  *
- * App Context (channel metadata, not pub/sub):
+ * Channel metadata (not pub/sub):
  * - uuid:{agentName}               - Agent card stored as User Object
  *
  * All channels respect PubNub's 3-level maximum depth constraint.
@@ -21,7 +21,7 @@
  */
 
 // ============================================================================
-// Registry Channel Helpers (App Context membership indexes)
+// Registry Channel Helpers (membership indexes)
 // ============================================================================
 
 /**
@@ -31,14 +31,14 @@
 export const registryAllChannel = (): string => 'registry.all';
 
 /**
- * Registry skill channel - membership index for agents with a skill.
- * Format: registry.skill.{skill}
+ * Registry tag channel - membership index for agents with a tag.
+ * Format: registry.tag.{tag}
  *
- * Skill slugs are normalized: lowercase, alphanumeric + `.` or `_`.
+ * Tag slugs are normalized: lowercase, alphanumeric + `.` or `_`.
  */
-export const registrySkillChannel = (skill: string): string => {
-  const slug = normalizeSkillSlug(skill);
-  return `registry.skill.${slug}`;
+export const registryTagChannel = (tag: string): string => {
+  const slug = normalizeTagSlug(tag);
+  return `registry.tag.${slug}`;
 };
 
 /**
@@ -56,7 +56,7 @@ export const registryVisibilityChannel = (isPublic: boolean): string => {
 export const registryLogChannel = (): string => 'registry.log';
 
 /**
- * Normalize a skill string to a stable slug.
+ * Normalize a tag string to a stable slug.
  * - Lowercase
  * - Replace non-alphanumeric characters (except `.` and `_`) with `_`
  * - Collapse multiple underscores
@@ -66,8 +66,8 @@ export const registryLogChannel = (): string => 'registry.log';
  * - "text.embeddings" -> "text.embeddings"
  * - "Image Generation" -> "image_generation"
  */
-export const normalizeSkillSlug = (skill: string): string => {
-  return skill
+export const normalizeTagSlug = (tag: string): string => {
+  return tag
     .toLowerCase()
     .replace(/[^a-z0-9._]/g, '_')
     .replace(/_+/g, '_')

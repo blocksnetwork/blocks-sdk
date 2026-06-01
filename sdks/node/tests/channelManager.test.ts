@@ -6,10 +6,10 @@ import {
   taskChannel,
   userTaskPattern,
   registryAllChannel,
-  registrySkillChannel,
+  registryTagChannel,
   registryVisibilityChannel,
   registryLogChannel,
-  normalizeSkillSlug,
+  normalizeTagSlug,
 } from '../src/runtime/channel-manager.js';
 
 describe('ChannelManager', () => {
@@ -123,9 +123,9 @@ describe('Registry Channel Helpers', () => {
     expect(registryAllChannel()).toBe('registry.all');
   });
 
-  it('registrySkillChannel returns registry.skill.{skill}', () => {
-    expect(registrySkillChannel('image_generation')).toBe('registry.skill.image_generation');
-    expect(registrySkillChannel('text.embeddings')).toBe('registry.skill.text.embeddings');
+  it('registryTagChannel returns registry.tag.{tag}', () => {
+    expect(registryTagChannel('image_generation')).toBe('registry.tag.image_generation');
+    expect(registryTagChannel('text.embeddings')).toBe('registry.tag.text.embeddings');
   });
 
   it('registryVisibilityChannel returns registry.public or registry.private', () => {
@@ -138,38 +138,38 @@ describe('Registry Channel Helpers', () => {
   });
 });
 
-describe('normalizeSkillSlug', () => {
+describe('normalizeTagSlug', () => {
   it('converts to lowercase', () => {
-    expect(normalizeSkillSlug('IMAGE_GENERATION')).toBe('image_generation');
-    expect(normalizeSkillSlug('TextEmbeddings')).toBe('textembeddings');
+    expect(normalizeTagSlug('IMAGE_GENERATION')).toBe('image_generation');
+    expect(normalizeTagSlug('TextEmbeddings')).toBe('textembeddings');
   });
 
   it('replaces dashes with underscores', () => {
-    expect(normalizeSkillSlug('image-generation')).toBe('image_generation');
-    expect(normalizeSkillSlug('text-to-speech')).toBe('text_to_speech');
+    expect(normalizeTagSlug('image-generation')).toBe('image_generation');
+    expect(normalizeTagSlug('text-to-speech')).toBe('text_to_speech');
   });
 
   it('preserves dots', () => {
-    expect(normalizeSkillSlug('text.embeddings')).toBe('text.embeddings');
-    expect(normalizeSkillSlug('ai.vision.ocr')).toBe('ai.vision.ocr');
+    expect(normalizeTagSlug('text.embeddings')).toBe('text.embeddings');
+    expect(normalizeTagSlug('ai.vision.ocr')).toBe('ai.vision.ocr');
   });
 
   it('replaces spaces with underscores', () => {
-    expect(normalizeSkillSlug('Image Generation')).toBe('image_generation');
+    expect(normalizeTagSlug('Image Generation')).toBe('image_generation');
   });
 
   it('collapses multiple underscores', () => {
-    expect(normalizeSkillSlug('image--generation')).toBe('image_generation');
-    expect(normalizeSkillSlug('image___generation')).toBe('image_generation');
+    expect(normalizeTagSlug('image--generation')).toBe('image_generation');
+    expect(normalizeTagSlug('image___generation')).toBe('image_generation');
   });
 
   it('removes leading and trailing underscores', () => {
-    expect(normalizeSkillSlug('_image_generation_')).toBe('image_generation');
-    expect(normalizeSkillSlug('__test__')).toBe('test');
+    expect(normalizeTagSlug('_image_generation_')).toBe('image_generation');
+    expect(normalizeTagSlug('__test__')).toBe('test');
   });
 
   it('handles complex cases', () => {
-    expect(normalizeSkillSlug('AI-Powered Image Generation!')).toBe('ai_powered_image_generation');
+    expect(normalizeTagSlug('AI-Powered Image Generation!')).toBe('ai_powered_image_generation');
   });
 });
 
@@ -199,42 +199,42 @@ describe('validateOwnerId', () => {
   });
 });
 
-describe('Skill Channel Extraction', () => {
+describe('Tag Channel Extraction', () => {
   /**
-   * These tests verify the skill extraction logic that matches the
-   * dashboard's extractSkillFromChannel() function. This ensures
-   * skills can be derived from registry.skill.* membership channels.
+   * These tests verify the tag extraction logic that matches the
+   * dashboard's extractTagFromChannel() function. This ensures
+   * tags can be derived from registry.tag.* membership channels.
    */
 
   /**
-   * Extract skill slug from a registry skill channel name.
-   * This mirrors the dashboard's extractSkillFromChannel() function.
+   * Extract tag slug from a registry tag channel name.
+   * This mirrors the dashboard's extractTagFromChannel() function.
    */
-  function extractSkillFromChannel(channel: string): string | null {
-    const prefix = 'registry.skill.';
+  function extractTagFromChannel(channel: string): string | null {
+    const prefix = 'registry.tag.';
     if (channel.startsWith(prefix)) {
       return channel.slice(prefix.length);
     }
     return null;
   }
 
-  it('extracts skill from registry.skill.* channels', () => {
-    expect(extractSkillFromChannel('registry.skill.echo')).toBe('echo');
-    expect(extractSkillFromChannel('registry.skill.image_generation')).toBe('image_generation');
-    expect(extractSkillFromChannel('registry.skill.text.embeddings')).toBe('text.embeddings');
-    expect(extractSkillFromChannel('registry.skill.ai.vision.ocr')).toBe('ai.vision.ocr');
+  it('extracts tag from registry.tag.* channels', () => {
+    expect(extractTagFromChannel('registry.tag.echo')).toBe('echo');
+    expect(extractTagFromChannel('registry.tag.image_generation')).toBe('image_generation');
+    expect(extractTagFromChannel('registry.tag.text.embeddings')).toBe('text.embeddings');
+    expect(extractTagFromChannel('registry.tag.ai.vision.ocr')).toBe('ai.vision.ocr');
   });
 
-  it('returns null for non-skill channels', () => {
-    expect(extractSkillFromChannel('registry.all')).toBeNull();
-    expect(extractSkillFromChannel('registry.public')).toBeNull();
-    expect(extractSkillFromChannel('registry.private')).toBeNull();
-    expect(extractSkillFromChannel('registry.log')).toBeNull();
-    expect(extractSkillFromChannel('other.channel')).toBeNull();
-    expect(extractSkillFromChannel('')).toBeNull();
+  it('returns null for non-tag channels', () => {
+    expect(extractTagFromChannel('registry.all')).toBeNull();
+    expect(extractTagFromChannel('registry.public')).toBeNull();
+    expect(extractTagFromChannel('registry.private')).toBeNull();
+    expect(extractTagFromChannel('registry.log')).toBeNull();
+    expect(extractTagFromChannel('other.channel')).toBeNull();
+    expect(extractTagFromChannel('')).toBeNull();
   });
 
-  it('round-trips skill through registrySkillChannel and extraction', () => {
+  it('round-trips tag through registryTagChannel and extraction', () => {
     // Test that we can normalize, create channel, and extract back
     const testCases = [
       { input: 'echo', normalized: 'echo' },
@@ -245,79 +245,79 @@ describe('Skill Channel Extraction', () => {
     ];
 
     for (const { input, normalized } of testCases) {
-      const normalizedSlug = normalizeSkillSlug(input);
+      const normalizedSlug = normalizeTagSlug(input);
       expect(normalizedSlug).toBe(normalized);
 
-      const channel = registrySkillChannel(input);
-      expect(channel).toBe(`registry.skill.${normalized}`);
+      const channel = registryTagChannel(input);
+      expect(channel).toBe(`registry.tag.${normalized}`);
 
-      const extracted = extractSkillFromChannel(channel);
+      const extracted = extractTagFromChannel(channel);
       expect(extracted).toBe(normalized);
     }
   });
 
   it('handles edge cases in extraction', () => {
-    // Channel exactly matching prefix (no skill)
-    expect(extractSkillFromChannel('registry.skill.')).toBe('');
+    // Channel exactly matching prefix (no tag)
+    expect(extractTagFromChannel('registry.tag.')).toBe('');
     // Channels with partial prefix match
-    expect(extractSkillFromChannel('registry.skills.echo')).toBeNull();
-    expect(extractSkillFromChannel('registry.skill_set.echo')).toBeNull();
+    expect(extractTagFromChannel('registry.tags.echo')).toBeNull();
+    expect(extractTagFromChannel('registry.tag_set.echo')).toBeNull();
   });
 });
 
-describe('Skill Derivation from Memberships', () => {
+describe('Tag Derivation from Memberships', () => {
   /**
    * These tests verify the pattern used by the dashboard to derive
-   * skills from channel memberships rather than from card data.
+   * tags from channel memberships rather than from card data.
    */
 
-  function extractSkillFromChannel(channel: string): string | null {
-    const prefix = 'registry.skill.';
+  function extractTagFromChannel(channel: string): string | null {
+    const prefix = 'registry.tag.';
     if (channel.startsWith(prefix)) {
       return channel.slice(prefix.length);
     }
     return null;
   }
 
-  it('filters skills from membership list', () => {
+  it('filters tags from membership list', () => {
     // Simulate a getMemberships response
     const memberships = [
       { channel: { id: 'registry.all' } },
       { channel: { id: 'registry.public' } },
-      { channel: { id: 'registry.skill.echo' } },
-      { channel: { id: 'registry.skill.text_generation' } },
-      { channel: { id: 'registry.skill.ai.vision' } },
+      { channel: { id: 'registry.tag.echo' } },
+      { channel: { id: 'registry.tag.text_generation' } },
+      { channel: { id: 'registry.tag.ai.vision' } },
     ];
 
-    const skills = memberships
-      .map((m) => extractSkillFromChannel(m.channel.id))
-      .filter((skill): skill is string => skill !== null);
+    const tags = memberships
+      .map((m) => extractTagFromChannel(m.channel.id))
+      .filter((tag): tag is string => tag !== null);
 
-    expect(skills).toEqual(['echo', 'text_generation', 'ai.vision']);
-    expect(skills).not.toContain('all');
-    expect(skills).not.toContain('public');
+    expect(tags).toEqual(['echo', 'text_generation', 'ai.vision']);
+    expect(tags).not.toContain('all');
+    expect(tags).not.toContain('public');
   });
 
   it('handles empty membership list', () => {
     const memberships: Array<{ channel: { id: string } }> = [];
 
-    const skills = memberships
-      .map((m) => extractSkillFromChannel(m.channel.id))
-      .filter((skill): skill is string => skill !== null);
+    const tags = memberships
+      .map((m) => extractTagFromChannel(m.channel.id))
+      .filter((tag): tag is string => tag !== null);
 
-    expect(skills).toEqual([]);
+    expect(tags).toEqual([]);
   });
 
-  it('handles memberships with only non-skill channels', () => {
+  it('handles memberships with only non-tag channels', () => {
     const memberships = [
       { channel: { id: 'registry.all' } },
       { channel: { id: 'registry.private' } },
     ];
 
-    const skills = memberships
-      .map((m) => extractSkillFromChannel(m.channel.id))
-      .filter((skill): skill is string => skill !== null);
+    const tags = memberships
+      .map((m) => extractTagFromChannel(m.channel.id))
+      .filter((tag): tag is string => tag !== null);
 
-    expect(skills).toEqual([]);
+    expect(tags).toEqual([]);
   });
 });

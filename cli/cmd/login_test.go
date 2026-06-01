@@ -131,7 +131,7 @@ func TestLoginWithApiKeyFlag(t *testing.T) {
 
 // TestLoginNoWriteEnvSkipsWrite verifies that --no-write-env suppresses
 // the .env write (and the interactive prompt that would precede it).
-// This is the coding-agent path that BLOCKS-397 unblocks.
+// This is the coding-agent path that this change unblocks.
 func TestLoginNoWriteEnvSkipsWrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	credFile := filepath.Join(tmpDir, "credentials.json")
@@ -186,7 +186,7 @@ func TestLoginConflictingWriteEnvFlags(t *testing.T) {
 // TestShouldWriteEnvNonTTYNoFlag verifies that `shouldWriteEnv` returns
 // false (no write, no prompt) when stdin is not a TTY and no flag is
 // given — the deterministic fail-safe default. Regression test for the
-// hang reported in BLOCKS-397: pre-fix, the function would have called
+// hang reported pre-fix: the function would have called
 // bufio.Scanner(os.Stdin) and blocked waiting for input. The test
 // guards against any regression that re-introduces a stdin read on this
 // path. Calls shouldWriteEnv() directly so the test is unaffected by
@@ -223,6 +223,6 @@ func TestShouldWriteEnvNonTTYNoFlag(t *testing.T) {
 			t.Error("shouldWriteEnv() returned true on non-TTY no-flag input; expected false")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("shouldWriteEnv() hung on non-TTY stdin (regression of BLOCKS-397)")
+		t.Fatal("shouldWriteEnv() hung on non-TTY stdin (regression)")
 	}
 }

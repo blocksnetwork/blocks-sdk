@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover
     PubNub = None  # type: ignore[assignment,misc]
 
 
-# BLOCKS-129 silent-park fix. Long-lived control clients raise the
+# Silent-park fix. Long-lived control clients raise the
 # reconnection budget far above PubNub's default
 # ExponentialDelay.MAX_RETRIES = 6 (~4-6min cumulative window with the
 # 150s backoff cap). 43_200 ≈ 30 days at the 60s cap, matching the
@@ -301,7 +301,7 @@ def create_pubnub_client(
         loop. See dev_docs/SDK_CONTRACT.md §Cross-SDK retry-budget
         defaults for the contract.
     on_retry:
-        BLOCKS-129. Optional callback invoked with ``(category, message)``
+        Optional callback invoked with ``(category, message)``
         for each PubNub reconnection log line we forward. Categories:
 
         - ``"retry"`` — per-attempt DEBUG, fires every reconnect cycle.

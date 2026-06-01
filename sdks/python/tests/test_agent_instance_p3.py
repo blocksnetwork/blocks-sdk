@@ -582,7 +582,7 @@ class TestExtractOwnerId:
 
 
 class TestPamTokenIsolation:
-    """BLOCKS-232: PAM tokens must not be exposed to handler code."""
+    """PAM tokens must not be exposed to handler code."""
 
     def test_handler_does_not_receive_tokens(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _make_env(monkeypatch)

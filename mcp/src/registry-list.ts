@@ -6,8 +6,10 @@
  * optional Bearer API key for private/owned listings.
  */
 
-export const PROTOCOL_VERSION_HEADER = 'Blocks-Protocol-Version';
-export const CURRENT_PROTOCOL_VERSION = '2026-05-01';
+import {
+  PROTOCOL_VERSION_HEADER,
+  CURRENT_PROTOCOL_VERSION,
+} from './protocol-headers.js';
 
 export interface AgentListEntry {
   agentName: string;
@@ -15,13 +17,13 @@ export interface AgentListEntry {
   description?: string;
   listing?: string;
   billingMode?: string;
-  skills?: Array<{ id: string; name: string }>;
+  tags?: Array<{ id: string; name: string }>;
 }
 
 export interface ListAgentsOptions {
   baseUrl: string;
   apiKey?: string;
-  skill?: string;
+  tag?: string;
   listing?: 'public' | 'private';
   limit?: number;
   fetchImpl?: typeof fetch;
@@ -36,7 +38,7 @@ export async function listAgentsAuthenticated(
   opts: ListAgentsOptions,
 ): Promise<ListAgentsResult> {
   const params = new URLSearchParams({ include: 'full' });
-  if (opts.skill) params.set('skill', opts.skill);
+  if (opts.tag) params.set('tag', opts.tag);
   if (opts.listing) {
     params.set('listing', opts.listing);
     if (opts.listing === 'private') params.set('scope', 'owned');

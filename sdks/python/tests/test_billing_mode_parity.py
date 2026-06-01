@@ -1,8 +1,8 @@
 """Cross-SDK parity test for billing_mode -> keyset routing.
 
 Mirrors the Node SDK's ``tests/task-client-create.test.ts`` parity block
-and the backend's ``afui_mvp_backend/src/lib/pubnub.ts`` ``BILLING_MODE_TO_KEYSET``
-map. All three layers (Node SDK, Python SDK, backend) must agree:
+and the service's ``BILLING_MODE_TO_KEYSET``
+map. All three layers (Node SDK, Python SDK, the service) must agree:
 
     free -> playground keyset
     paid -> network keyset
@@ -113,7 +113,10 @@ BILLING_MODE_MISMATCH_FIXTURE = {
     "error": {
         "code": -32000,
         "message": (
-            "Billing mode mismatch: caller declared 'free', agent is 'paid'"
+            "Billing mode mismatch: caller declared 'free', agent is 'paid'. "
+            "Read the agent's billingMode from the registry "
+            "(Node: (await getAgent(name)).billingMode; Python: get_agent(agent_name).billing_mode) "
+            "and pass it into TaskClient.create."
         ),
         "data": {
             "code": "BillingModeMismatch",

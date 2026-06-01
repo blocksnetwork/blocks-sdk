@@ -1201,7 +1201,7 @@ class TestTimetokenDedup:
 
 
 # ============================================================================
-# BLOCKS-243: Anonymous consumer mode (anon_fingerprint)
+# Anonymous consumer mode (anon_fingerprint)
 # ============================================================================
 
 

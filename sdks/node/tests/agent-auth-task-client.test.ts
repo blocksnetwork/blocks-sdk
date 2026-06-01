@@ -143,7 +143,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('BLOCKS-111 regression: AgentAuth + TaskClient.sendMessage', () => {
+describe('regression: AgentAuth + TaskClient.sendMessage', () => {
   it('applies readToken to per-session PubNub, subscribes to status channel, and delivers artifact events to onArtifact', async () => {
     const agentAuth = new AgentAuth(TEST_API_KEY, TEST_BASE_URL);
     await agentAuth.init({
@@ -173,7 +173,7 @@ describe('BLOCKS-111 regression: AgentAuth + TaskClient.sendMessage', () => {
     expect(sessionPubNubInstances.length).toBe(1);
     const fake = sessionPubNubInstances[0];
 
-    // SMOKING-GUN ASSERTION for the SDK side of BLOCKS-111: the readToken
+    // SMOKING-GUN ASSERTION for the SDK side: the readToken
     // from the RPC response was applied to the per-session PubNub via
     // setToken. Without it, PubNub PAM would reject the subscribe and
     // onArtifact / waitForTerminal would silently never fire.
@@ -193,7 +193,7 @@ describe('BLOCKS-111 regression: AgentAuth + TaskClient.sendMessage', () => {
       partId: 'transplant-preview',
       mimeType: 'image/png',
     };
-    // Listener arity is internal SDK plumbing, not BLOCKS-111 behavior; assert
+    // Listener arity is internal SDK plumbing, not regression behavior; assert
     // at least one listener exists and dispatch through every one with .message
     // so a future second listener (presence keepalive, debug, …) doesn't false-
     // positive this regression test.

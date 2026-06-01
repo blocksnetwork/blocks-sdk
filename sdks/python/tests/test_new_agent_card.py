@@ -68,7 +68,7 @@ class TestNewFormatCardParsing:
                 "provider": {"organization": "Acme"},
             },
             "capabilities": {"taskKinds": ["request"]},
-            "skills": [{"id": "echo", "name": "Echo"}],
+            "tags": [{"id": "echo", "name": "Echo"}],
             "runtime": {
                 "handler": "./handler.py",
                 "concurrency": 1,
@@ -88,15 +88,15 @@ class TestNewFormatCardParsing:
         }
         assert card["capabilities"]["taskKinds"] == ["request", "pipe"]
 
-    def test_skills_at_top_level(self) -> None:
-        """Skills are at the card top level, not under runtime."""
+    def test_tags_at_top_level(self) -> None:
+        """Tags are at the card top level, not under runtime."""
         card = {
-            "skills": [
+            "tags": [
                 {"id": "echo", "name": "Echo", "description": "Echoes input"},
             ],
         }
-        assert card["skills"][0]["id"] == "echo"
-        assert card["skills"][0]["name"] == "Echo"
+        assert card["tags"][0]["id"] == "echo"
+        assert card["tags"][0]["name"] == "Echo"
 
     def test_no_heartbeat_ms_in_runtime(self) -> None:
         """runtime section must not contain heartbeatMs."""
@@ -373,14 +373,14 @@ class TestAgentCardDataclass:
             agent_name="test",
             identity={"description": "Test agent", "version": "1.0.0", "provider": {"organization": "Org"}},
             capabilities={"taskKinds": ["request"]},
-            skills=[{"id": "main", "name": "Main"}],
+            tags=[{"id": "main", "name": "Main"}],
             runtime={"handler": "./handler.py"},
         )
         d = _card_to_dict(card)
         assert d["identity"]["displayName"] == "Test"
         assert d["identity"]["agentName"] == "test"
         assert d["capabilities"]["taskKinds"] == ["request"]
-        assert d["skills"] == [{"id": "main", "name": "Main"}]
+        assert d["tags"] == [{"id": "main", "name": "Main"}]
         assert "io" not in d
         assert "streams" not in d
 
@@ -390,7 +390,7 @@ class TestAgentCardDataclass:
             agent_name="full",
             identity={"description": "Full", "version": "2.0.0", "provider": {"organization": "Org"}},
             capabilities={"taskKinds": ["request", "pipe"]},
-            skills=[{"id": "main", "name": "Main"}],
+            tags=[{"id": "main", "name": "Main"}],
             runtime={"handler": "./handler.py"},
             io={"inputs": [{"id": "text", "contentType": "text/plain", "required": True}], "outputs": []},
             streams={"_default": {"direction": "outbound", "format": "bytes"}},

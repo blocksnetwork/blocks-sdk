@@ -9,7 +9,10 @@
     }
   },
   "capabilities": {
-    "taskKinds": ["request", "pipe"]
+    "taskKinds": [
+      "request",
+      "pipe"
+    ]
   },
   "io": {
     "inputs": [
@@ -23,7 +26,9 @@
         },
         "schema": {
           "type": "object",
-          "required": ["text"],
+          "required": [
+            "text"
+          ],
           "properties": {
             "text": {
               "type": "string",
@@ -50,7 +55,7 @@
       "description": "Echoed text chunks streamed word-by-word or line-by-line."
     }
   },
-  "skills": [
+  "tags": [
     {
       "id": "main",
       "name": "Echo Stream",

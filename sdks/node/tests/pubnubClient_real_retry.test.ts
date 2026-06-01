@@ -1,5 +1,5 @@
 /**
- * Boot-time guard for BLOCKS-129 silent-park fix.
+ * Boot-time guard for the silent-park fix.
  *
  * The PubNub JS SDK's makeConfiguration() invokes
  * RequestRetryPolicy.validate() on the policy we hand it. The default

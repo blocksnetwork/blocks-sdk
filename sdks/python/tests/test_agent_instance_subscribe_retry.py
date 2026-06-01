@@ -107,7 +107,7 @@ def _minimal_card() -> dict:
             "provider": {"organization": "test"},
         },
         "capabilities": {"taskKinds": ["request"]},
-        "skills": [],
+        "tags": [],
     }
 
 

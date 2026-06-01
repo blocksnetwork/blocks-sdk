@@ -37,7 +37,7 @@
       "why_given": "reminder"
     },
     {
-      "instruction": "Configure agent-card.json with capabilities.taskKinds and required identity, skills, and runtime sections",
+      "instruction": "Configure agent-card.json with capabilities.taskKinds and required identity, tags, and runtime sections",
       "original_snippets": "\"capabilities\": { \"taskKinds\": [\"request\"] }",
       "relevant_when": "When configuring agent-card.json",
       "why_given": "new knowledge"

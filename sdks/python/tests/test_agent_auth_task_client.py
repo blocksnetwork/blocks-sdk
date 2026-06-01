@@ -1,9 +1,9 @@
-"""BLOCKS-111 regression: AgentAuth + TaskClient.send_message cross-SDK parity.
+"""Regression: AgentAuth + TaskClient.send_message cross-SDK parity.
 
 Mirrors sdks/node/tests/agent-auth-task-client.test.ts for cross-SDK parity
 (AGENTS.md §SDK Rules). Verifies that:
 1. The T4 readToken from the RPC response is applied to the per-session PubNub
-   via set_token() -- the BLOCKS-111 smoking gun.
+   via set_token() -- the smoking gun.
 2. The SDK subscribes to the backend-named status channel.
 3. Artifact and terminal events dispatched on the channel reach on_artifact /
    wait_for_terminal callbacks.
@@ -199,10 +199,10 @@ def _push_event(fake: dict, channel: str, message: dict, timetoken: str = "17000
     than silently as "expected event not delivered".
     """
     assert fake["listeners"], (
-        "Python SDK did not register any PubNub listeners — BLOCKS-111 regression"
+        "Python SDK did not register any PubNub listeners — regression"
     )
     assert channel in fake["subscribed_channels"], (
-        f"Python SDK did not subscribe to {channel!r} — BLOCKS-111 regression"
+        f"Python SDK did not subscribe to {channel!r} — regression"
     )
 
     event = MagicMock()
@@ -221,7 +221,7 @@ def _push_event(fake: dict, channel: str, message: dict, timetoken: str = "17000
 
 
 class TestAgentAuthTaskClientBlocks111:
-    """BLOCKS-111 regression: AgentAuth + TaskClient.send_message parity."""
+    """Regression: AgentAuth + TaskClient.send_message parity."""
 
     def _setup(self):
         """Returns an AgentAuth post-init with a fake PubNub."""
@@ -243,7 +243,7 @@ class TestAgentAuthTaskClientBlocks111:
     def test_read_token_applied_subscribes_to_status_channel_and_fires_on_artifact(self):
         """Applies readToken via set_token, subscribes to status channel, fires on_artifact.
 
-        BLOCKS-111 smoking-gun: without set_token(readToken) on the per-session PubNub,
+        Smoking-gun: without set_token(readToken) on the per-session PubNub,
         PubNub PAM rejects the subscribe and on_artifact silently never fires.
         """
         auth, fake = self._setup()
@@ -327,7 +327,7 @@ class TestAgentAuthTaskClientBlocks111:
         # _push_event(). Without this the main thread can dispatch the terminal
         # message before the waiter has installed its observer; the SDK's
         # _BufferListener does buffer pre-call messages so the test still
-        # passes, but the live-dispatch path is what BLOCKS-111 cares about.
+        # passes, but the live-dispatch path is what this regression cares about.
         time.sleep(0.05)
 
         _push_event(fake, STATUS_CHANNEL, {

@@ -9,7 +9,9 @@
     }
   },
   "capabilities": {
-    "taskKinds": ["request"]
+    "taskKinds": [
+      "request"
+    ]
   },
   "io": {
     "inputs": [
@@ -23,7 +25,9 @@
         },
         "schema": {
           "type": "object",
-          "required": ["text"],
+          "required": [
+            "text"
+          ],
           "properties": {
             "text": {
               "type": "string",
@@ -43,7 +47,7 @@
       }
     ]
   },
-  "skills": [
+  "tags": [
     {
       "id": "echo",
       "name": "Echo",

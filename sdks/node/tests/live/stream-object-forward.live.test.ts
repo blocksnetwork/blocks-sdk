@@ -1,5 +1,5 @@
 /**
- * Live A2A test for BLOCKS-262 — handler-side `StreamObject` parity with
+ * Live A2A test for handler-side `StreamObject` parity with
  * the consumer-side `StreamClient` read/error surface.
  *
  * Two scenarios:
@@ -93,7 +93,7 @@ describe.skipIf(liveGuard)('StreamObject forwarded surface (live)', () => {
       identity: {
         agentName,
         displayName: agentName,
-        description: 'BLOCKS-262 forwarded-surface live test agent',
+        description: 'forwarded-surface live test agent',
         version: '1.0.0',
         provider: { organization: 'blocks-net' },
       },
@@ -213,7 +213,7 @@ describe.skipIf(liveGuard)('StreamObject forwarded surface (live)', () => {
   //
   // Resolution path: wire a deterministic T7a-revocation or agent-side
   // PAM-denied-channel trigger (mirroring the bytes test's task-lifecycle
-  // setup), then re-enable. See BLOCKS-262 acceptance criteria for the
+  // setup), then re-enable. See acceptance criteria for the
   // live A2A error path.
   it.skip('handler-side onError fires with a StreamError on T7a-path PAM denial', async () => {
     // The handler-side StreamObject wraps a StreamClient built with T7a
@@ -231,7 +231,7 @@ describe.skipIf(liveGuard)('StreamObject forwarded surface (live)', () => {
         identity: {
           agentName,
           displayName: agentName,
-          description: 'BLOCKS-262 onError forwarding live test',
+          description: 'onError forwarding live test',
           version: '1.0.0',
           provider: { organization: 'blocks-net' },
         },

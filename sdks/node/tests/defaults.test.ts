@@ -4,7 +4,7 @@ import { DEFAULTS } from '../src/defaults.js';
 import { BLOCKS_MAX_UPLOAD_BYTES } from '../src/index.js';
 
 describe('DEFAULTS.maxUploadBytes', () => {
-  it('equals 25 MiB (26_214_400) — must match afui_mvp_backend MAX_FILE_SIZE_BYTES', () => {
+  it("equals 25 MiB (26_214_400) — must match the service's MAX_FILE_SIZE_BYTES", () => {
     expect(DEFAULTS.maxUploadBytes).toBe(26_214_400);
     expect(DEFAULTS.maxUploadBytes).toBe(25 * 1024 * 1024);
   });

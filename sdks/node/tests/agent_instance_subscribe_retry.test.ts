@@ -1,5 +1,5 @@
 /**
- * BLOCKS-129 silent-park fix: the long-lived control client must opt
+ * Silent-park fix: the long-lived control client must opt
  * into unbounded subscribe retry (subscribeRetryUnbounded:true) so the
  * PubNub Event Engine never exhausts its retry budget and parks in
  * RECEIVE_FAILED. Short-lived per-task / per-stream clients must opt

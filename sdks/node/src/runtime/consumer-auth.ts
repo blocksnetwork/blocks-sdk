@@ -87,6 +87,25 @@ interface ErrorResponse {
 }
 
 // ============================================================================
+// AuthRefreshFailedError
+// ============================================================================
+
+/**
+ * Thrown by `TaskClient.sendMessage()` and `TaskClient.connect()` when the
+ * underlying `ConsumerAuth` is in a known-broken refresh state (proactive
+ * refresh permanently failed after 3 retries). Carries the original failure
+ * as `.cause`. Cleared by a subsequent successful reactive refresh.
+ */
+export class AuthRefreshFailedError extends Error {
+  readonly cause: Error;
+  constructor(cause: Error) {
+    super(`Consumer auth refresh permanently failed: ${cause.message}`);
+    this.name = 'AuthRefreshFailedError';
+    this.cause = cause;
+  }
+}
+
+// ============================================================================
 // ConsumerAuth
 // ============================================================================
 
@@ -106,6 +125,7 @@ export class ConsumerAuth implements AuthProvider {
   private _refreshPromise: Promise<boolean> | null = null;
   private _initialized = false;
   private _initPromise: Promise<void> | null = null;
+  private _lastAuthError: AuthRefreshFailedError | null = null;
 
   constructor(options: ConsumerAuthOptions) {
     this._apiKey = options.apiKey;
@@ -139,6 +159,16 @@ export class ConsumerAuth implements AuthProvider {
 
   getUserId(): string | null {
     return this._userId;
+  }
+
+  /**
+   * Returns the last permanent refresh failure, or null. Set when proactive
+   * refresh exhausts its 3 retries; cleared on a successful reactive refresh.
+   * Callers (TaskClient.sendMessage / connect) use this to fail fast before
+   * making any authenticated request.
+   */
+  getLastAuthError(): AuthRefreshFailedError | null {
+    return this._lastAuthError;
   }
 
   /**
@@ -208,10 +238,16 @@ export class ConsumerAuth implements AuthProvider {
       userId: string;
     };
 
-    this._token = data.accessToken;
     this._refreshToken = data.refreshToken;
-    this._expiresIn = data.expiresIn;
-    this._userId = data.userId;
+    // Route token application through _applyTokenResult so _lastAuthError
+    // is cleared atomically with the new token. _refreshApiKey() falls
+    // back here on REFRESH_TOKEN_INVALID, and that recovery path must
+    // not leave a stale fail-fast error behind.
+    this._applyTokenResult({
+      token: data.accessToken,
+      expiresIn: data.expiresIn,
+      userId: data.userId,
+    });
   }
 
   private async _refreshApiKey(): Promise<void> {
@@ -262,6 +298,8 @@ export class ConsumerAuth implements AuthProvider {
     if (typeof data.expiresIn === 'number') {
       this._expiresIn = data.expiresIn;
     }
+    // Atomic with token application — see _applyTokenResult.
+    this._lastAuthError = null;
   }
 
   // --------------------------------------------------------------------------
@@ -342,6 +380,12 @@ export class ConsumerAuth implements AuthProvider {
     if (result.userId !== undefined) {
       this._userId = result.userId;
     }
+    // Clear any recorded permanent-refresh error in the same step that
+    // applies the new token. Doing this here (rather than in a separate
+    // `.then` microtask of `_doRefreshDedup`) keeps the visible auth
+    // state — token + lastAuthError — moving atomically, matching
+    // Python's lock-protected clear at consumer_auth.py:_store_result.
+    this._lastAuthError = null;
   }
 
   /**
@@ -370,10 +414,20 @@ export class ConsumerAuth implements AuthProvider {
 
     this._refreshPromise = this._refreshOnce()
       .then(() => {
+        // _lastAuthError is cleared atomically in _applyTokenResult so
+        // observers don't see a stale error between token application
+        // and the .then microtask.
         this._scheduleRefresh();
         return true;
       })
-      .catch(() => false)
+      .catch((err) => {
+        const error = err instanceof Error ? err : new Error(String(err));
+        log('warn', 'reactive refresh failed', {
+          event: 'consumer_auth_reactive_refresh_failed',
+          error: error.message,
+        });
+        return false;
+      })
       .finally(() => {
         this._refreshPromise = null;
       });
@@ -419,15 +473,18 @@ export class ConsumerAuth implements AuthProvider {
           }, backoff);
         }
       } else {
-        // Permanent failure
+        // Permanent failure: always log a warning so consumers without an
+        // onAuthError callback aren't silent (matches Python parity and
+        // SDK_CONTRACT.md §8.6.4 'either way' guarantee), then invoke the
+        // callback if registered.
         const error = err instanceof Error ? err : new Error(String(err));
+        this._lastAuthError = new AuthRefreshFailedError(error);
+        log('warn', 'proactive refresh permanently failed', {
+          event: 'consumer_auth_proactive_refresh_failed',
+          error: error.message,
+        });
         if (this._onAuthError) {
           this._onAuthError(error);
-        } else {
-          log('warn', 'proactive refresh permanently failed', {
-            event: 'consumer_auth_proactive_refresh_failed',
-            error: error.message,
-          });
         }
       }
     }

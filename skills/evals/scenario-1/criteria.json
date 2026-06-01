@@ -1,5 +1,5 @@
 {
-  "context": "Tests whether the agent correctly implements a JSON-processing handler with proper type imports, error handling via return values instead of throws, JSON artifact mimeType, and well-configured agent-card.json with skill metadata.",
+  "context": "Tests whether the agent correctly implements a JSON-processing handler with proper type imports, error handling via return values instead of throws, JSON artifact mimeType, and well-configured agent-card.json with tag metadata.",
   "type": "weighted_checklist",
   "checklist": [
     {
@@ -48,8 +48,8 @@
       "max_score": 8
     },
     {
-      "name": "Skill tags and examples",
-      "description": "agent-card.json skills array includes tags and/or examples for the skill",
+      "name": "Tag examples",
+      "description": "agent-card.json tags array includes examples for the tag",
       "max_score": 6
     },
     {

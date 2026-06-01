@@ -45,6 +45,21 @@ _ERROR_CODE_API_KEY_INVALID = "API_KEY_INVALID"
 _REFRESH_TTL_FRACTION = 0.80
 
 
+class AuthRefreshFailedError(RuntimeError):
+    """Raised by :meth:`TaskClient.send_message` and :meth:`TaskClient.connect`
+    when the underlying :class:`ConsumerAuth` is in a known-broken refresh
+    state (proactive refresh permanently failed after 3 retries).
+
+    The original failure is chained via PEP-3134 ``__cause__``. Cleared by a
+    subsequent successful reactive refresh.
+    """
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(
+            f"Consumer auth refresh permanently failed: {cause}"
+        )
+
+
 @dataclass
 class TokenResult:
     """Result from a token acquisition call."""
@@ -137,6 +152,7 @@ class ConsumerAuth:
         self._refresh_token_value: Optional[str] = None
         self._expires_at: float = 0.0
         self._destroyed: bool = False
+        self._last_auth_error: Optional[AuthRefreshFailedError] = None
 
         # Proactive refresh timer (daemon thread)
         self._timer: Optional[threading.Timer] = None
@@ -175,6 +191,17 @@ class ConsumerAuth:
         with self._lock:
             return self._user_id
 
+    def get_last_auth_error(self) -> Optional["AuthRefreshFailedError"]:
+        """Return the last permanent refresh failure, or None.
+
+        Set when proactive refresh exhausts its 3 retries; cleared on a
+        successful reactive refresh. Callers (``TaskClient.send_message`` /
+        ``TaskClient.connect``) use this to fail fast before any
+        authenticated request.
+        """
+        with self._lock:
+            return self._last_auth_error
+
     def on_auth_failure(self) -> bool:
         """Trigger immediate refresh on 401.
 
@@ -211,12 +238,18 @@ class ConsumerAuth:
             with self._lock:
                 self._refresh_success = True
                 self._refreshing = False
+                # _last_auth_error is cleared atomically in _store_result
+                # so concurrent get_last_auth_error() readers can never
+                # see a stale fail-fast error once the new token is live.
                 evt = self._refresh_event
                 self._refresh_event = None
             if evt:
                 evt.set()
             return True
-        except Exception:
+        except Exception as err:
+            logger.warning(
+                "[ConsumerAuth] reactive refresh failed: %s", err,
+            )
             with self._lock:
                 self._refresh_success = False
                 self._refreshing = False
@@ -373,12 +406,21 @@ class ConsumerAuth:
     # -- Private: state management ------------------------------------------
 
     def _store_result(self, result: TokenResult) -> None:
-        """Atomically update token state under the lock."""
+        """Atomically update token state under the lock.
+
+        Clearing ``_last_auth_error`` here (rather than in a separate
+        critical section in ``on_auth_failure``) closes the thread
+        interleaving where a concurrent RPC/file-upload caller could
+        read a stale fail-fast error after a successful reactive
+        refresh has already applied the new token. Mirrors Node's
+        ``_applyTokenResult``.
+        """
         with self._lock:
             self._token = result.token
             if result.user_id is not None:
                 self._user_id = result.user_id
             self._expires_at = time.monotonic() + result.expires_in
+            self._last_auth_error = None
 
     # -- Private: proactive refresh -----------------------------------------
 
@@ -413,6 +455,11 @@ class ConsumerAuth:
                         "[ConsumerAuth] proactive refresh failed after %d retries: %s",
                         _MAX_RETRIES, err,
                     )
+                    permanent = AuthRefreshFailedError(err)
+                    permanent.__cause__ = err
+                    permanent.__suppress_context__ = True
+                    with self._lock:
+                        self._last_auth_error = permanent
                     if self._on_auth_error:
                         try:
                             self._on_auth_error(err)

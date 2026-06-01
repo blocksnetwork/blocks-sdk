@@ -32,7 +32,7 @@ function validCardJson(overrides: Record<string, unknown> = {}): string {
       ...((overrides.identity as Record<string, unknown>) ?? {}),
     },
     capabilities: { taskKinds: ['request'] },
-    skills: [],
+    tags: [],
     runtime: {
       handler: './handler.js',
       ...((overrides.runtime as Record<string, unknown>) ?? {}),
@@ -93,7 +93,7 @@ describe('loadAgentCard', () => {
       name: 'test',
       description: 'test',
       version: '1.0.0',
-      skills: [],
+      tags: [],
     }));
     tmpDirs.push(dir);
 
@@ -105,7 +105,7 @@ describe('loadAgentCard', () => {
       name: 'test',
       description: 'test',
       version: '1.0.0',
-      skills: [],
+      tags: [],
       runtime: 'not-an-object',
     }));
     tmpDirs.push(dir);
@@ -121,7 +121,7 @@ describe('loadAgentCard', () => {
         version: '1.0.0',
         provider: { organization: 'TestOrg' },
       },
-      skills: [],
+      tags: [],
       runtime: { handler: './handler.js' },
     }));
     tmpDirs.push(dir);

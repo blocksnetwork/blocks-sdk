@@ -106,7 +106,7 @@ function newFormatCard(overrides: Record<string, unknown> = {}): Record<string, 
       provider: { organization: 'TestOrg' },
     },
     capabilities: { taskKinds: ['request'] },
-    skills: [{ id: 'test', name: 'Test' }],
+    tags: [{ id: 'test', name: 'Test' }],
     runtime: {
       handler: './handler.ts',
     },
@@ -540,7 +540,7 @@ describe('new agent card: AgentCard type structure', () => {
         provider: { organization: 'Org' },
       },
       capabilities: { taskKinds: ['request'] },
-      skills: [{ id: 'test', name: 'Test' }],
+      tags: [{ id: 'test', name: 'Test' }],
     };
 
     expect(card.identity.displayName).toBe('Test Agent');
@@ -576,7 +576,7 @@ describe('new agent card: AgentCard type structure', () => {
         },
       },
       services: { webhooks: true },
-      skills: [{ id: 'main', name: 'Main', description: 'The main skill' }],
+      tags: [{ id: 'main', name: 'Main', description: 'The main tag' }],
       extensions: { custom: 'data' },
       runtime: {
         handler: './handler.ts',

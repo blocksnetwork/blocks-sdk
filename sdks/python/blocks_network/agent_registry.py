@@ -2,7 +2,7 @@
 Agent Registry - REST-based agent registration and discovery.
 
 All registry operations (register, fetch, get, remove) use the server-side
-REST endpoints at /api/v1/registry/agents which handle App Context operations,
+REST endpoints at /api/v1/registry/agents which handle registry metadata operations,
 membership indexing, and audit events server-side.
 """
 
@@ -19,9 +19,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar, Union
 
 from .channel_manager import (
-    normalize_skill_slug,
+    normalize_tag_slug,
     registry_all_channel,
-    registry_skill_channel,
+    registry_tag_channel,
     registry_log_channel,
     registry_visibility_channel,
 )
@@ -56,7 +56,7 @@ class AgentScaling:
 class AgentCard:
     """Agent card payload (new 9-section structure) -- authored by developers in agent-card.json.
 
-    Required sections: identity, capabilities, skills, runtime.
+    Required sections: identity, capabilities, tags, runtime.
     Optional sections: io, streams, security, services, extensions.
 
     ``display_name`` and ``agent_name`` are convenience fields that map to
@@ -68,7 +68,7 @@ class AgentCard:
     agent_name: str = ""
     identity: Dict[str, Any] = field(default_factory=dict)
     capabilities: Dict[str, Any] = field(default_factory=dict)
-    skills: List[Dict[str, Any]] = field(default_factory=list)
+    tags: List[Dict[str, Any]] = field(default_factory=list)
     runtime: Dict[str, Any] = field(default_factory=dict)
     io: Optional[Dict[str, Any]] = None
     streams: Optional[Dict[str, Any]] = None
@@ -86,7 +86,7 @@ class OutputAgentCard:
 
     identity: Dict[str, Any] = field(default_factory=dict)
     capabilities: Optional[Dict[str, Any]] = None
-    skills: Optional[List[Dict[str, Any]]] = None
+    tags: Optional[List[Dict[str, Any]]] = None
     io: Optional[Dict[str, Any]] = None
     streams: Optional[Dict[str, Any]] = None
     security: Optional[Dict[str, Any]] = None
@@ -110,7 +110,7 @@ class AgentEntry:
     agent_name: str
     name: str
     description: Optional[str] = None
-    skills: Optional[List[Any]] = None
+    tags: Optional[List[Any]] = None
     scaling: Optional[Any] = None
     card: Optional[Any] = None
     card_ref: Optional[str] = None
@@ -141,7 +141,10 @@ class ConnectAgentOptions:
 
     instance_id: Optional[str] = None
     description: Optional[str] = None
-    skills: Optional[List[str]] = None
+    # AgentTag objects ({id, name, description?, examples?}), matching Node
+    # ConnectAgentOptions.tags: AgentTag[]. (The pre-rename `skills` field was
+    # List[str] here, which diverged from Node; the rename aligns the shape.)
+    tags: Optional[List[Dict[str, Any]]] = None
     scaling: Optional[AgentScaling] = None
     card: Optional[Union[AgentCard, Dict[str, Any]]] = None
     card_ref: Optional[str] = None
@@ -180,7 +183,7 @@ class RegistryAuditEvent:
     source: str
     agent_name: Optional[str] = None
     visibility: Optional[Literal["public", "private"]] = None
-    skills: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
     card_hash: Optional[str] = None
     card_ref: Optional[str] = None
     summary_hash: Optional[str] = None
@@ -265,7 +268,7 @@ def _card_to_dict(card: Union[AgentCard, Dict[str, Any], None]) -> Optional[Dict
     result: Dict[str, Any] = {
         "identity": identity,
         "capabilities": card.capabilities,
-        "skills": card.skills,
+        "tags": card.tags,
         "runtime": card.runtime,
     }
     if card.io is not None:
@@ -373,7 +376,7 @@ def _map_server_agent_to_entry(agent: Dict[str, Any]) -> AgentEntry:
         agent_name=agent.get("agentName", ""),
         name=agent.get("name") or agent.get("agentName", ""),
         description=agent.get("description"),
-        skills=agent.get("skills"),
+        tags=agent.get("tags"),
         scaling=agent.get("scaling"),
         card=agent.get("card"),
         card_ref=agent.get("cardRef"),
@@ -398,6 +401,27 @@ class ConnectAgentResult:
     control_channel: Optional[str] = None
 
 
+def _assert_no_legacy_skills_field(card: Optional[Union[AgentCard, Dict[str, Any]]]) -> None:
+    """Reject the legacy ``skills`` field on an agent-card dict.
+
+    ``skills`` was renamed to ``tags``; there is no wire/SDK alias. Without
+    this guard, Python callers who still pass ``{"skills": [...]}`` would
+    silently send the field over the wire and only see the backend's
+    generic rejection. This fails fast on the client side with an
+    actionable error.
+    """
+    if card is None:
+        return
+    if isinstance(card, dict) and "skills" in card:
+        raise ValueError(
+            "[blocks-network] agent-card field `skills` was renamed to `tags`. "
+            "Action: rename the field in your code (or in any agent-card.json you load) — "
+            "same shape, only the key name changes. This SDK ships no compatibility alias. "
+            "If you publish via `blocks-cli`, upgrading the CLI rewrites the field for you, "
+            "but programmatic callers (this SDK) must rename."
+        )
+
+
 def connect_agent(
     agent_name: str,
     options: Optional[ConnectAgentOptions] = None,
@@ -406,7 +430,7 @@ def connect_agent(
     Register or update an agent in the registry.
 
     Sends a POST request to the dedicated registry endpoint which handles
-    all App Context operations (UUID metadata, memberships, audit events)
+    all registry metadata operations (UUID metadata, memberships, audit events)
     server-side.
 
     Args:
@@ -425,6 +449,8 @@ def connect_agent(
     if options is None:
         options = ConnectAgentOptions()
 
+    _assert_no_legacy_skills_field(options.card)
+
     cli_version = os.environ.get("BLOCKS_CLI_VERSION") or None
 
     result_holder: Dict[str, Any] = {}
@@ -437,7 +463,7 @@ def connect_agent(
         )
 
     # Connect payload: runtime-only fields for /auth/agent/connect.
-    # Card, description, cardRef, cardSummary, and skills are sent
+    # Card, description, cardRef, cardSummary, and tags are sent
     # by `blocks publish`, not by the SDK at connect time.
     #
     # ``billingMode`` is the registry-resolved value forwarded by
@@ -561,17 +587,17 @@ def fetch_agent_registry(
     )
 
 
-def fetch_agents_by_skill(
-    skill: str,
+def fetch_agents_by_tag(
+    tag: str,
     limit: int = 100,
     cursor: Optional[str] = None,
     base_url: Optional[str] = None,
 ) -> AgentRegistryResult:
     """
-    Fetch agents filtered by skill.
+    Fetch agents filtered by tag.
 
     Args:
-        skill: Skill string to filter by.
+        tag: Tag string to filter by.
         limit: Maximum number of agents to return (default 100).
         cursor: Pagination cursor for fetching next page.
         base_url: Optional base URL override.
@@ -579,7 +605,7 @@ def fetch_agents_by_skill(
     Returns:
         AgentRegistryResult with matching agents.
     """
-    query: Dict[str, str] = {"include": "full", "skill": skill}
+    query: Dict[str, str] = {"include": "full", "tag": tag}
     if limit:
         query["limit"] = str(limit)
     if cursor:
@@ -688,14 +714,14 @@ __all__ = [
     # Registry Operations
     "connect_agent",
     "fetch_agent_registry",
-    "fetch_agents_by_skill",
+    "fetch_agents_by_tag",
     "fetch_agents_by_listing",
     "get_agent",
     "remove_agent",
     # Re-exports from channel_manager
     "registry_all_channel",
-    "registry_skill_channel",
+    "registry_tag_channel",
     "registry_visibility_channel",
     "registry_log_channel",
-    "normalize_skill_slug",
+    "normalize_tag_slug",
 ]

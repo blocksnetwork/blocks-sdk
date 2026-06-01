@@ -9,7 +9,9 @@
     }
   },
   "capabilities": {
-    "taskKinds": ["request"]
+    "taskKinds": [
+      "request"
+    ]
   },
   "io": {
     "inputs": [
@@ -50,7 +52,7 @@
       }
     ]
   },
-  "skills": [
+  "tags": [
     {
       "id": "consume-stock-stream",
       "name": "Consume Stock Stream",
