@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { listAgentsAuthenticated } from '../src/registry-list.js';
+import {
+  listAgentsAuthenticated,
+  listAllAgentsAuthenticated,
+} from '../src/registry-list.js';
 import {
   PROTOCOL_VERSION_HEADER,
   CURRENT_PROTOCOL_VERSION,
@@ -116,5 +119,126 @@ describe('listAgentsAuthenticated', () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(result).toEqual(body);
+  });
+
+  it('forwards the cursor query param when provided', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      mockResponse({ agents: [], totalCount: 0 }),
+    );
+
+    await listAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      cursor: 'abc123',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const [url] = fetchImpl.mock.calls[0];
+    expect(new URL(String(url)).searchParams.get('cursor')).toBe('abc123');
+  });
+});
+
+describe('listAllAgentsAuthenticated', () => {
+  function agent(name: string) {
+    return { agentName: name, tags: [] };
+  }
+
+  it('follows the next cursor across pages and aggregates results', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockResponse({
+          agents: [agent('a'), agent('b')],
+          next: 'c1',
+          totalCount: 5,
+          totalOnlineCount: 3,
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockResponse({ agents: [agent('c'), agent('d')], next: 'c2' }),
+      )
+      .mockResolvedValueOnce(
+        mockResponse({ agents: [agent('e')], next: null }),
+      );
+
+    const result = await listAllAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(result.agents.map((a) => a.agentName)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(result.totalCount).toBe(5);
+    expect(result.totalOnlineCount).toBe(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+
+    // First request carries no cursor; follow-ups carry the prior page's next.
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('cursor')).toBeNull();
+    expect(new URL(String(fetchImpl.mock.calls[1][0])).searchParams.get('cursor')).toBe('c1');
+    expect(new URL(String(fetchImpl.mock.calls[2][0])).searchParams.get('cursor')).toBe('c2');
+  });
+
+  it('stops after a single page when next is absent', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      mockResponse({ agents: [agent('a')], totalCount: 1 }),
+    );
+
+    const result = await listAllAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(result.agents.map((a) => a.agentName)).toEqual(['a']);
+  });
+
+  it('requests the max page size (limit=100) by default', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      mockResponse({ agents: [], next: null }),
+    );
+
+    await listAllAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('limit')).toBe('100');
+  });
+
+  it('caps the total agents and shrinks the final page request', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockResponse({ agents: [agent('a'), agent('b')], next: 'c1' }),
+      )
+      .mockResolvedValueOnce(
+        mockResponse({ agents: [agent('c'), agent('d')], next: 'c2' }),
+      );
+
+    const result = await listAllAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      maxAgents: 3,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(result.agents.map((a) => a.agentName)).toEqual(['a', 'b', 'c']);
+    // Two requests only. The cap bounds each page size: first page asks for
+    // min(100, 3)=3; after 2 returned, the second asks for the remaining 1.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('limit')).toBe('3');
+    expect(new URL(String(fetchImpl.mock.calls[1][0])).searchParams.get('limit')).toBe('1');
+  });
+
+  it('terminates when a backend returns a stuck non-null cursor', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      mockResponse({ agents: [agent('a')], next: 'always' }),
+    );
+
+    const result = await listAllAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    // Bounded by the internal page guard rather than looping forever.
+    expect(fetchImpl).toHaveBeenCalledTimes(1000);
+    expect(result.agents).toHaveLength(1000);
   });
 });

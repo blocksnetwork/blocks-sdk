@@ -14,7 +14,7 @@ import {
   BLOCKS_MAX_UPLOAD_BYTES,
 } from '@blocks-network/sdk';
 
-import { listAgentsAuthenticated } from './registry-list.js';
+import { listAllAgentsAuthenticated } from './registry-list.js';
 import { fetchAgentStatus, MAX_AGENT_NAMES } from './agent-status.js';
 import { getConsumerBalance, createConsumerTopUp } from './billing.js';
 import {
@@ -26,6 +26,7 @@ import {
   resumeTask,
   retryTask,
   listAgents,
+  searchAgents,
   getAgentCard,
   getAgentStatus,
   connectTask,
@@ -106,7 +107,7 @@ const deps: ToolDeps = {
   getTaskClient,
   getAgentByName: (agentName, options) =>
     getAgent(agentName, options) as Promise<AgentEntryLike | null>,
-  listAgents: listAgentsAuthenticated,
+  listAgents: listAllAgentsAuthenticated,
   fetchAgentStatus,
   getConsumerBalance,
   createConsumerTopUp,
@@ -193,16 +194,45 @@ server.tool(
 
 server.tool(
   'list_agents',
-  'List available agents in the Blocks Network registry. Use listing="private" with an API key to discover your private agents.',
+  'List available agents in the Blocks Network registry. By default only agents with at least one online instance are returned; set includeOffline=true to also list registered agents that are currently offline. Use listing="private" with an API key to discover your private agents.',
   {
     tag: z.string().optional().describe('Filter by tag slug'),
     listing: z
       .enum(['public', 'private'])
       .optional()
       .describe('Filter by listing visibility (default: public)'),
-    limit: z.number().optional().describe('Max results to return'),
+    limit: z
+      .number()
+      .optional()
+      .describe('Max agents to fetch across all pages; omit to fetch all'),
+    includeOffline: z
+      .boolean()
+      .optional()
+      .describe('Include agents with no online instances (default: false)'),
   },
   (params) => listAgents(params, deps),
+);
+
+server.tool(
+  'search_agent',
+  'Search the Blocks Network registry for agents matching a free-text query. The query matches against agent name, display name, description, tags, provider, and category, and supports field qualifiers (e.g. "agentname:translate", tag:"data"), quoted phrases, and negation ("-deprecated"). By default only agents with at least one online instance are returned; set includeOffline=true to also include matching agents that are currently offline. Use listing="private" with an API key to search your private agents.',
+  {
+    query: z.string().describe('Free-text search query'),
+    tag: z.string().optional().describe('Additionally filter by tag slug'),
+    listing: z
+      .enum(['public', 'private'])
+      .optional()
+      .describe('Filter by listing visibility (default: public)'),
+    limit: z
+      .number()
+      .optional()
+      .describe('Max matching agents to fetch across all pages; omit to fetch all'),
+    includeOffline: z
+      .boolean()
+      .optional()
+      .describe('Include agents with no online instances (default: false)'),
+  },
+  (params) => searchAgents(params, deps),
 );
 
 server.tool(
