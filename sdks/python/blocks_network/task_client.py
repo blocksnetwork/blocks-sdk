@@ -21,6 +21,7 @@ from .auth_provider import AuthProvider
 from .channel_manager import task_channel
 from .pubnub_compat import patch_pubnub_file_message
 from .rpc_client import BillingModeMismatchError, call_rpc
+from .terminal_delivery_tracker import TerminalDeliveryTracker
 from .task_session import (
     TERMINAL_STATES,
     CallbackErrorContext,
@@ -118,6 +119,7 @@ class TaskEventCallbacks:
     on_progress: Optional[Callable[[Dict[str, Any]], None]] = None
     on_artifact: Optional[Callable[[Dict[str, Any]], None]] = None
     on_terminal: Optional[Callable[[Dict[str, Any]], None]] = None
+    on_cancel_requested: Optional[Callable[[Dict[str, Any]], None]] = None
     on_system: Optional[Callable[[Dict[str, Any]], None]] = None
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None
     on_error: Optional[Callable[[Exception, CallbackErrorContext], None]] = None
@@ -228,13 +230,22 @@ def subscribe_to_task(
     Dispatches to typed callbacks based on event type:
     - ``"progress"`` -> on_progress
     - ``"artifact"`` -> on_artifact
-    - ``"terminal"`` -> on_terminal
+    - ``"terminal"`` -> on_terminal (deduplicated; first-terminal-wins)
+    - ``"cancel_requested"`` -> on_cancel_requested
     - ``"system"``   -> on_system
     - (any)          -> on_event (catch-all)
 
     Returns a :class:`TaskSubscription` with ``unsubscribe()`` for cleanup.
     """
     channel = task_channel(task_id, owner_id)
+    # BLOCKS-370 R7: per-subscription tracker so on_terminal fires at most
+    # once even if the wire delivers two terminals (scanner Phase-6
+    # force-cancel + agent's delayed terminal).
+    terminal_tracker = TerminalDeliveryTracker()
+    # BLOCKS-370: cancel_requested fires zero-or-once per subscription.
+    # Tracked via a 1-element list (mutable closure-captured state without
+    # the `nonlocal` boilerplate).
+    cancel_requested_state: List[bool] = [False]
 
     # Build listener compatible with PubNub Python SDK (SubscribeCallback subclass)
     # with ImportError fallback for tests (same pattern as agent_instance.py:594-625).
@@ -244,7 +255,13 @@ def subscribe_to_task(
 
         class _TaskListener(SubscribeCallback):
             def message(self, pubnub_instance: Any, event: Any) -> None:
-                _dispatch_event(event, channel, callbacks)
+                _dispatch_event(
+                    event,
+                    channel,
+                    callbacks,
+                    terminal_tracker,
+                    cancel_requested_state,
+                )
 
             def presence(self, pubnub_instance: Any, event: Any) -> None:
                 pass
@@ -258,7 +275,13 @@ def subscribe_to_task(
         listener = _TaskListener()
     except ImportError:
         listener = {
-            "message": lambda event: _dispatch_event(event, channel, callbacks),
+            "message": lambda event: _dispatch_event(
+                event,
+                channel,
+                callbacks,
+                terminal_tracker,
+                cancel_requested_state,
+            ),
         }
 
     pubnub.add_listener(listener)
@@ -281,9 +304,24 @@ def subscribe_to_task(
 
 
 def _dispatch_event(
-    event: Any, channel: str, callbacks: TaskEventCallbacks
+    event: Any,
+    channel: str,
+    callbacks: TaskEventCallbacks,
+    terminal_tracker: Optional[TerminalDeliveryTracker] = None,
+    cancel_requested_state: Optional[List[bool]] = None,
 ) -> None:
-    """Dispatch a PubNub message event to typed callbacks."""
+    """Dispatch a PubNub message event to typed callbacks.
+
+    ``terminal_tracker`` and ``cancel_requested_state`` are optional for
+    backward compatibility with direct test callers. When omitted, fresh
+    per-call instances are created so the dedup guarantees are preserved
+    per call (single dispatch paths like unit tests don't need cross-call
+    dedup).
+    """
+    if terminal_tracker is None:
+        terminal_tracker = TerminalDeliveryTracker()
+    if cancel_requested_state is None:
+        cancel_requested_state = [False]
     # Support both PubNub SDK event objects and plain dicts
     evt_channel = getattr(event, "channel", None) or (
         event.get("channel") if isinstance(event, dict) else None
@@ -318,11 +356,33 @@ def _dispatch_event(
             callbacks.on_artifact(msg)
         except Exception as err:
             _route_subscribe_error(err, "onArtifact", msg, on_error)
-    elif msg_type == "terminal" and callbacks.on_terminal:
-        try:
-            callbacks.on_terminal(msg)
-        except Exception as err:
-            _route_subscribe_error(err, "onTerminal", msg, on_error)
+    elif msg_type == "terminal":
+        # BLOCKS-370 R7: dedup terminal — first-terminal-wins. A duplicate
+        # wire terminal (scanner Phase-6 force-cancel + agent's delayed
+        # terminal) is silently dropped before any callback fires.
+        def _deliver_terminal(e: dict) -> None:
+            if callbacks.on_terminal:
+                try:
+                    callbacks.on_terminal(e)
+                except Exception as err:
+                    _route_subscribe_error(err, "onTerminal", e, on_error)
+
+        terminal_tracker.try_deliver(msg, _deliver_terminal)
+    elif msg_type == "cancel_requested":
+        # BLOCKS-370: backend acknowledgment of a cooperative cancel.
+        # Two suppression gates: terminal-already-delivered (causality)
+        # and cancel_requested-already-delivered (duplicate wire emission,
+        # e.g. PubNub cache replay).
+        if terminal_tracker.is_delivered:
+            return
+        if cancel_requested_state[0]:
+            return
+        cancel_requested_state[0] = True
+        if callbacks.on_cancel_requested:
+            try:
+                callbacks.on_cancel_requested(msg)
+            except Exception as err:
+                _route_subscribe_error(err, "onCancelRequested", msg, on_error)
     elif msg_type == "system" and callbacks.on_system:
         try:
             callbacks.on_system(msg)

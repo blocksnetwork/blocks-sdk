@@ -650,3 +650,184 @@ def test_concurrent_install_and_teardown_is_thread_safe(monkeypatch) -> None:
     # handlers/level/filters; these are belt-and-braces for clarity.
     assert pre_handlers == pubnub_logger.handlers
     assert pre_filters == pubnub_logger.filters
+
+
+class TestQuietTransportLoggers:
+    @pytest.fixture(autouse=True)
+    def _isolate_transport_loggers(self):
+        """Snapshot httpx/httpcore logger level + filters around each test
+        so _quiet_transport_loggers' global mutation can't leak across
+        tests."""
+        import blocks_network.pubnub_client as pc
+
+        saved = {
+            name: (
+                logging.getLogger(name).level,
+                list(logging.getLogger(name).filters),
+            )
+            for name in pc._TRANSPORT_LOGGER_NAMES
+        }
+        yield
+        for name, (level, filters) in saved.items():
+            logger = logging.getLogger(name)
+            logger.setLevel(level)
+            logger.filters = filters
+
+    @staticmethod
+    def _record(name: str, message: str, level: int = logging.INFO):
+        return logging.LogRecord(
+            name=name,
+            level=level,
+            pathname=__file__,
+            lineno=0,
+            msg=message,
+            args=(),
+            exc_info=None,
+        )
+
+    def test_installs_filter_that_drops_pubnub_request_lines(
+        self, monkeypatch
+    ) -> None:
+        """By default (no forward_transport opt-in) a content filter is
+        installed that drops PubNub-origin per-request INFO lines while
+        leaving the logger's level untouched."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.delenv("BLOCKS_DEBUG_INTERNAL", raising=False)
+
+        pc._quiet_transport_loggers()
+
+        for name in pc._TRANSPORT_LOGGER_NAMES:
+            logger = logging.getLogger(name)
+            installed = [
+                f
+                for f in logger.filters
+                if isinstance(f, pc._PubNubTransportFilter)
+            ]
+            assert len(installed) == 1
+            pubnub_line = self._record(
+                name, "HTTP Request: GET https://ps.pndsn.com/v2/subscribe 200 OK"
+            )
+            assert installed[0].filter(pubnub_line) is False
+
+    def test_filter_passes_unrelated_application_http_logs(
+        self, monkeypatch
+    ) -> None:
+        """The shared httpx/httpcore loggers are process-global; the filter
+        must let a host app's own (non-PubNub) request lines through."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.delenv("BLOCKS_DEBUG_INTERNAL", raising=False)
+
+        pc._quiet_transport_loggers()
+
+        transport_filter = next(
+            f
+            for f in logging.getLogger("httpx").filters
+            if isinstance(f, pc._PubNubTransportFilter)
+        )
+        app_line = self._record(
+            "httpx", "HTTP Request: GET https://api.example.com/v1/users 200 OK"
+        )
+        assert transport_filter.filter(app_line) is True
+
+    def test_filter_passes_pubnub_warnings_and_errors(self, monkeypatch) -> None:
+        """Genuine transport errors must surface even for PubNub hosts —
+        only sub-WARNING chatter is suppressed."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.delenv("BLOCKS_DEBUG_INTERNAL", raising=False)
+
+        pc._quiet_transport_loggers()
+
+        transport_filter = next(
+            f
+            for f in logging.getLogger("httpx").filters
+            if isinstance(f, pc._PubNubTransportFilter)
+        )
+        warning = self._record(
+            "httpx",
+            "connect failed to ps.pndsn.com",
+            level=logging.WARNING,
+        )
+        assert transport_filter.filter(warning) is True
+
+    def test_idempotent_install(self, monkeypatch) -> None:
+        """Repeated client construction must not stack duplicate filters."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.delenv("BLOCKS_DEBUG_INTERNAL", raising=False)
+
+        pc._quiet_transport_loggers()
+        pc._quiet_transport_loggers()
+
+        for name in pc._TRANSPORT_LOGGER_NAMES:
+            installed = [
+                f
+                for f in logging.getLogger(name).filters
+                if isinstance(f, pc._PubNubTransportFilter)
+            ]
+            assert len(installed) == 1
+
+    def test_does_not_mutate_logger_level(self, monkeypatch) -> None:
+        """The fix must never touch the shared loggers' level."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.delenv("BLOCKS_DEBUG_INTERNAL", raising=False)
+        for name in pc._TRANSPORT_LOGGER_NAMES:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+
+        pc._quiet_transport_loggers()
+
+        for name in pc._TRANSPORT_LOGGER_NAMES:
+            assert logging.getLogger(name).level == logging.NOTSET
+
+    @staticmethod
+    def _filter_count(pc, name: str) -> int:
+        return sum(
+            isinstance(f, pc._PubNubTransportFilter)
+            for f in logging.getLogger(name).filters
+        )
+
+    def test_forward_transport_installs_no_filter(self, monkeypatch) -> None:
+        """With BLOCKS_DEBUG_INTERNAL=forward_transport the raw request
+        stream stays visible — the call installs no filter (mirrors the
+        Node SDK opt-in)."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.setenv("BLOCKS_DEBUG_INTERNAL", "forward_transport")
+        before = {n: self._filter_count(pc, n) for n in pc._TRANSPORT_LOGGER_NAMES}
+
+        pc._quiet_transport_loggers()
+
+        for name in pc._TRANSPORT_LOGGER_NAMES:
+            assert self._filter_count(pc, name) == before[name]
+
+    def test_forward_transport_among_multiple_tokens(self, monkeypatch) -> None:
+        """The token is matched within a comma-separated list, same
+        format as Node's BLOCKS_DEBUG_INTERNAL."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.setenv("BLOCKS_DEBUG_INTERNAL", "diagnostics, forward_transport")
+        before = {n: self._filter_count(pc, n) for n in pc._TRANSPORT_LOGGER_NAMES}
+
+        pc._quiet_transport_loggers()
+
+        for name in pc._TRANSPORT_LOGGER_NAMES:
+            assert self._filter_count(pc, name) == before[name]
+
+    def test_unrelated_token_still_suppresses(self, monkeypatch) -> None:
+        """An unrelated debug token does not enable transport logs;
+        LOG_LEVEL=debug also does not (it is not the gate)."""
+        import blocks_network.pubnub_client as pc
+
+        monkeypatch.setenv("BLOCKS_DEBUG_INTERNAL", "diagnostics")
+        monkeypatch.setattr(pc._cfg, "LOG_LEVEL", "debug")
+
+        pc._quiet_transport_loggers()
+
+        for name in pc._TRANSPORT_LOGGER_NAMES:
+            assert any(
+                isinstance(f, pc._PubNubTransportFilter)
+                for f in logging.getLogger(name).filters
+            )

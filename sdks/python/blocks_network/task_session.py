@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from .stream import StreamClient, StreamDescriptor, invert_direction
+from .terminal_delivery_tracker import TerminalDeliveryTracker
 
 from .channel_manager import task_channel
 from .rpc_client import call_rpc
@@ -190,8 +191,26 @@ class TaskSession:
         self._progress_cbs: List[Callable[[TaskEvent], None]] = []
         self._artifact_cbs: List[Callable[[TaskEvent], None]] = []
         self._terminal_cbs: List[Callable[[TaskEvent], None]] = []
+        self._cancel_requested_cbs: List[Callable[[TaskEvent], None]] = []
         self._event_cbs: List[Callable[[TaskEvent], None]] = []
         self._stream_cbs: List[Callable[[StreamRef], None]] = []
+
+        # BLOCKS-370 R7: shared first-terminal-wins tracker. Routes every
+        # public terminal-delivery surface (handle_event, on_terminal,
+        # wait_for_terminal, synthetic re-emit) so SDK consumers see at
+        # most one terminal even when the wire delivers two (scanner
+        # Phase-6 force-cancel + agent's own delayed terminal).
+        self._terminal_tracker = TerminalDeliveryTracker()
+
+        # BLOCKS-370: cancel_requested fires zero-or-once per session.
+        # Suppressed once a terminal has been delivered (causality) AND
+        # suppressed on duplicate wire emissions of the event itself
+        # (e.g. PubNub cache replay before timetoken-dedup catches it).
+        self._cancel_requested_delivered = False
+        # BLOCKS-370: sticky-replay slot. Captures the first cancel_requested
+        # so callbacks registered AFTER the wire event arrived still observe
+        # it -- mirrors on_terminal's late-registration replay pattern.
+        self._first_cancel_requested: Optional[TaskEvent] = None
 
         # P1-3: Error callbacks
         self._error_cbs: List[Callable[[Exception, CallbackErrorContext], None]] = []
@@ -404,19 +423,51 @@ class TaskSession:
                 except Exception as err:
                     self._route_callback_error(err, "onArtifact", event)
 
-        elif event.type == "terminal":
-            # Update session state FIRST so callbacks (and any ref.open() calls
-            # they make) see the terminal state, not the stale 'running' value.
-            self._state = event.state
-            for cb in list(self._terminal_cbs):
+        elif event.type == "cancel_requested":
+            # BLOCKS-370: backend acknowledgment of a cooperative cancel.
+            # Two suppression gates:
+            #   1. terminal already delivered -- task is over from the
+            #      consumer's perspective; a late cancel_requested would
+            #      invert causality.
+            #   2. cancel_requested already delivered -- duplicate wire
+            #      emissions (e.g. PubNub cache replay before timetoken
+            #      dedup catches it) must not double-fire.
+            # These gates are read/written without _artifact_lock: the PubNub
+            # Python SDK dispatches all listener callbacks from a single
+            # background listener thread, so this branch is effectively
+            # serialized and the gate cannot be entered concurrently.
+            if self._terminal_tracker.is_delivered:
+                return
+            if self._cancel_requested_delivered:
+                return
+            self._cancel_requested_delivered = True
+            self._first_cancel_requested = event
+            for cb in list(self._cancel_requested_cbs):
                 try:
                     cb(event)
                 except Exception as err:
-                    self._route_callback_error(err, "onTerminal", event)
-            if self._auto_drain:
-                self._start_auto_drain()
-            else:
-                self.close()
+                    self._route_callback_error(err, "onCancelRequested", event)
+
+        elif event.type == "terminal":
+            # BLOCKS-370 R7: route through the tracker so a duplicate wire
+            # terminal (e.g. scanner Phase-6 force-cancel + agent's delayed
+            # terminal) is silently dropped before any callback fires.
+            def _deliver_terminal(e: TaskEvent) -> None:
+                # Update session state FIRST so callbacks (and any
+                # ref.open() calls they make) see the terminal state,
+                # not the stale 'running' value.
+                self._state = e.state
+                for cb in list(self._terminal_cbs):
+                    try:
+                        cb(e)
+                    except Exception as err:
+                        self._route_callback_error(err, "onTerminal", e)
+                if self._auto_drain:
+                    self._start_auto_drain()
+                else:
+                    self.close()
+
+            self._terminal_tracker.try_deliver(event, _deliver_terminal)
 
     def _make_stream_on_open(self) -> Callable:
         """Create an on_open hook that registers a stream client for auto-drain tracking."""
@@ -587,17 +638,34 @@ class TaskSession:
 
     def on_terminal(self, cb: Callable[[TaskEvent], None]) -> Unsubscribe:
         self._terminal_cbs.append(cb)
-        terminal_state = self._state or self._pre_closed_state
-        if terminal_state and terminal_state in TERMINAL_STATES:
-            event = TaskEvent({
-                "type": "terminal",
-                "taskId": self._task_id,
-                "state": terminal_state,
-            })
+        # BLOCKS-370 R7: hand the registering callback the first-delivered
+        # terminal if one exists. peek() covers wire-arrived (recorded by
+        # the tryDeliver path in handle_event) and synthetic cases below.
+        existing = self._terminal_tracker.peek()
+        if existing is not None:
             try:
-                cb(event)
+                cb(TaskEvent(existing))
             except Exception as err:
-                self._route_callback_error(err, "onTerminal", event)
+                self._route_callback_error(err, "onTerminal", TaskEvent(existing))
+        else:
+            terminal_state = self._state or self._pre_closed_state
+            if terminal_state and terminal_state in TERMINAL_STATES:
+                # Session was constructed already-terminal but no wire event
+                # has arrived. Synthesize one and pump it through the tracker
+                # so any future wire-level duplicate is suppressed.
+                synth = TaskEvent({
+                    "type": "terminal",
+                    "taskId": self._task_id,
+                    "state": terminal_state,
+                })
+
+                def _deliver(e: TaskEvent) -> None:
+                    try:
+                        cb(e)
+                    except Exception as err:
+                        self._route_callback_error(err, "onTerminal", e)
+
+                self._terminal_tracker.try_deliver(synth, _deliver)
         return lambda: self._terminal_cbs.remove(cb) if cb in self._terminal_cbs else None
 
     def wait_for_terminal(self, timeout: float = 60) -> TaskEvent:
@@ -617,14 +685,26 @@ class TaskSession:
         Raises ``TimeoutError`` if no terminal event arrives within
         *timeout* seconds.
         """
-        # Resolve immediately for already-terminal sessions
+        # BLOCKS-370 R7: peek() is the source of truth for "has a terminal
+        # been delivered through this session?" -- covers wire-arrived and
+        # synthetic terminals.
+        existing = self._terminal_tracker.peek()
+        if existing is not None:
+            return TaskEvent(existing)
+
+        # Pre-tracker safety net: a session constructed already-terminal
+        # that has not yet been observed by any callback or waiter.
+        # Synthesize and record so any subsequent wire-level duplicate is
+        # suppressed.
         terminal_state = self._pre_closed_state or self._state
         if terminal_state and terminal_state in TERMINAL_STATES:
-            return TaskEvent({
+            synth = TaskEvent({
                 "type": "terminal",
                 "taskId": self._task_id,
                 "state": terminal_state,
             })
+            self._terminal_tracker.try_deliver(synth, lambda _e: None)
+            return synth
 
         import threading
 
@@ -644,6 +724,37 @@ class TaskSession:
             return result[0]  # type: ignore[return-value]
         finally:
             unsub()
+
+    def on_cancel_requested(
+        self, cb: Callable[[TaskEvent], None]
+    ) -> Unsubscribe:
+        """BLOCKS-370: subscribe to backend-published ``cancel_requested``
+        events.
+
+        Fires zero or once per session -- suppressed once a terminal has
+        been delivered (causality) and suppressed on duplicate wire
+        emissions of the event itself. Carries ``{ taskId, ts }``. No
+        actor identity (the obs.* channel records ownerId for ops/admin
+        audit).
+
+        Late registration: callbacks registered after the wire event
+        arrived still receive a synthetic replay of the first event,
+        mirroring ``on_terminal``'s sticky-replay behavior -- UNLESS a
+        terminal has since been delivered, in which case the task is over
+        and the replay is suppressed to preserve causality.
+        """
+        self._cancel_requested_cbs.append(cb)
+        first = self._first_cancel_requested
+        if first is not None and not self._terminal_tracker.is_delivered:
+            try:
+                cb(first)
+            except Exception as err:
+                self._route_callback_error(err, "onCancelRequested", first)
+        return (
+            lambda: self._cancel_requested_cbs.remove(cb)
+            if cb in self._cancel_requested_cbs
+            else None
+        )
 
     def on_event(self, cb: Callable[[TaskEvent], None]) -> Unsubscribe:
         self._event_cbs.append(cb)
@@ -1004,6 +1115,7 @@ class TaskSession:
         self._progress_cbs.clear()
         self._artifact_cbs.clear()
         self._terminal_cbs.clear()
+        self._cancel_requested_cbs.clear()
         self._event_cbs.clear()
         self._stream_cbs.clear()
         self._error_cbs.clear()

@@ -118,7 +118,6 @@ Add to your `~/.gemini/settings.json`:
 | `resume_task` | Resume a paused pipe task |
 | `retry_task` | Retry a failed task |
 | `list_agents` | List available agents in the registry |
-| `search_agent` | Search the registry for agents by free-text query (name, description, tags, provider, category) |
 | `get_agent_card` | Get the full agent card for a specific agent |
 | `get_agent_status` | Check live availability for agents (online instance count and total task count). Per-instance live activity counters (`activeTasks`, `concurrentTasksPerInstance`, `startedAt`, `totalActiveTasks`) are reserved in the response shape but currently return `0` — the backend does not yet populate them. |
 | `connect_task` | Connect to an existing task and stream events |
