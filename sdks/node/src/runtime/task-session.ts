@@ -19,6 +19,7 @@ import { taskChannel } from './channel-manager.js';
 import { callRpc, type RpcClientConfig } from './rpc-client.js';
 import { downloadArtifact, type ArtifactRef, type DownloadedArtifact } from './artifacts.js';
 import { log as baseLog } from './logger.js';
+import { TerminalDeliveryTracker } from './terminal-delivery-tracker.js';
 
 const log = (
   level: 'debug' | 'info' | 'warn' | 'error',
@@ -66,12 +67,28 @@ export interface TerminalEvent {
   [key: string]: unknown;
 }
 
+/**
+ * Backend-published acknowledgment that a cooperative cancel was committed.
+ * Carries no actor identity (the obs.* channel records owner ID for ops/admin
+ * audit). Fires zero or once per session: suppressed once a terminal has
+ * been delivered (causality), and suppressed on duplicate wire emissions
+ * of the event itself (e.g. PubNub cache replay before timetoken-dedup
+ * catches it). See `schemas/SDK/task-events/cancel_requested.schema.json`.
+ */
+export interface CancelRequestedEvent {
+  type: 'cancel_requested';
+  taskId: string;
+  ts: number;
+  [key: string]: unknown;
+}
+
 export interface CallbackErrorContext {
   entryPoint: 'taskSession' | 'subscribeToTask';
   callbackType:
     | 'onProgress'
     | 'onArtifact'
     | 'onTerminal'
+    | 'onCancelRequested'
     | 'onSystem'
     | 'onEvent'
     | 'onStream'
@@ -109,8 +126,28 @@ export class TaskSession {
   private progressCallbacks: Array<(event: ProgressEvent) => void> = [];
   private artifactCallbacks: Array<(event: ArtifactEvent) => void> = [];
   private terminalCallbacks: Array<(event: TerminalEvent) => void> = [];
+  private cancelRequestedCallbacks: Array<
+    (event: CancelRequestedEvent) => void
+  > = [];
   private eventCallbacks: Array<(event: TaskEvent) => void> = [];
   private streamCallbacks: Array<(stream: StreamRef) => void> = [];
+
+  // BLOCKS-370 R7: shared first-terminal-wins tracker. Every public
+  // terminal-delivery surface (handleEvent, onTerminal, waitForTerminal,
+  // synthetic re-emit) routes through this so SDK consumers see at most
+  // one terminal even when the wire delivers two (e.g. scanner Phase 6
+  // force-canceled and the agent's own delayed terminal).
+  private readonly terminalTracker = new TerminalDeliveryTracker();
+
+  // BLOCKS-370: cancel_requested fires zero-or-once per session.
+  // Suppressed once a terminal has been delivered (causality) AND
+  // suppressed on duplicate wire emissions of the event itself (e.g.
+  // PubNub cache replay before timetoken-dedup catches it).
+  private cancelRequestedDelivered = false;
+  // BLOCKS-370: single-slot capture for sticky-replay. Mirrors
+  // terminalTracker.peek() — a callback registered after the wire event
+  // arrived gets the first event synthesized at registration time.
+  private firstCancelRequested: CancelRequestedEvent | null = null;
 
   // Error callbacks (P1-3)
   private errorCallbacks: Array<(error: Error, context: CallbackErrorContext) => void> = [];
@@ -381,25 +418,51 @@ export class TaskSession {
           }
         }
         break;
-      case 'terminal':
-        // Update session state FIRST so callbacks (and any ref.open() calls
-        // they make) see the terminal state, not the stale 'running' value.
-        this.state = (event as TerminalEvent).state;
-        for (const cb of this.terminalCallbacks) {
-          try { cb(event as TerminalEvent); } catch (err) {
-            this.routeCallbackError(err, 'onTerminal', event);
+      case 'cancel_requested':
+        // BLOCKS-370: backend acknowledgment of a cooperative cancel.
+        // Two suppression gates:
+        //   1. terminal already delivered — task is over from the
+        //      consumer's perspective; a late cancel_requested would
+        //      invert causality.
+        //   2. cancel_requested already delivered — duplicate wire
+        //      emissions (e.g. PubNub cache replay before timetoken
+        //      dedup catches it) must not double-fire.
+        if (this.terminalTracker.isDelivered) break;
+        if (this.cancelRequestedDelivered) break;
+        this.cancelRequestedDelivered = true;
+        this.firstCancelRequested = event as CancelRequestedEvent;
+        for (const cb of this.cancelRequestedCallbacks) {
+          try {
+            cb(event as CancelRequestedEvent);
+          } catch (err) {
+            this.routeCallbackError(err, 'onCancelRequested', event);
           }
         }
-        // Resolve all pending terminal waiters
-        for (const waiter of this.terminalWaiters) {
-          waiter.resolve(event as TerminalEvent);
-        }
-        this.terminalWaiters = [];
-        if (this.autoDrain) {
-          this.startAutoDrain();
-        } else {
-          this.close();
-        }
+        break;
+      case 'terminal':
+        // BLOCKS-370 R7: route through the tracker so a duplicate wire
+        // terminal (e.g. scanner Phase-6 force-cancel + agent's delayed
+        // terminal) is silently dropped before any callback fires.
+        this.terminalTracker.tryDeliver(event as TerminalEvent, (e) => {
+          // Update session state FIRST so callbacks (and any ref.open() calls
+          // they make) see the terminal state, not the stale 'running' value.
+          this.state = e.state;
+          for (const cb of this.terminalCallbacks) {
+            try { cb(e); } catch (err) {
+              this.routeCallbackError(err, 'onTerminal', e);
+            }
+          }
+          // Resolve all pending terminal waiters
+          for (const waiter of this.terminalWaiters) {
+            waiter.resolve(e);
+          }
+          this.terminalWaiters = [];
+          if (this.autoDrain) {
+            this.startAutoDrain();
+          } else {
+            this.close();
+          }
+        });
         break;
     }
   }
@@ -579,18 +642,66 @@ export class TaskSession {
 
   onTerminal(cb: (event: TerminalEvent) => void): Unsubscribe {
     this.terminalCallbacks.push(cb);
-    if (this.state && TERMINAL_STATES.has(this.state)) {
-      const event: TerminalEvent = {
+    // BLOCKS-370 R7: hand the registering callback the first-delivered
+    // terminal if one exists. peek() is the source of truth — it covers
+    // both the wire-delivered case (tryDeliver in handleEvent) and the
+    // synthetic case below.
+    const existing = this.terminalTracker.peek();
+    if (existing) {
+      try { cb(existing); } catch (err) {
+        this.routeCallbackError(err, 'onTerminal', existing);
+      }
+    } else if (this.state && TERMINAL_STATES.has(this.state)) {
+      // Session was constructed already-terminal (e.g. resumed from a
+      // completed task) but no wire event has arrived. Synthesize one and
+      // pump it through the tracker so any future wire-level duplicate is
+      // suppressed.
+      const synth: TerminalEvent = {
         type: 'terminal',
         taskId: this.taskId,
         state: this.state as 'completed' | 'failed' | 'canceled',
       };
-      try { cb(event); } catch (err) {
-        this.routeCallbackError(err, 'onTerminal', event);
-      }
+      this.terminalTracker.tryDeliver(synth, (e) => {
+        try { cb(e); } catch (err) {
+          this.routeCallbackError(err, 'onTerminal', e);
+        }
+      });
     }
     return () => {
       this.terminalCallbacks = this.terminalCallbacks.filter(c => c !== cb);
+    };
+  }
+
+  /**
+   * BLOCKS-370: subscribe to backend-published `cancel_requested` events.
+   * Fires zero or once per session — suppressed once a terminal has been
+   * delivered (causality) and suppressed on duplicate wire emissions of
+   * the event itself. Carries `{ taskId, ts }`. No actor identity (the
+   * obs.* channel records ownerId for ops/admin audit).
+   */
+  onCancelRequested(cb: (event: CancelRequestedEvent) => void): Unsubscribe {
+    this.cancelRequestedCallbacks.push(cb);
+    // BLOCKS-370: sticky-replay. A consumer that registers after the wire
+    // event arrived (e.g. after `client.connect()` resolves) gets the first
+    // cancel_requested synthesized here — UNLESS a terminal has since been
+    // delivered, in which case the task is over and replaying would invert
+    // causality. Same idempotency + causality contract as onTerminal's
+    // terminalTracker path.
+    if (this.firstCancelRequested && !this.terminalTracker.isDelivered) {
+      try {
+        cb(this.firstCancelRequested);
+      } catch (err) {
+        this.routeCallbackError(
+          err,
+          'onCancelRequested',
+          this.firstCancelRequested,
+        );
+      }
+    }
+    return () => {
+      this.cancelRequestedCallbacks = this.cancelRequestedCallbacks.filter(
+        (c) => c !== cb,
+      );
     };
   }
 
@@ -809,13 +920,23 @@ export class TaskSession {
    * @param timeoutMs Optional timeout in milliseconds. Rejects with Error on timeout.
    */
   async waitForTerminal(timeoutMs?: number): Promise<TerminalEvent> {
-    // Immediate resolution for already-terminal sessions
+    // BLOCKS-370 R7: peek() is the source of truth for "has a terminal
+    // been delivered through this session?" — covers both wire-arrived
+    // and synthetic terminals.
+    const existing = this.terminalTracker.peek();
+    if (existing) return existing;
+
+    // Pre-tracker safety net: a session constructed already-terminal that
+    // has not yet been observed by any callback or waiter. Synthesize and
+    // record so any subsequent wire-level duplicate is suppressed.
     if (this.state && TERMINAL_STATES.has(this.state)) {
-      return {
+      const synth: TerminalEvent = {
         type: 'terminal',
         taskId: this.taskId,
         state: this.state as 'completed' | 'failed' | 'canceled',
       };
+      this.terminalTracker.tryDeliver(synth, () => {});
+      return synth;
     }
 
     if (this.closed) {
@@ -941,6 +1062,7 @@ export class TaskSession {
     this.progressCallbacks = [];
     this.artifactCallbacks = [];
     this.terminalCallbacks = [];
+    this.cancelRequestedCallbacks = [];
     this.eventCallbacks = [];
     this.streamCallbacks = [];
     this.errorCallbacks = [];

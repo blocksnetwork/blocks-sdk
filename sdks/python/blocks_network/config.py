@@ -40,6 +40,20 @@ BLOCKS_CDM_URL: str = os.environ.get("BLOCKS_CDM_URL", "")
 # ---------------------------------------------------------------------------
 LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "info").lower()
 
+
+def debug_subsystem_enabled(subsystem: str) -> bool:
+    """Return True if *subsystem* appears in BLOCKS_DEBUG_INTERNAL.
+
+    BLOCKS_DEBUG_INTERNAL is a comma-separated list of opt-in debug
+    subsystems, mirroring the Node SDK's env var of the same name and
+    format. No subsystem is implied by LOG_LEVEL=debug. The only token
+    the Python SDK currently honors is ``forward_transport`` (surface the
+    underlying httpx/httpcore transport's own request logging). Parsed
+    live (not cached at import) so tests and late env writes are honored.
+    """
+    raw = os.environ.get("BLOCKS_DEBUG_INTERNAL", "")
+    return any(token.strip() == subsystem for token in raw.split(","))
+
 # ---------------------------------------------------------------------------
 # Artifact limits
 # ---------------------------------------------------------------------------

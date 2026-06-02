@@ -92,6 +92,7 @@ consumer-side task submission, real-time event subscriptions, streaming
 - Anonymous playground artifact visibility
 
 #### Fixed
+- Per-request HTTP transport logging (lines such as `HTTP Request: GET https://ps.pndsn.com/... "HTTP/1.1 200 OK"`) no longer floods agent logs by default. The SDK raises the `httpx`/`httpcore` loggers to `WARNING` so real transport errors still surface. To restore the full request stream for connectivity debugging, set `BLOCKS_DEBUG_INTERNAL=forward_transport` (same opt-in env var as the Node SDK; not implied by `LOG_LEVEL=debug`). Any explicit level your app sets on those loggers is honored.
 - `on_artifact` history replay — artifact events now replayed correctly from completed tasks
 - `send_message` subscribe race resolved with history-based catch-up
 - Cross-billing-mode fix for A2A calls

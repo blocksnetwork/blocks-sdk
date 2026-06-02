@@ -737,11 +737,32 @@ session.onProgress((e) => { /* e.message, e.progress */ });
 session.onArtifact(async (e) => { /* see "Reading Artifacts" */ });
 session.onStream((ref) => { /* see "Consuming a Stream" */ });
 session.onTerminal((e) => { /* e.state: 'completed' | 'failed' | ... */ });
+session.onCancelRequested((e) => { /* e.ts (Date.now() in ms) */ });
 session.onError((e) => { /* consumer-callback exceptions */ });
 
 // Or block:
 const terminal = await session.waitForTerminal(timeoutMs);
 ```
+
+**At-most-once `onTerminal`.** The SDK guarantees that
+`session.onTerminal`, `session.waitForTerminal()`, and
+`TaskClient.subscribeToTask`'s `onTerminal` each fire at most once per
+task — even when the wire delivers two terminals (e.g. a scanner-Phase-6
+force-cancel followed by the agent's own delayed terminal). The first
+terminal wins; subsequent terminals are silently dropped. This holds
+across the synthetic re-emit when registering a callback against an
+already-terminal session as well.
+
+**`onCancelRequested`.** Backend acknowledgment of a cooperative cancel,
+published on `u.{orgId}.{taskId}` after the authoritative writes. Fires
+zero or once per session — suppressed once a terminal has been delivered.
+Carries `{ taskId, ts }` (no actor identity; the obs.* channel records
+ownerId for ops/admin audit). Use it to render an in-flight
+"cancel requested" UI signal before any terminal arrives. **Late
+registration:** callbacks registered after the wire `cancel_requested`
+arrived still receive a synthetic replay of the first event, mirroring
+`onTerminal`'s sticky behavior — but only while no terminal has been
+delivered; a post-terminal registration receives nothing (causality).
 
 Cancel / terminate: `await session.cancel()` (cooperative) or
 `await session.terminate()` (force). Reconnect to an in-flight or

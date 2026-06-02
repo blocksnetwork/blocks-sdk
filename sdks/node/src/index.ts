@@ -70,6 +70,7 @@ export type {
   ProgressEvent,
   ArtifactEvent,
   TerminalEvent,
+  CancelRequestedEvent,
   Unsubscribe,
   CallbackErrorContext,
 } from './runtime/task-session.js';

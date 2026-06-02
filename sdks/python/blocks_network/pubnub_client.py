@@ -11,6 +11,8 @@ import logging
 import threading
 from typing import Any, Optional
 
+from . import config as _cfg
+
 # Attempt import -- allow graceful failure so the rest of the package
 # can be imported even without the pubnub dependency installed.
 try:
@@ -22,6 +24,62 @@ except ImportError:  # pragma: no cover
     _PUBNUB_AVAILABLE = False
     PNConfiguration = None  # type: ignore[assignment,misc]
     PubNub = None  # type: ignore[assignment,misc]
+
+
+# The pubnub SDK's transport is httpx, whose client logs every request at
+# INFO on the "httpx" logger ("HTTP Request: GET https://ps.pndsn.com/...
+# 200 OK"). httpcore (httpx's connection layer) is similarly chatty. Neither
+# is the "pubnub" logger our retry-forwarder manages, so the de-brand /
+# log-hygiene work never touched them and the per-subscribe/heartbeat lines
+# leak into agent logs once the host configures a root handler at INFO.
+_TRANSPORT_LOGGER_NAMES = ("httpx", "httpcore")
+
+# All PubNub keysets resolve to these hosts regardless of per-client origin,
+# so the message-content filter is origin-independent and install-once safe.
+_PUBNUB_TRANSPORT_HOSTS = ("pndsn.com", "pubnub.com")
+
+# Matches the Node SDK's BLOCKS_DEBUG_INTERNAL=forward_transport opt-in
+# (SDK_CONTRACT.md §11.2). Default OFF; NOT implied by LOG_LEVEL=debug.
+_FORWARD_TRANSPORT_SUBSYSTEM = "forward_transport"
+
+
+class _PubNubTransportFilter(logging.Filter):
+    """Drops sub-WARNING httpx/httpcore request lines that reference a
+    PubNub host, leaving the host app's own httpx/httpcore logging — and
+    all genuine warnings/errors — untouched.
+
+    The "httpx"/"httpcore" loggers are process-global: every httpx client
+    in the host shares them. Raising their *level* would suppress unrelated
+    application HTTP logs, so we scope suppression to PubNub-origin records
+    by content instead.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        message = record.getMessage()
+        return not any(host in message for host in _PUBNUB_TRANSPORT_HOSTS)
+
+
+def _quiet_transport_loggers() -> None:
+    """Filter PubNub's per-request httpx/httpcore INFO chatter out of agent
+    logs without mutating the shared loggers' level (which would suppress
+    unrelated application HTTP logs in the same process). Idempotent — the
+    filter is installed at most once per logger.
+
+    Skipped entirely when BLOCKS_DEBUG_INTERNAL=forward_transport is set,
+    so an operator debugging connectivity sees the raw request stream.
+    This mirrors the Node SDK's opt-in: the flood is gated behind the same
+    env var/token, NOT behind LOG_LEVEL=debug.
+    """
+    if _cfg.debug_subsystem_enabled(_FORWARD_TRANSPORT_SUBSYSTEM):
+        return
+    for name in _TRANSPORT_LOGGER_NAMES:
+        transport_logger = logging.getLogger(name)
+        if not any(
+            isinstance(f, _PubNubTransportFilter) for f in transport_logger.filters
+        ):
+            transport_logger.addFilter(_PubNubTransportFilter())
 
 
 # Silent-park fix. Long-lived control clients raise the
@@ -380,6 +438,8 @@ def create_pubnub_client(
         # the hardcoded ExponentialDelay constants in pubnub/managers.py.
         pnconfig.maximum_reconnection_retries = _UNBOUNDED_MAX_RETRIES
         pnconfig.maximum_reconnection_interval = _UNBOUNDED_MAX_INTERVAL_S
+
+    _quiet_transport_loggers()
 
     pn = PubNub(pnconfig)
     _ensure_thread_safe_publish_sequence(pn)

@@ -15,6 +15,7 @@ import { callRpc, type RpcClientConfig } from './rpc-client.js';
 import { taskChannel } from './channel-manager.js';
 import { TaskSession, type CallbackErrorContext } from './task-session.js';
 import type { TaskEvent as SessionTaskEvent } from './task-session.js';
+import { TerminalDeliveryTracker } from './terminal-delivery-tracker.js';
 import type { AgentAuth } from './agent-auth.js';
 import type { AuthProvider } from './auth-provider.js';
 import { preflightAuthOrThrow } from './auth-provider.js';
@@ -194,6 +195,13 @@ export interface TaskEventCallbacks {
   onArtifact?: (event: TaskEvent) => void;
   /** Terminal events (type: "terminal") -- task completed, failed, or canceled */
   onTerminal?: (event: TaskEvent) => void;
+  /**
+   * Backend acknowledgment that a cooperative cancel was committed
+   * (type: "cancel_requested"). Suppressed once a terminal has been
+   * delivered; suppressed on duplicate emissions of the same event.
+   * Mirrors Python's `on_cancel_requested`.
+   */
+  onCancelRequested?: (event: TaskEvent) => void;
   /** System events (type: "system") -- paused, resumed, etc. */
   onSystem?: (event: TaskEvent) => void;
   /** Catch-all for any event */
@@ -1529,6 +1537,15 @@ function subscribeToTask(
   callbacks: TaskEventCallbacks,
 ): TaskSubscription {
   const channel = taskChannel(taskId, orgId);
+  // BLOCKS-370 R7: per-subscription tracker so the consumer's onTerminal
+  // fires at most once even if the wire delivers two terminals (e.g.
+  // scanner Phase-6 force-cancel + agent's delayed terminal).
+  const terminalTracker = new TerminalDeliveryTracker();
+  // BLOCKS-370: cancel_requested fires zero-or-once per subscription.
+  // Suppressed once a terminal has been delivered (causality) AND
+  // suppressed on duplicate emissions of the event itself (e.g. PubNub
+  // cache replay before timetoken-dedup catches it). Mirrors Python.
+  let cancelRequestedDelivered = false;
 
   const listener = {
     message: (event: { channel?: string; message?: unknown }): void => {
@@ -1561,9 +1578,38 @@ function subscribeToTask(
           }
           break;
         case 'terminal':
-          if (callbacks.onTerminal) {
-            try { callbacks.onTerminal(msg); } catch (err) {
-              routeSubscribeError(err, 'onTerminal', msg, callbacks.onError);
+          terminalTracker.tryDeliver(
+            msg as unknown as import('./task-session.js').TerminalEvent,
+            (e) => {
+              if (callbacks.onTerminal) {
+                try {
+                  callbacks.onTerminal(e as unknown as TaskEvent);
+                } catch (err) {
+                  routeSubscribeError(
+                    err,
+                    'onTerminal',
+                    e as unknown as TaskEvent,
+                    callbacks.onError,
+                  );
+                }
+              }
+            },
+          );
+          break;
+        case 'cancel_requested':
+          if (terminalTracker.isDelivered) break;
+          if (cancelRequestedDelivered) break;
+          cancelRequestedDelivered = true;
+          if (callbacks.onCancelRequested) {
+            try {
+              callbacks.onCancelRequested(msg);
+            } catch (err) {
+              routeSubscribeError(
+                err,
+                'onCancelRequested',
+                msg,
+                callbacks.onError,
+              );
             }
           }
           break;

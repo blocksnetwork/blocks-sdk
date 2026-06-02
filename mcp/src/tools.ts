@@ -15,11 +15,7 @@ import {
 } from '@blocks-network/sdk';
 
 import type { ListAgentsResult } from './registry-list.js';
-import {
-  MAX_AGENT_NAMES,
-  AGENT_NAME_PATTERN,
-  type AgentStatusResponse,
-} from './agent-status.js';
+import type { AgentStatusResponse } from './agent-status.js';
 import type { ConsumerBalance, TopUpSession } from './billing.js';
 
 // ============================================================================
@@ -124,12 +120,9 @@ export interface ToolDeps {
   listAgents(options: {
     baseUrl: string;
     apiKey?: string;
-    /** Free-text search query (`q`); matches agent name, description, tags, etc. */
-    q?: string;
     tag?: string;
     listing?: 'public' | 'private';
-    /** Optional cap on the total number of agents to fetch across all pages. */
-    maxAgents?: number;
+    limit?: number;
   }): Promise<ListAgentsResult>;
   validateFilePath(filePath: string): string;
   resolveSavePath(filePath: string): string;
@@ -230,26 +223,6 @@ export interface ListAgentsParams {
   tag?: string;
   listing?: 'public' | 'private';
   limit?: number;
-  /**
-   * Include agents that have no online instances. Defaults to false: the
-   * registry returns every registered agent regardless of whether any
-   * instance is currently running, so by default we filter to agents with
-   * at least one online instance to avoid surfacing unreachable agents.
-   */
-  includeOffline?: boolean;
-}
-
-export interface SearchAgentsParams {
-  /** Free-text search query; matches agent name, description, tags, etc. */
-  query: string;
-  tag?: string;
-  listing?: 'public' | 'private';
-  limit?: number;
-  /**
-   * Include agents that have no online instances. Defaults to false so we
-   * only surface agents that can actually take a task. See ListAgentsParams.
-   */
-  includeOffline?: boolean;
 }
 
 export interface GetAgentCardParams {
@@ -440,104 +413,15 @@ export async function listAgents(
     apiKey,
     tag: params.tag,
     listing: params.listing,
-    maxAgents: params.limit,
+    limit: params.limit,
   });
 
-  const total = result.totalCount ?? result.agents.length;
-
-  // The registry returns every registered agent regardless of whether any
-  // instance is currently running. Default to online-only so we never
-  // surface agents that can't actually take a task; `includeOffline` opts
-  // back into the full registry view.
-  if (params.includeOffline) {
-    const lines = result.agents.map(formatAgentRow);
-    const header = `Agents (${result.agents.length} of ${total} total):`;
-    return { content: [{ type: 'text', text: [header, ...lines].join('\n') }] };
-  }
-
-  const online = await filterOnlineAgents(result.agents, { baseUrl, apiKey }, deps);
-  const lines = online.map(formatAgentRow);
-  const header = `Agents (${online.length} online of ${total} total):`;
-  return { content: [{ type: 'text', text: [header, ...lines].join('\n') }] };
-}
-
-// ============================================================================
-// search_agent
-// ============================================================================
-
-export async function searchAgents(
-  params: SearchAgentsParams,
-  deps: ToolDeps,
-): Promise<ToolResult> {
-  const query = params.query.trim();
-  if (!query) {
-    return {
-      content: [{ type: 'text', text: 'Search query must not be empty.' }],
-      isError: true,
-    };
-  }
-
-  const baseUrl = await deps.getBaseUrl();
-  const apiKey = deps.getApiKey();
-  const result = await deps.listAgents({
-    baseUrl,
-    apiKey,
-    q: query,
-    tag: params.tag,
-    listing: params.listing,
-    maxAgents: params.limit,
+  const lines = result.agents.map((a) => {
+    const tags = a.tags?.map((t) => t.name).join(', ') ?? '';
+    return `${a.agentName} | ${a.name ?? a.agentName} | ${a.listing ?? 'public'} | ${tags}`;
   });
-
-  const total = result.totalCount ?? result.agents.length;
-
-  // Mirror list_agents: default to online-only so we never surface agents
-  // that can't actually take a task; `includeOffline` opts back into the
-  // full set of matches.
-  if (params.includeOffline) {
-    const lines = result.agents.map(formatAgentRow);
-    const header = `Agents matching "${query}" (${result.agents.length} of ${total} total):`;
-    return { content: [{ type: 'text', text: [header, ...lines].join('\n') }] };
-  }
-
-  const online = await filterOnlineAgents(result.agents, { baseUrl, apiKey }, deps);
-  const lines = online.map(formatAgentRow);
-  const header = `Agents matching "${query}" (${online.length} online of ${total} total):`;
+  const header = `Agents (${result.totalCount ?? result.agents.length}):`;
   return { content: [{ type: 'text', text: [header, ...lines].join('\n') }] };
-}
-
-function formatAgentRow(a: ListAgentsResult['agents'][number]): string {
-  const tags = a.tags?.map((t) => t.name).join(', ') ?? '';
-  return `${a.agentName} | ${a.name ?? a.agentName} | ${a.listing ?? 'public'} | ${tags}`;
-}
-
-/**
- * Keep only agents that have at least one online instance, as reported by
- * the agent-status service. Agent names that the status endpoint can't
- * accept (too many, or invalid characters) are queried in valid batches;
- * any name that's unqueryable is treated as offline and dropped.
- */
-async function filterOnlineAgents(
-  agents: ListAgentsResult['agents'],
-  ctx: { baseUrl: string; apiKey?: string },
-  deps: ToolDeps,
-): Promise<ListAgentsResult['agents']> {
-  const queryable = agents.filter((a) => AGENT_NAME_PATTERN.test(a.agentName));
-  if (queryable.length === 0) return [];
-
-  const online = new Set<string>();
-  for (let i = 0; i < queryable.length; i += MAX_AGENT_NAMES) {
-    const batch = queryable.slice(i, i + MAX_AGENT_NAMES);
-    const status = await deps.fetchAgentStatus({
-      baseUrl: ctx.baseUrl,
-      apiKey: ctx.apiKey,
-      agentNames: batch.map((a) => a.agentName),
-    });
-    for (const [name, info] of Object.entries(status.agents)) {
-      if ((info.onlineCount ?? 0) > 0) online.add(name);
-    }
-  }
-
-  return agents.filter((a) => online.has(a.agentName));
 }
 
 // ============================================================================

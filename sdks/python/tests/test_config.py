@@ -42,3 +42,36 @@ class TestBlocksMaxUploadBytes:
 
         importlib.reload(cfg)
         assert cfg.BLOCKS_MAX_UPLOAD_BYTES == 26_214_400
+
+
+class TestDebugSubsystemEnabled:
+    def test_false_when_unset(self, monkeypatch) -> None:
+        from blocks_network import config as cfg
+
+        monkeypatch.delenv("BLOCKS_DEBUG_INTERNAL", raising=False)
+        assert cfg.debug_subsystem_enabled("forward_transport") is False
+
+    def test_true_for_exact_token(self, monkeypatch) -> None:
+        from blocks_network import config as cfg
+
+        monkeypatch.setenv("BLOCKS_DEBUG_INTERNAL", "forward_transport")
+        assert cfg.debug_subsystem_enabled("forward_transport") is True
+
+    def test_matches_within_comma_list_with_whitespace(self, monkeypatch) -> None:
+        from blocks_network import config as cfg
+
+        monkeypatch.setenv("BLOCKS_DEBUG_INTERNAL", "diagnostics, forward_transport ")
+        assert cfg.debug_subsystem_enabled("forward_transport") is True
+
+    def test_false_for_substring_only(self, monkeypatch) -> None:
+        """Tokens are matched whole, not as substrings."""
+        from blocks_network import config as cfg
+
+        monkeypatch.setenv("BLOCKS_DEBUG_INTERNAL", "forward_transport_extra")
+        assert cfg.debug_subsystem_enabled("forward_transport") is False
+
+    def test_false_for_unrelated_token(self, monkeypatch) -> None:
+        from blocks_network import config as cfg
+
+        monkeypatch.setenv("BLOCKS_DEBUG_INTERNAL", "diagnostics")
+        assert cfg.debug_subsystem_enabled("forward_transport") is False
