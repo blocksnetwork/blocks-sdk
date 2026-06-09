@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  composeSearchQuery,
   listAgentsAuthenticated,
   listAllAgentsAuthenticated,
 } from '../src/registry-list.js';
@@ -15,6 +16,36 @@ function mockResponse(body: unknown, ok = true, status = 200): Response {
     json: async () => body,
   } as Response;
 }
+
+describe('composeSearchQuery', () => {
+  it('returns the query unchanged when no provider is given', () => {
+    expect(composeSearchQuery('translate', undefined)).toBe('translate');
+    expect(composeSearchQuery(undefined, undefined)).toBeUndefined();
+  });
+
+  it('emits a quoted provider qualifier when only a provider is given', () => {
+    expect(composeSearchQuery(undefined, 'Acme Corp')).toBe('provider:"Acme Corp"');
+  });
+
+  it('combines free text and provider with a space (AND)', () => {
+    expect(composeSearchQuery('translate', 'Acme')).toBe('translate provider:"Acme"');
+  });
+
+  it('trims whitespace around both inputs', () => {
+    expect(composeSearchQuery('  translate  ', '  Acme  ')).toBe(
+      'translate provider:"Acme"',
+    );
+  });
+
+  it('treats a blank provider as absent', () => {
+    expect(composeSearchQuery('translate', '   ')).toBe('translate');
+    expect(composeSearchQuery(undefined, '   ')).toBeUndefined();
+  });
+
+  it('strips embedded quotes so the qualifier stays balanced', () => {
+    expect(composeSearchQuery(undefined, 'Ac"me')).toBe('provider:"Acme"');
+  });
+});
 
 describe('listAgentsAuthenticated', () => {
   it('sends Blocks-Protocol-Version header on every request', async () => {
@@ -73,6 +104,39 @@ describe('listAgentsAuthenticated', () => {
     expect(parsed.searchParams.get('scope')).toBe('owned');
     expect(parsed.searchParams.get('tag')).toBe('translate');
     expect(parsed.searchParams.get('limit')).toBe('50');
+  });
+
+  it('folds the provider filter into the q param as a quoted qualifier', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      mockResponse({ agents: [], totalCount: 0 }),
+    );
+
+    await listAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      q: 'translate',
+      provider: 'Acme Corp',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const [url] = fetchImpl.mock.calls[0];
+    expect(new URL(String(url)).searchParams.get('q')).toBe(
+      'translate provider:"Acme Corp"',
+    );
+  });
+
+  it('sets q to just the provider qualifier when no free text is given', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      mockResponse({ agents: [], totalCount: 0 }),
+    );
+
+    await listAgentsAuthenticated({
+      baseUrl: 'http://api.test',
+      provider: 'Acme',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const [url] = fetchImpl.mock.calls[0];
+    expect(new URL(String(url)).searchParams.get('q')).toBe('provider:"Acme"');
   });
 
   it('does not set scope=owned for public listing', async () => {

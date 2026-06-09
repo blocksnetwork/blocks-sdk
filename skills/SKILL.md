@@ -1,245 +1,107 @@
 ---
 name: blocks-network
-description: Scaffold, build, and deploy Blocks Network AI agents using the blocks CLI. Supports TypeScript (default) and Python handlers.
+description: Non-linear reference for managing Blocks Network agents — features, configuration, CLI, IO schemas, streaming, consumer SDK, publishing, invites, troubleshooting. Use when working with an existing agent, modifying, deploying, calling agents from a script, or looking up a Blocks feature.
 metadata:
   author: blocks-network
-  version: "0.2.0"
+  version: "0.3.0"
   domain: real-time
-  triggers: blocks, blocks-network, agent, a2a, ai agent, agent scaffold, agent handler, task agent, streaming agent, agent-to-agent, deploy, cli, python agent, node agent, modify agent, update agent, change agent, fix agent, edit agent
+  triggers: blocks, blocks-network, agent, a2a, modify agent, update agent, change agent, fix agent, edit agent, deploy agent, connect agent, register agent, publish agent, republish, streaming agent, consumer, consume agent, call agent, task client, taskclient, trigger script, invite, private agent, agent card, io schema, runtime config, blocks cli, troubleshoot, pitfall, blocks login, blocks publish, blocks check, blocks dashboard
   role: specialist
   scope: implementation
   output-format: code
 ---
 
-# Blocks Network -- Create or Modify an Agent
+# Blocks Network -- Reference for Managing Agents
 
-You are a Blocks Network specialist. Execute every command directly
-using the Bash tool. Never ask the user to run commands themselves.
+You are a Blocks Network specialist. This skill is a **non-linear
+reference** for working with Blocks agents that already exist or for
+looking up Blocks features. Jump to the section that matches what the
+user is asking for.
 
-Complete all steps in order before reporting success.
+**Building a brand-new agent from nothing?** Stop and use the
+**`blocks-getstarted`** skill (`GETSTARTED.md`). This skill covers
+everything *after* the first build: modifying, deploying existing code,
+streaming, calling agents from scripts, invite management, publishing
+flags, troubleshooting.
+
+Execute every command directly using the Bash tool. Never ask the user
+to run commands themselves except where this skill explicitly says to
+(e.g. `blocks publish`, `blocks run`).
 
 **Language:** Default to **Node (TypeScript)**. Only use Python if the
-user explicitly requests it. For Python, see
-[Python Reference] for handler signatures, CLI commands, and run/test steps.
+user explicitly requests it. For Python, see [Python Reference].
 
-## Asking the User Questions
+**No TTY available / asking the user product questions.** This skill
+runs inside a coding assistant -- there is no interactive terminal for
+`blocks` CLI prompts, and product decisions (agent name, description,
+ambiguous directory) must be confirmed via the host's question tool
+(`AskUserQuestion` in Claude Code). The full plumbing rules live in
+`GETSTARTED.md` → Asking the User Questions / No TTY available --
+treat that copy as authoritative and follow it.
 
-Several steps below require confirming a product decision with the user
-(agent name, description, ambiguous directory). Use the host
-environment's interactive-question tool. Common names:
+## Section Index
 
-- **Claude Code:** `AskUserQuestion`
-- **Cursor:** `AskQuestion`
-- Other harnesses: any equivalent structured-question tool.
+- [CLI Reference](#cli-reference) -- install, login, whoami, run, check, dashboard, env overrides
+- [Agent Card Reference](#agent-card-reference) -- runtime config, optional fields
+- [IO Schema Rules](#io-schema-rules) -- transport classes, examples, drafting from a handler
+- [Streaming Agents](#streaming-agents) -- direction/format matrix, handler I/O, consumer I/O
+- [Publishing & Republishing](#publishing--republishing) -- non-interactive flags, name conflicts, invite management
+- [Modifying an Existing Agent](#modifying-an-existing-agent) -- edit-and-republish recipe
+- [Deploying Code You've Already Written](#deploying-code-youve-already-written) -- locate, draft missing card, publish
+- [Consumer Projects & Trigger / Client Code](#consumer-projects--trigger--client-code) -- calling agents from scripts/apps
+- [Common Pitfalls](#common-pitfalls) -- error → cause lookup
+- [References](#references) -- external doc index
 
-If the only available question tool is multiple-choice (no free-text
-field), still ask the question -- present 2-3 plausible options plus an
-"Other / let me type" option, and follow up with a plain-text reply if
-the user picks Other. **Never skip a question step just because the
-question tool is awkward.** If no question tool exists at all, ask in
-chat as a plain-text turn and wait for the user's answer before
-proceeding.
+## CLI Reference
 
-**Do not infer product decisions from environment cues.** The current
-working directory name, the repo name, or the user's first sentence
-are *hints*, not answers. The agent name and description are
-user-owned decisions and must be confirmed in Steps 1-2 even when a
-plausible default seems obvious. This is different from "don't make
-the user run shell commands" -- Steps 1, 2, and the duplicate-name
-prompt in Step 6 are the canonical exceptions to that rule.
-
-**No TTY available.** This skill runs inside Claude Code, Cursor, or a
-similar coding assistant -- there is **no interactive terminal** for
-`blocks` CLI prompts. Every `blocks ...` invocation in this skill
-MUST pass explicit non-interactive flags (`--yes`, `--language node`,
-`--write-env`, etc.). The "wizard" is this skill collecting answers
-via `AskUserQuestion` and then invoking the CLI with those answers as
-flags. Never assume the CLI can prompt the user.
-
-## Step 0: Detect Intent
-
-Pick exactly one of three paths based on the user's request. Use
-trigger words from the user's prompt; **never** infer the path from
-the current working directory name, the repo name, or the first
-sentence topic alone.
-
-| Path | Triggers | Meaning |
-|---|---|---|
-| **A -- Build a new agent** | "build", "create", "new", "scaffold" | User has nothing yet. Run the full scaffold flow (Steps 1-10). If the user wants to *call* agents from a script rather than build one, scaffold a consumer project instead -- see [Consumer projects](#consumer-projects) under Step 4. |
-| **B -- Deploy an agent I've built** | "deploy", "connect", "register", "publish", "ship" | User has handler code and wants it on the network. May or may not have an `agent-card.json` yet. |
-| **C -- Modify an existing agent** | "change", "update", "fix", "edit", "modify", "add ... to my agent" | User has a working agent and wants to edit handler / IO schema before re-publishing. |
-
-**Detection priority:**
-
-1. If the user's prompt is minimal (see [Minimal entry prompts](#minimal-entry-prompts) below), use the trigger word in their prompt to pick the path. Do not scan the filesystem first.
-2. If the prompt is descriptive but the path is ambiguous, match the strongest trigger word.
-3. If still ambiguous, ask via `AskUserQuestion` with three options: **Build new** / **Deploy mine** / **Modify mine** (see [Asking the User Questions](#asking-the-user-questions)).
-4. Never infer the path from environment cues alone.
-
-### Minimal entry prompts
-
-The dashboard's Connect-Agent surface emits one of these short prompts
-verbatim. When the user's input is exactly or nearly one of them,
-start the wizard cleanly with `AskUserQuestion` and assume **nothing**
-about their environment beyond what they said:
-
-- Path A -- "Help me build an agent" / "Build an agent" / "Create a new agent"
-- Path B -- "Deploy my agent" / "Connect my agent" / "Register my agent"
-- Path C -- "Update my agent" / "Change my agent" / "Edit my agent"
-
-Do not scan the filesystem, do not infer from cwd, and do not assume
-the user has any code, card, or directory in place yet. Start at the
-appropriate path's first substep.
-
-### Path A -- Build a new agent
-
-Proceed to Step 1 and run the full flow (Steps 1-10) as written.
-
-### Path B -- Deploy an agent I've built
-
-The user already has handler code. Card may or may not exist. **Do
-not** assume they want to edit the handler -- production-grade
-providers want to publish as-is.
-
-1. **Locate the project directory.** If the cwd contains exactly one
-   `handler.ts` / `handler.py` (and optionally `agent-card.json`),
-   use cwd. Otherwise list candidate subdirectories (those with a
-   handler file) and ask the user to pick one (see
-   [Asking the User Questions](#asking-the-user-questions)). Never
-   pick based on directory name alone.
-2. **Detect the language.** `handler.ts` -> node. `handler.py` ->
-   python. If both, ask.
-3. **Check for `agent-card.json`:**
-   - **Card present:** Read it. Verify it has the required fields
-     listed in the [Agent Card Reference] minimal example
-     (`identity.{agentName, displayName, description, version,
-     provider.organization}`, `capabilities.taskKinds`, `tags[]`,
-     `runtime.{handler, maxRunningTimeSec}`). If anything required is
-     missing, treat as the "card missing" branch below.
-   - **Card missing:** Read the handler to infer input/output shape.
-     Run **Step 1** (ask agent name) and **Step 2** (confirm
-     description). Draft a minimal `agent-card.json` **in memory**
-     using the template in the [Agent Card Reference], with
-     `runtime.maxRunningTimeSec` chosen per the guidance in Step 5
-     and `io.inputs[]` / `io.outputs[]` populated from handler
-     inspection following [IO Schema Reference]. **Show the drafted
-     card to the user via `AskUserQuestion`** with options "Accept and
-     write to disk" / "Let me edit it first" before writing the file.
-     Production-grade providers must not be silently surprised by
-     auto-generated metadata.
-4. **Ask: deploy as-is, or make changes first?** Use
-   `AskUserQuestion` with "Deploy as-is" (default) and "Edit handler
-   or IO schema first".
-   - **As-is:** Skip Step 5 entirely. Run Step 3 (install/auth CLI),
-     then Step 6 (publish), Step 7 (validate), Step 8 (start), Step 9
-     (test), Step 10 (dashboard).
-   - **Changes first:** Run Step 5, then continue with Steps 6-10.
-5. Set `<your-agent-name>` to `identity.agentName` from the card
-   (NOT the directory basename). Ensure your working directory is the
-   **parent** of the project directory so `cd <your-agent-name> &&
-   ...` commands in later steps resolve correctly. If the directory
-   basename differs from `agent-card.json`'s `identity.agentName`,
-   prefer the agentName for CLI invocations and the actual directory
-   path for `cd`.
-
-### Path C -- Modify an existing agent
-
-1. Identify the agent directory. If ambiguous, list candidate
-   directories (those containing `agent-card.json`) and ask the user
-   to confirm which one (see [Asking the User Questions](#asking-the-user-questions)).
-2. Set `<your-agent-name>` to the directory's basename. Ensure your
-   working directory is the **parent** of the project directory so
-   that `cd <your-agent-name> && ...` commands in later steps resolve
-   correctly.
-3. Read the existing `agent-card.json` and handler file (`handler.ts`
-   or `handler.py`) to understand the current implementation.
-4. Skip directly to **Step 5** (Implement Handler and IO Schema) to
-   make the requested changes. Then continue with Steps 6-10 as
-   normal (publish, validate, start, test, dashboard).
-
-## Step 1: Ask Name
-
-Ask the user for the agent name (see
-[Asking the User Questions](#asking-the-user-questions)). Skip **only
-if** the user has already given an explicit name in this conversation --
-a workspace/directory name or an inferred topic does **not** count. If
-unsure, ask. Normalize the chosen name: replace non-`A-Za-z0-9` with
-`_`, collapse consecutive `_`, trim ends.
-
-Agent names must be globally unique across the Blocks Network. Choose a
-descriptive, specific name (e.g. `weather_forecast_bot`,
-`invoice_parser_v2`). Uniqueness is enforced at publish time (Step 6).
-
-## Step 2: Confirm Description
-
-Propose a one-sentence description based on the name and ask the user
-to accept or customize it (see
-[Asking the User Questions](#asking-the-user-questions)). Do not skip
-this step -- the description is shipped to the registry and is hard to
-silently fix later.
-
-## Step 3: Install & Authenticate CLI
-
-Always install (or update) the Blocks CLI to ensure the latest version:
+### Install / upgrade
 
 ```bash
 npm i -g @blocks-network/cli
 ```
 
-On OpenBSD (no npm in base), use the POSIX shell installer instead:
+On OpenBSD (no npm in base), use the POSIX shell installer:
 
 ```bash
 curl -fsSL https://config.blocks.ai/install.sh | sh
 pkg_add xdg-utils       # so `blocks login` can open a browser
 ```
 
-On FreeBSD and OpenBSD, install `xdg-utils` so `blocks login` can open
-a browser:
+On FreeBSD, install `xdg-utils` so `blocks login` can open a browser:
 
 ```bash
-pkg install xdg-utils   # FreeBSD
-pkg_add xdg-utils       # OpenBSD
+pkg install xdg-utils
 ```
 
-Then ensure the `blocks` command is available for the rest of the session:
+Make `blocks` available for the rest of the session:
 
 ```bash
 export PATH="$HOME/.blocks/bin:$PATH"
 ```
 
-For users who installed via `install.sh` (no global npm), the CLI can
-self-update in place:
+Self-update for users who installed via `install.sh` (no global npm):
 
 ```bash
 blocks upgrade
 ```
 
-If the user has not previously authenticated, run `blocks login
---write-env` before proceeding to publish. The login stores credentials
-to `~/.config/blocks/credentials.json` (used by `blocks publish`) and
-writes `BLOCKS_API_KEY` to the project `.env` (read by `blocks run` at
-agent startup). The canonical sequence -- `cd <name>`, `blocks login
---write-env`, `blocks publish` -- is in Step 6; run login from inside the
-scaffolded project directory so `--write-env` lands in the right `.env`.
+### `blocks login`
 
-**Always pass an explicit `--write-env` or `--no-write-env` flag.** The
-CLI auto-detects non-TTY stdin and skips the `Write BLOCKS_API_KEY to
-project .env? (Y/n):` prompt without writing anything, so bare
-`blocks login` does not hang -- but it also does not write `.env`,
-which is rarely what an agent flow wants. Pass the flag explicitly so
-the outcome is deterministic regardless of the harness's TTY behavior:
-`--write-env` opts in (recommended for the agent flow), `--no-write-env`
-opts out (use when you must not touch the project `.env`).
+Always pass an explicit `--write-env` or `--no-write-env`. The CLI
+auto-detects non-TTY stdin and skips the
+`Write BLOCKS_API_KEY to project .env? (Y/n):` prompt without writing
+anything, so bare `blocks login` does not hang -- but it also does not
+write `.env`. Pass the flag explicitly so the outcome is deterministic:
 
-If the skill is invoked from the parent directory (the typical Path A
-shape after `blocks init`), pass `--dir <your-agent-name>` to point
-`blocks login --write-env` at the correct project `.env`. Without it,
-the key lands in the parent directory's `.env`, which `blocks run`
-inside the project will not pick up.
+- `--write-env` opts in (recommended for the agent flow). Stores creds
+  in `~/.config/blocks/credentials.json` and writes `BLOCKS_API_KEY` to
+  the project `.env`.
+- `--no-write-env` opts out (use when you must not touch the project
+  `.env`).
+- `--dir <name>` points `--write-env` at the named project's `.env`
+  when invoking from a parent directory.
 
 ### Verify or revoke credentials
-
-Useful auxiliary commands:
 
 | Command | Purpose |
 |---|---|
@@ -248,68 +110,104 @@ Useful auxiliary commands:
 | `blocks logout` | Delete `~/.config/blocks/credentials.json` and remove `BLOCKS_API_KEY` from the project `.env`. |
 | `blocks version` | Print the installed CLI version. |
 
-## Step 4: Scaffold
-
-(Path A only. Path B users skip to Step 5 or Step 6 depending on the
-"as-is or changes" answer; Path C users have already scaffolded.)
-
-Run from the **parent directory** -- do NOT `mkdir` first. Substitute
-the user-provided agent name for `<your-agent-name>`:
+### `blocks check`
 
 ```bash
-blocks init <your-agent-name> --yes --language node
+cd <your-agent-name> && blocks check
 ```
 
-For Python agents, use `--language python` instead.
+Validates `agent-card.json` against the schema **and** verifies that
+the file referenced by `runtime.handler` exists on disk. A missing
+handler file causes `[FAIL]` even when the JSON itself is valid.
+`blocks publish` re-runs the same validation, so `blocks check` is a
+fast pre-flight, not a gate the user must clear before publishing.
 
-Note: the CLI defaults to Python when `--language` is omitted, so
-always pass `--language node` explicitly for TypeScript agents.
+### `blocks run`
 
-`blocks init` defaults `--type provider` -- it scaffolds a handler
-agent (`handler.{ts,py}`, `trigger.{ts,py}`, `agent-card.json`). Pass
-`--type consumer` to scaffold a consumer project instead (see below).
+Starts the agent locally. Reads `agent-card.json`, imports the handler,
+and uses `BLOCKS_API_KEY` from `.env`. Don't run on the user's behalf
+-- instruct the user to run `cd <your-agent-name> && blocks run`
+themselves so they own the live process.
 
-### Consumer projects
-
-If the user wants to **call** other Blocks agents from a script or app
-rather than build a new agent, scaffold a consumer project:
+Install deps first if a manifest is present:
 
 ```bash
-blocks init <your-script-name> --yes --language node --type consumer
-# or
-blocks init <your-script-name> --yes --language python --type consumer
+cd <your-agent-name>
+[ -f package.json ] && npm install
+[ -f setup.py ] || [ -f setup.cfg ] || [ -f pyproject.toml ] && \
+  pip install -e . && pip install blocks-network --upgrade
+cd ..
 ```
 
-A consumer project produces:
+### `blocks dashboard`
 
-- Node: `index.ts` plus a `package.json` with a `start` script. No
-  `agent-card.json`, no `handler.ts`.
-- Python: `main.py` plus `pyproject.toml`. No `agent-card.json`, no
-  `handler.py`.
+```bash
+cd <your-agent-name> && blocks dashboard
+```
 
-The scaffold uses the same `TaskClient` patterns documented in
-[Consuming Agents (Trigger / Client Code)](#consuming-agents-trigger--client-code)
-below. After scaffolding a consumer project:
+Reads the dashboard URL from the CDM config (or from
+`BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` if either is set), then
+opens the agent's page. Override for staging / a worktree / a
+self-hosted deploy:
 
-1. Set `BLOCKS_API_KEY` in `.env` (or run `blocks login --write-env`
-   from the consumer directory).
-2. Edit the script and set the target agent name on `sendMessage` /
-   `send_message`.
-3. Run with `npm run start` (Node) or `python main.py` (Python).
+```bash
+BLOCKS_APP_BASE_URL=https://staging.blocks.ai blocks dashboard
+```
 
-Skip Steps 5-10 entirely for consumers -- they don't publish, don't
-register a handler, and don't need a dashboard entry.
+## Agent Card Reference
 
-## Step 5: Implement Handler and IO Schema
+### Required: `runtime.maxRunningTimeSec`
 
-Edit `handler.ts` (or `handler.py` for Python).
-See [Agent Card Reference] for signature and [Node Reference] for patterns.
+**Always** set `runtime.maxRunningTimeSec` in `agent-card.json`. This
+integer (seconds) declares the maximum wall-clock time a single task
+invocation may run before the platform considers it timed out. Choose
+a value appropriate for the workload:
 
-### IO Schema Rules
+- Simple request/response: `30`-`60`
+- LLM-backed or multi-step: `120`-`300`
+- Long-running pipe tasks: `600`-`3600`
 
-Update `agent-card.json` `io` to match the handler's expected input and
-output shapes. Without a correct schema the dashboard cannot render input
-forms.
+```json
+"runtime": {
+  "handler": "./handler.ts",
+  "concurrency": 5,
+  "maxRunningTimeSec": 300
+}
+```
+
+If omitted, the platform applies a default that may be too short or
+too long for the agent's use case.
+
+### Other useful fields
+
+Beyond the required structure, populate these to improve
+discoverability, security, and operational behavior:
+
+| Section | Field | Purpose |
+|---------|-------|---------|
+| `identity` | `documentationUrl` | Link to external docs for the agent |
+| `identity` | `repositoryUrl` | Source code repository URL |
+| `identity` | `iconUrl` | Agent icon displayed in the dashboard/registry |
+| `identity.provider` | `url` | Organization homepage |
+| `runtime` | `concurrency` | Max concurrent tasks per instance (default 1) |
+| `runtime` | `expectedInstances` | Expected running instances for scaling (default 1) |
+| `runtime` | `maxPendingBacklog` | Max queued tasks before rejecting new ones |
+| `tags[]` | `examples` | Array of example prompts/inputs for each tag |
+| `security` | `encryption` | Declare E2E encryption requirements (`algorithm`, `consumerKeyRequired`, keys) |
+| `services` | `webhooks` | Set `true` if the agent accepts webhook triggers |
+| `extensions` | *(any)* | Freeform metadata for custom integrations |
+
+Populate `tags[].examples` whenever possible — they power the dashboard
+"Try it" UI and help consumers understand agent capabilities.
+
+For full handler signatures, project structure, and trigger-script
+shape, see [Agent Card Reference] (external).
+
+## IO Schema Rules
+
+Update `agent-card.json` `io` to match the handler's expected input
+and output shapes. Without a correct schema, the dashboard cannot
+render input forms.
 
 **Required fields:**
 
@@ -329,16 +227,16 @@ forms.
 `schema.properties[*].default`. For text-class, use the top-level
 `example` field (must be a string).
 
-`schema.properties` keys must match the fields your handler reads from
+`schema.properties` keys must match the fields the handler reads from
 `task.requestParts[0]`.
 
-#### Example: Single Text Input (scaffold default)
+### Example: Single text input (scaffold default)
 
 > **Example only -- replace every string value before publishing.**
 > The literal text below (`"Input Text"`, the default string, the
-> `example` payload) is illustrative. Substitute values that match the
-> user's actual agent inputs and outputs. Do not paste this block
-> verbatim into a real `agent-card.json`.
+> `example` payload) is illustrative. Substitute values that match
+> the user's actual agent inputs and outputs. Do not paste this
+> block verbatim into a real `agent-card.json`.
 
 ```json
 "io": {
@@ -373,13 +271,11 @@ forms.
 }
 ```
 
-#### Example: Multi-Field Input
+### Example: Multi-field input
 
 > **Example only -- replace every string value before publishing.**
-> The literal text below (`"weather"`, `"Search Query"`, `"Max
-> Results"`, etc.) is illustrative. Substitute names and titles that
-> match the user's actual handler fields. Do not paste this block
-> verbatim into a real `agent-card.json`.
+> Substitute names and titles that match the user's actual handler
+> fields. Do not paste this block verbatim.
 
 ```json
 "io": {
@@ -415,134 +311,91 @@ forms.
 See [IO Schema Reference] for enum fields, array fields, and full
 validation details.
 
-### Required: maxRunningTimeSec
+### Drafting an IO schema from an existing handler
 
-**Always** set `runtime.maxRunningTimeSec` in `agent-card.json`. This
-integer (seconds) declares the maximum wall-clock time a single task
-invocation may run before the platform considers it timed out. Choose a
-value appropriate for the agent's workload:
+When deploying code that has no `agent-card.json`, infer the schema by
+reading the handler:
 
-- Simple request/response: `30`-`60`
-- LLM-backed or multi-step: `120`-`300`
-- Long-running pipe tasks: `600`-`3600`
+1. Identify the keys the handler reads from `task.requestParts[0]` -- these become `schema.properties`.
+2. Note required keys (the ones the handler can't run without) -- these become `schema.required`.
+3. Pick a `contentType` based on what the handler produces in its return / artifacts.
+4. Choose `runtime.maxRunningTimeSec` per the workload guidance above.
+5. **Show the drafted card to the user via the host question tool** ("Accept and write to disk" / "Let me edit it first") **before writing the file.** Production-grade providers must not be silently surprised by auto-generated metadata.
+
+## Streaming Agents
+
+If the agent uses streaming, read [Agent Card Reference] (streaming
+capabilities section) and [Node Reference] / [Python Reference] before
+editing `agent-card.json` and the handler.
+
+### Declaring a stream in `agent-card.json`
+
+Each entry in the top-level `streams` block requires `direction` and
+`format`. The schema field set is **not** the same for all three
+patterns -- the publisher's validator enforces this conditionally and
+rejects mismatches:
+
+| `direction` | `format` | Schema fields | Forbidden fields |
+|---|---|---|---|
+| `outbound` or `inbound` | `events` | single `schema` | `outboundSchema`, `inboundSchema`, `contentType` |
+| `bidirectional` | `events` | **both** `outboundSchema` **and** `inboundSchema` (events flowing each way may have different shapes) | `schema`, `contentType` |
+| any | `bytes` | `contentType` (e.g. `"application/octet-stream"`) | `schema`, `outboundSchema`, `inboundSchema` |
+
+Example -- bidirectional events stream (a bare
+`direction`/`format`/`description` entry will be rejected at publish
+time):
 
 ```json
-"runtime": {
-  "handler": "./handler.ts",
-  "concurrency": 5,
-  "maxRunningTimeSec": 300
+"streams": {
+  "_default": {
+    "direction": "bidirectional",
+    "format": "events",
+    "description": "Two-way event channel.",
+    "outboundSchema": { "type": "object", "properties": { "kind": { "type": "string" } } },
+    "inboundSchema":  { "type": "object", "properties": { "kind": { "type": "string" } } }
+  }
 }
 ```
 
-If omitted, the platform applies a default timeout which may be too
-short or too long for the agent's use case.
+### Streaming I/O -- read this before writing a handler that opens a stream
 
-### Other Useful Agent Card Fields
+**Writing output (handler side):**
+- Use `stream.write(data)` to send data to the consumer. Call `stream.end()` when done to flush and publish the `stream_end` marker.
 
-Beyond the required structure, consider populating these optional fields
-to improve discoverability, security, and operational behavior:
+**Reading input (consumer/bidirectional side):**
+- `format: "bytes"` -> use `stream.bytes()` (Node yields `Uint8Array`, Python yields `bytes`). Do **not** iterate `stream.inbound` unless decoding base64 envelopes by hand.
+- `format: "events"` -> use `stream.events<T>()` in Node, `stream.events()` in Python (yields one event per yield; flattens producer-side batches). Do **not** iterate `stream.inbound` unless you specifically want batched envelopes.
+- For piping into a file or subprocess: Node uses `await stream.readable()` (returns `node:stream.Readable`); Python uses `stream.as_file()` (returns `BufferedReader`).
+- For stream-level errors (PAM revocation, network failures, fatal categories): subscribe via `stream.onError(cb)` (Node) / `stream.on_error(cb)` (Python). Append-only -- register **before** the read path activates; past errors do not replay.
+- `stream.inbound` is the low-level wire iterator. Its `.data` is an array of strings (bytes streams) or events (events streams), not a single decoded value. Reach for it only when you need raw envelope metadata (`seq`, `ts`, `encoding`).
 
-| Section | Field | Purpose |
-|---------|-------|---------|
-| `identity` | `documentationUrl` | Link to external docs for the agent |
-| `identity` | `repositoryUrl` | Source code repository URL |
-| `identity` | `iconUrl` | Agent icon displayed in the dashboard/registry |
-| `identity.provider` | `url` | Organization homepage |
-| `runtime` | `concurrency` | Max concurrent tasks per instance (default 1) |
-| `runtime` | `expectedInstances` | Expected running instances for scaling (default 1) |
-| `runtime` | `maxPendingBacklog` | Max queued tasks before rejecting new ones |
-| `tags[]` | `examples` | Array of example prompts/inputs for each tag |
-| `security` | `encryption` | Declare E2E encryption requirements (`algorithm`, `consumerKeyRequired`, keys) |
-| `services` | `webhooks` | Set `true` if the agent accepts webhook triggers |
-| `extensions` | *(any)* | Freeform metadata for custom integrations |
-
-Populate `tags[].examples` whenever possible — they power the
-dashboard "Try it" UI and help consumers understand agent capabilities.
+### Sub-task replay & history reconstruction
 
 If a handler creates a sub-task through `TaskClient` and registers
 `onArtifact(cb)` / `on_artifact(cb)` after reconnecting to an existing
 task, the callback replays pre-populated artifacts synchronously at
 registration time. Replay events are minimal synthetic artifact events
 with `type`, `taskId`, and `artifactRef`; original history-only fields
-such as `outputId` and `protocolVersion` are not retained.
-For timeline reconstruction after `connect()`, use `session.listEvents()`
-or `session.list_events()` to read all valid task events parsed from
+such as `outputId` and `protocolVersion` are not retained. For timeline
+reconstruction after `connect()`, use `session.listEvents()` /
+`session.list_events()` to read all valid task events parsed from
 history; this history list is not populated for new `sendMessage()` /
 `send_message()` sessions.
 
-### Streaming Agents
+## Publishing & Republishing
 
-If the agent uses streaming, read the [Agent Card Reference]
-(streaming capabilities section) and the [Node Reference]
-(or [Python Reference]) before editing `agent-card.json` and the handler.
+Publishing pushes the latest IO schemas, streaming capabilities, and
+description to the registry. Republish whenever the agent card or
+handler shape changes.
 
-> **Declaring a stream in `agent-card.json` -- pick the right schema fields for the (`direction`, `format`) pair.**
->
-> Each entry in the top-level `streams` block requires `direction` and
-> `format`. The schema field set is **not** the same for all three
-> patterns -- the publisher's validator enforces this conditionally and
-> rejects mismatches:
->
-> | `direction` | `format` | Schema fields | Forbidden fields |
-> |---|---|---|---|
-> | `outbound` or `inbound` | `events` | single `schema` | `outboundSchema`, `inboundSchema`, `contentType` |
-> | `bidirectional` | `events` | **both** `outboundSchema` **and** `inboundSchema` (events flowing each way may have different shapes) | `schema`, `contentType` |
-> | any | `bytes` | `contentType` (e.g. `"application/octet-stream"`) | `schema`, `outboundSchema`, `inboundSchema` |
->
-> Example -- bidirectional events stream (note the two directional
-> schemas; a bare `direction`/`format`/`description` entry will be
-> rejected at publish time):
->
-> ```json
-> "streams": {
->   "_default": {
->     "direction": "bidirectional",
->     "format": "events",
->     "description": "Two-way event channel.",
->     "outboundSchema": { "type": "object", "properties": { "kind": { "type": "string" } } },
->     "inboundSchema":  { "type": "object", "properties": { "kind": { "type": "string" } } }
->   }
-> }
-> ```
->
-> **Streaming I/O -- read this before writing a handler that opens a stream.**
->
-> **Writing output (handler side):**
-> - Use `stream.write(data)` to send data to the consumer. Call `stream.end()` when done to flush and publish the `stream_end` marker.
->
-> **Reading input (consumer/bidirectional side):**
-> - `format: "bytes"` -> use `stream.bytes()` (Node yields `Uint8Array`, Python yields `bytes`). Do **not** iterate `stream.inbound` unless you are decoding base64 envelopes by hand.
-> - `format: "events"` -> use `stream.events<T>()` in Node, `stream.events()` in Python (yields one event per yield; flattens producer-side batches). Do **not** iterate `stream.inbound` unless you specifically want batched envelopes.
-> - For piping into a file or subprocess: Node uses `await stream.readable()` (returns `node:stream.Readable`); Python uses `stream.as_file()` (returns `BufferedReader`).
-> - For stream-level errors (PAM revocation, network failures, fatal categories): subscribe via `stream.onError(cb)` (Node) / `stream.on_error(cb)` (Python). Append-only -- register **before** the read path activates; past errors do not replay.
-> - `stream.inbound` is the low-level wire iterator. Its `.data` is an array of strings (bytes streams) or events (events streams), not a single decoded value. Reach for it only when you need raw envelope metadata (`seq`, `ts`, `encoding`).
+**Do NOT run `blocks publish` on the user's behalf.** Instruct the
+user to run it themselves:
 
-## Step 6: Publish
-
-All three paths reach this step. Always publish:
-
-- **Path A:** the agent has just been scaffolded and edited.
-- **Path B (as-is):** the agent's metadata may have never been pushed
-  to the registry; publishing is required even if no files changed in
-  this session.
-- **Path B (changes) / Path C:** publishing pushes the latest IO
-  schemas, streaming capabilities, and description.
-
-**Do NOT run `blocks publish` on the user's behalf.** Instead,
-instruct the user to run it themselves. `blocks publish` requires
-prior authentication via `blocks login`:
-
-> Run these commands to authenticate and publish your agent.
-> Substitute `<your-agent-name>` for the directory name:
 > ```bash
 > cd <your-agent-name>
-> blocks login --write-env   # first time only -- authenticate and write API key to .env
+> blocks login --write-env   # first time only
 > blocks publish
 > ```
-
-`blocks publish` re-runs the same schema validation as `blocks check`
-before contacting the registry, so Step 7 is a fast pre-flight, not a
-gate the user must clear before publishing.
 
 ### Non-interactive publish flags
 
@@ -577,11 +430,13 @@ blocks publish --billing-mode paid --listing private \
   --price-per-task 0.05 --accept-terms
 ```
 
-**Name conflict handling:** If the user reports that `blocks publish`
-rejected the name (duplicate/already taken), inform them that the name
-is unavailable and ask for an alternative, more unique name (see
-[Asking the User Questions](#asking-the-user-questions)). After the
-user provides a new name, update `agent-card.json` (and rename the
+### Name conflicts
+
+Agent names are globally unique across the Blocks Network. If the user
+reports that `blocks publish` rejected the name as duplicate / already
+taken, inform them that the name is unavailable and ask for a more
+unique alternative via the host question tool. Update
+`agent-card.json` `identity.agentName` (and rename the project
 directory if needed), then ask the user to re-run `blocks publish`.
 
 ### Manage access for private agents
@@ -599,83 +454,113 @@ When `--listing private` is set, the agent is invite-only. Use the
 | `blocks invite revoke <agentName> --org <slug-or-id>` | Revoke an org grant. |
 | `blocks invite accept <token>` | (Consumer-side) Accept an invitation token to gain access. |
 
-All commands require `blocks login` first. They are safe to run on
-the user's behalf when the agent already exists in the registry.
+All commands require `blocks login` first. They are safe to run on the
+user's behalf when the agent already exists in the registry.
 
-## Step 7: Validate
+## Modifying an Existing Agent
 
-```bash
-cd <your-agent-name> && blocks check
-```
+The user has a working agent and wants to edit handler / IO schema and
+republish. Reference checklist:
 
-`blocks check` validates `agent-card.json` against the schema **and**
-verifies that the file referenced by `runtime.handler` exists on disk.
-A missing handler file causes a `[FAIL]` in the check output even if
-the JSON itself is valid.
+1. **Identify the agent directory.** If ambiguous, list candidates
+   (those containing `agent-card.json`) and ask the user via the host
+   question tool.
+2. **Read `agent-card.json` and the handler** (`handler.ts` /
+   `handler.py`) to understand the current implementation.
+3. **Make the requested changes.** When modifying input shape or
+   output shape, also update `io.inputs[]` / `io.outputs[]` per [IO
+   Schema Rules](#io-schema-rules). When adding streaming, see
+   [Streaming Agents](#streaming-agents).
+4. **Validate** with `cd <agent-dir> && blocks check`.
+5. **Republish** per [Publishing & Republishing](#publishing--republishing).
+   The published metadata is what consumers see -- don't rely on
+   `blocks run` alone to confirm the change is live.
+6. **Restart** the running agent so the new handler is loaded -- ask
+   the user to re-run `cd <agent-dir> && blocks run`.
+7. **Re-test** with the trigger script (`npx tsx trigger.ts` /
+   `python trigger.py`).
 
-## Step 8: Start
+## Deploying Code You've Already Written
 
-Install dependencies if a package manifest is present:
+The user has handler code and wants it on the network. The card may or
+may not exist. **Production-grade providers want to publish as-is** --
+don't assume they want to edit the handler.
 
-```bash
-cd <your-agent-name>
-[ -f package.json ] && npm install
-[ -f setup.py ] || [ -f setup.cfg ] || [ -f pyproject.toml ] && \
-  pip install -e . && pip install blocks-network --upgrade
-cd ..
-```
+1. **Locate the project directory.** If the cwd contains exactly one
+   `handler.ts` / `handler.py` (and optionally `agent-card.json`), use
+   cwd. Otherwise list candidate subdirectories and ask the user to
+   pick one. Never pick based on directory name alone.
+2. **Detect the language.** `handler.ts` → node, `handler.py` →
+   python. If both, ask.
+3. **Check for `agent-card.json`:**
+   - **Card present:** Read it. Verify it has the required fields per
+     [Agent Card Reference] minimal example (`identity.{agentName,
+     displayName, description, version, provider.organization}`,
+     `capabilities.taskKinds`, `tags[]`, `runtime.{handler,
+     maxRunningTimeSec}`). If anything required is missing, treat as
+     "card missing" below.
+   - **Card missing:** Read the handler to infer input/output shape,
+     then draft a minimal `agent-card.json` per [IO Schema Rules →
+     Drafting an IO schema from an existing
+     handler](#drafting-an-io-schema-from-an-existing-handler). **Show
+     the drafted card to the user before writing the file.**
+4. **Ask the user: deploy as-is, or make changes first?**
+   - **As-is:** Skip handler edits. Authenticate (`blocks login
+     --write-env` if needed), then `blocks publish` per
+     [Publishing & Republishing](#publishing--republishing).
+   - **Changes first:** Edit handler / IO schema, then publish.
+5. **Validate** (`blocks check`), **start** (`blocks run`), **test**
+   (`npx tsx trigger.ts` / `python trigger.py`), **dashboard**
+   (`blocks dashboard`).
 
-**Do NOT run `blocks run` on the user's behalf.** Instead, instruct
-the user to start the agent themselves:
+For CLI invocations, set `<agent-name>` from the card's
+`identity.agentName` (NOT the directory basename) when they differ.
+Use the actual directory path for `cd`, the agentName for `blocks
+invite send`, etc.
 
-> Run this command to start your agent:
-> ```bash
-> cd <your-agent-name> && blocks run
-> ```
-
-## Step 9: Test
-
-```bash
-cd <your-agent-name> && npx tsx trigger.ts
-```
-
-For Python agents:
-
-```bash
-cd <your-agent-name> && python trigger.py
-```
-
-Report the result to the user.
-
-The scaffolded `trigger.ts` is also the canonical pattern for **consumer
-code** that drives agents from another app or script. See [Consuming
-Agents](#consuming-agents-trigger--client-code) below before editing it
-or porting the same pattern into a separate codebase.
-
-## Step 10: Dashboard
-
-```bash
-cd <your-agent-name> && blocks dashboard
-```
-
-`blocks dashboard` reads the dashboard URL from the CDM config (or
-from `BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` if either is
-set), then opens the agent's page. To target a non-prod environment
-(staging, a worktree, or a self-hosted deployment), export the env
-var before invoking the command, for example:
-
-```bash
-BLOCKS_APP_BASE_URL=https://staging.blocks.ai blocks dashboard
-```
-
-## Consuming Agents (Trigger / Client Code)
+## Consumer Projects & Trigger / Client Code
 
 This section covers code that **calls** an agent -- the scaffolded
 `trigger.ts`, a backend script, or any app that drives Blocks agents.
 The full surface lives in [Node Reference] / [Python Reference]; the
 rules below are the ones a consumer must get right on the first try.
 
-The consumer SDK is browser-safe. Import directly:
+The consumer SDK is browser-safe.
+
+### Scaffolding a consumer project
+
+If the user wants to **call** other Blocks agents from a script or app
+rather than build a new agent, scaffold a consumer project with
+`--type consumer`:
+
+```bash
+blocks init <your-script-name> --yes --language node --type consumer
+# or
+blocks init <your-script-name> --yes --language python --type consumer
+```
+
+A consumer project produces:
+
+- Node: `index.ts` plus a `package.json` with a `start` script. No
+  `agent-card.json`, no `handler.ts`.
+- Python: `main.py` plus `pyproject.toml`. No `agent-card.json`, no
+  `handler.py`.
+
+After scaffolding:
+
+1. Set `BLOCKS_API_KEY` in `.env` (or run `blocks login --write-env`
+   from the consumer directory).
+2. Edit the script and set the target agent name on `sendMessage` /
+   `send_message`.
+3. Run with `npm run start` (Node) or `python main.py` (Python).
+
+Consumer projects don't publish, don't register a handler, and don't
+need a dashboard entry. The patterns below apply equally to the
+scaffolded `index.ts`/`main.py`, the scaffolded `trigger.ts`/
+`trigger.py` shipped with provider agents, or any other script that
+calls a Blocks agent.
+
+### Import
 
 ```typescript
 import { TaskClient, textPart, filePart, decodeInlineArtifact } from '@blocks-network/sdk';
@@ -706,27 +591,28 @@ client.destroy();
   session.asyncClose()`) when finished -- they unsubscribe transports.
 - If background token refresh permanently fails (3 retries exhausted),
   the next authenticated `TaskClient` call (`sendMessage`, `connect`,
-  `getTask`, `listTasks`, `cancelTask`, file-upload helpers, etc.) runs
-  through a shared preflight that first attempts one reactive-recovery
-  refresh; if that recovery succeeds the call proceeds normally, and if
-  it fails the typed `AuthRefreshFailedError` is thrown/raised instead
-  of an opaque 401. Register `onAuthError` (Node) / `on_auth_error`
-  (Python) on `TaskClient.create(...)` for a proactive hook; the
-  preflight is the safety net for callers who don't and the recovery
-  path for transient outages. See [Node Reference] / [Python Reference]
-  for re-auth patterns.
+  `getTask`, `listTasks`, `cancelTask`, file-upload helpers, etc.)
+  runs through a shared preflight that first attempts one
+  reactive-recovery refresh; if that recovery succeeds the call
+  proceeds normally, and if it fails the typed
+  `AuthRefreshFailedError` is thrown/raised instead of an opaque 401.
+  Register `onAuthError` (Node) / `on_auth_error` (Python) on
+  `TaskClient.create(...)` for a proactive hook; the preflight is the
+  safety net for callers who don't and the recovery path for transient
+  outages. See [Node Reference] / [Python Reference] for re-auth
+  patterns.
 
-### Task Kinds
+### Task kinds
 
 | Task kind | `taskKind` arg | `duration` | Streams? | Terminal trigger |
 |-----------|----------------|------------|----------|------------------|
 | request   | omit / `'request'` | **must be absent** | optional | handler return |
 | pipe      | `'pipe'` | **required**, integer **minutes**, range `1..43200` | yes | duration expiry, cancel, terminate |
 
-`duration` is **minutes** (not seconds, not ms). Validation runs in the
-SDK before the request leaves the process.
+`duration` is **minutes** (not seconds, not ms). Validation runs in
+the SDK before the request leaves the process.
 
-### Event Surface on `TaskSession`
+### Event surface on `TaskSession`
 
 Register listeners **before** awaiting work; replay-aware callbacks
 (`onArtifact`, `onStream`, `onTerminal`) deliver pre-known events
@@ -734,8 +620,8 @@ synchronously at registration so listener order is forgiving.
 
 ```typescript
 session.onProgress((e) => { /* e.message, e.progress */ });
-session.onArtifact(async (e) => { /* see "Reading Artifacts" */ });
-session.onStream((ref) => { /* see "Consuming a Stream" */ });
+session.onArtifact(async (e) => { /* see "Reading artifacts" */ });
+session.onStream((ref) => { /* see "Consuming a stream" */ });
 session.onTerminal((e) => { /* e.state: 'completed' | 'failed' | ... */ });
 session.onCancelRequested((e) => { /* e.ts (Date.now() in ms) */ });
 session.onError((e) => { /* consumer-callback exceptions */ });
@@ -747,33 +633,36 @@ const terminal = await session.waitForTerminal(timeoutMs);
 **At-most-once `onTerminal`.** The SDK guarantees that
 `session.onTerminal`, `session.waitForTerminal()`, and
 `TaskClient.subscribeToTask`'s `onTerminal` each fire at most once per
-task — even when the wire delivers two terminals (e.g. a scanner-Phase-6
-force-cancel followed by the agent's own delayed terminal). The first
-terminal wins; subsequent terminals are silently dropped. This holds
-across the synthetic re-emit when registering a callback against an
-already-terminal session as well.
+task — even when the wire delivers two terminals (e.g. a
+scanner-Phase-6 force-cancel followed by the agent's own delayed
+terminal). The first terminal wins; subsequent terminals are silently
+dropped. This holds across the synthetic re-emit when registering a
+callback against an already-terminal session as well.
 
-**`onCancelRequested`.** Backend acknowledgment of a cooperative cancel,
-published on `u.{orgId}.{taskId}` after the authoritative writes. Fires
-zero or once per session — suppressed once a terminal has been delivered.
-Carries `{ taskId, ts }` (no actor identity; the obs.* channel records
-ownerId for ops/admin audit). Use it to render an in-flight
-"cancel requested" UI signal before any terminal arrives. **Late
-registration:** callbacks registered after the wire `cancel_requested`
-arrived still receive a synthetic replay of the first event, mirroring
-`onTerminal`'s sticky behavior — but only while no terminal has been
-delivered; a post-terminal registration receives nothing (causality).
+**`onCancelRequested`.** Backend acknowledgment of a cooperative
+cancel, published on `u.{orgId}.{taskId}` after the authoritative
+writes. Fires zero or once per session — suppressed once a terminal
+has been delivered. Carries `{ taskId, ts }` (no actor identity; the
+obs.* channel records ownerId for ops/admin audit). Use it to render
+an in-flight "cancel requested" UI signal before any terminal
+arrives. **Late registration:** callbacks registered after the wire
+`cancel_requested` arrived still receive a synthetic replay of the
+first event, mirroring `onTerminal`'s sticky behavior — but only while
+no terminal has been delivered; a post-terminal registration receives
+nothing (causality).
 
-Cancel / terminate: `await session.cancel()` (cooperative) or
-`await session.terminate()` (force). Reconnect to an in-flight or
-completed task by ID with `await client.connect({ taskId })`.
+Cancel / terminate: `await session.cancel()` (cooperative) or `await
+session.terminate()` (force). Reconnect to an in-flight or completed
+task by ID with `await client.connect({ taskId })`.
 
-Out-of-band lifecycle (no live session needed): `client.getTask(id)`,
-`client.listTasks({ ownerId?, agentName?, state?, limit?, cursor? })`,
-`client.cancelTask(id)`, `client.pauseTask(id)`, `client.resumeTask(id)`,
-`client.retryTask(id)`, `client.terminateTask(id)`. Python equivalents
-are snake_case (`client.get_task` / `client.list_tasks` / `client.cancel_task`
-/ ...). Use these from a backend or CLI script when you only have a
+### Out-of-band lifecycle (no live session needed)
+
+`client.getTask(id)`, `client.listTasks({ ownerId?, agentName?,
+state?, limit?, cursor? })`, `client.cancelTask(id)`,
+`client.pauseTask(id)`, `client.resumeTask(id)`, `client.retryTask(id)`,
+`client.terminateTask(id)`. Python equivalents are snake_case
+(`client.get_task` / `client.list_tasks` / `client.cancel_task` /
+...). Use these from a backend or CLI script when you only have a
 task ID and don't want to subscribe to the live channel.
 
 ### Building `requestParts`
@@ -797,7 +686,7 @@ requestParts: [
   browser callers can pass a `File` straight through. `partId` is
   required on file parts.
 
-### Reading Artifacts
+### Reading artifacts
 
 ```typescript
 session.onArtifact(async (event) => {
@@ -819,7 +708,7 @@ artifact on the session to disk and returns the resulting file paths.
 Useful in trigger / script flows that just need the artifacts on local
 disk without iterating `onArtifact`.
 
-### Consuming a Stream
+### Consuming a stream
 
 ```typescript
 const ref = await session.waitForStream();   // or session.onStream(cb)
@@ -841,12 +730,12 @@ for await (const chunk of stream.bytes()) { /* Uint8Array */ }
 > whose `.data` is **always an array** (`string[]` for bytes streams,
 > `T[]` for events streams) or a raw passthrough dict (`raw` format).
 > A single producer `write()` already yields a 1-element array — the
-> bundler coalesces writes by size/latency. Treating `.data` as a single
-> value works under light load (1-element array, JS auto-coerces) and
-> silently misroutes once batching kicks in. Only reach for
-> `stream.inbound` if you specifically need envelope metadata (`seq`,
-> `ts`, `encoding`); the Node SDK now enforces the per-format shape with
-> a discriminated union.
+> bundler coalesces writes by size/latency. Treating `.data` as a
+> single value works under light load (1-element array, JS
+> auto-coerces) and silently misroutes once batching kicks in. Only
+> reach for `stream.inbound` if you specifically need envelope
+> metadata (`seq`, `ts`, `encoding`); the Node SDK now enforces the
+> per-format shape with a discriminated union.
 
 `ref.descriptor.declaredStream` matches the key in the agent card's
 `streams` block -- use it to route when an agent declares multiple
@@ -857,6 +746,7 @@ is already terminal (live-only data is gone; artifacts persist).
 
 | Symptom | Likely cause |
 |---|---|
+| User says "I want to build my first Blocks agent" | Wrong skill -- this one is for managing existing agents. Switch to `blocks-getstarted` (`GETSTARTED.md`). |
 | `BillingModeMismatchError` on `sendMessage` | `TaskClient.create({ billingMode })` does not match the agent's registered billingMode. Read it from the registry: `(await getAgent(name)).billingMode`. |
 | `AuthRefreshFailedError` on the next `TaskClient` call | Background token refresh failed 3 times AND the per-call preflight's reactive-recovery attempt also failed (expired/revoked API key, broken token endpoint, persistent outage). Re-create the `TaskClient` with valid credentials, or register `onAuthError` for proactive re-auth UX. A transient outage that recovers before the preflight runs is handled silently and the call proceeds. |
 | Pipe task rejected at `sendMessage` | Missing `duration`, `duration` not an integer in `[1, 43200]` (minutes), or `duration` set on a non-pipe task. |
@@ -865,10 +755,11 @@ is already terminal (live-only data is gone; artifacts persist).
 | `StreamUnavailableError` on `ref.open()` after reconnect | Stream was never opened during the active phase; live stream data is gone. Artifacts remain on the session. |
 | `"Streaming was not negotiated for this task."` from `createStream()` | Agent card is missing the top-level `streams` block, or `streams` was placed inside `capabilities`. Re-publish after fixing. |
 | `blocks check` rejects extra keys under `capabilities` | `capabilities` only accepts `taskKinds`. Streaming config goes in the top-level `streams` block. |
-| `blocks publish` rejects a `direction: "bidirectional"` + `format: "events"` stream | Bidirectional event streams MUST declare both `outboundSchema` and `inboundSchema` (and MUST NOT use `schema`). Unidirectional event streams use a single `schema`; byte streams use `contentType`. See the table in [Streaming Agents](#streaming-agents). |
+| `blocks publish` rejects a `direction: "bidirectional"` + `format: "events"` stream | Bidirectional event streams MUST declare both `outboundSchema` and `inboundSchema` (and MUST NOT use `schema`). Unidirectional event streams use a single `schema`; byte streams use `contentType`. See [Streaming Agents](#streaming-agents). |
 | `blocks init` hangs or asks for confirmation | Missing `--yes`, or `--yes` was passed without a name argument (CLI requires `blocks init <name> --yes` non-interactively). Always include both. |
-| `blocks publish` hangs after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. See [Non-interactive publish flags](#non-interactive-publish-flags). |
+| `blocks publish` hangs after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. See [Publishing & Republishing → Non-interactive publish flags](#non-interactive-publish-flags). |
 | `blocks invite send` returns `either --email or --org is required` (or 4xx) | The two flags are required and mutually exclusive -- pass exactly one. |
+| Bare `blocks login` finishes but `BLOCKS_API_KEY` is missing in `.env` | Non-TTY auto-detection skipped the write-env prompt. Re-run with explicit `--write-env` (and `--dir <name>` if invoking from a parent directory). |
 
 ## References
 
@@ -877,7 +768,7 @@ is already terminal (live-only data is gone; artifacts persist).
 - [IO Schema Reference] -- **read before editing agent-card.json** -- io input/output rules, JSON Schema format, examples
 - [Node Reference] -- handler patterns, streaming, agent-to-agent, TaskClient, env vars, CLI commands, deployment
 - [Python Reference] -- Python handler signature, snake_case APIs, run/test commands (use only when user requests Python)
-- [Agent Development Guide] -- narrative walkthrough of the build / publish / run flow; useful for first-time agent authors as a companion to this recipe
+- [Agent Development Guide] -- narrative walkthrough of the build / publish / run flow; useful for first-time agent authors as a companion to `GETSTARTED.md`
 
 [Agent Card Schema]: https://config.blocks.ai/references/agent-card.schema.json
 [Agent Card Reference]: https://config.blocks.ai/references/agent-card-reference.md

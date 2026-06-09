@@ -17,6 +17,8 @@ export interface AgentListEntry {
   description?: string;
   listing?: string;
   billingMode?: string;
+  /** Provider (publishing organization) name, as returned by the backend. */
+  orgName?: string;
   tags?: Array<{ id: string; name: string }>;
 }
 
@@ -25,6 +27,12 @@ export interface ListAgentsOptions {
   apiKey?: string;
   /** Free-text search query (`q`); matches agent name, description, tags, etc. */
   q?: string;
+  /**
+   * Filter to agents published by a provider whose organization name matches
+   * this value (case-insensitive substring). Composed into the `q` parameter
+   * as a `provider:"…"` qualifier, so it combines (AND) with any `q` text.
+   */
+  provider?: string;
   tag?: string;
   listing?: 'public' | 'private';
   /** Page size for a single request. The backend caps this at 100. */
@@ -46,6 +54,28 @@ export interface ListAgentsResult {
 /** Backend maximum page size for GET /api/v1/registry/agents. */
 export const REGISTRY_PAGE_SIZE = 100;
 
+/**
+ * Combine the free-text query with a provider-name filter into a single `q`
+ * value the registry's search parser understands.
+ *
+ * The backend exposes provider-by-name only through the `provider:` search
+ * qualifier (matched as a case-insensitive substring of the organization
+ * name); the structured `provider` query param takes org UUIDs instead, which
+ * an MCP caller doesn't have. We always quote the value so names containing
+ * spaces survive the tokenizer, and strip embedded quotes so a stray `"`
+ * can't unbalance the qualifier.
+ */
+export function composeSearchQuery(
+  q: string | undefined,
+  provider: string | undefined,
+): string | undefined {
+  const trimmedProvider = provider?.trim();
+  if (!trimmedProvider) return q;
+  const quoted = `provider:"${trimmedProvider.replace(/"/g, '')}"`;
+  const trimmedQ = q?.trim();
+  return trimmedQ ? `${trimmedQ} ${quoted}` : quoted;
+}
+
 /** Safety backstop so a misbehaving (never-null) cursor can't loop forever. */
 const MAX_PAGES = 1000;
 
@@ -53,7 +83,8 @@ export async function listAgentsAuthenticated(
   opts: ListAgentsOptions,
 ): Promise<ListAgentsResult> {
   const params = new URLSearchParams({ include: 'full' });
-  if (opts.q) params.set('q', opts.q);
+  const q = composeSearchQuery(opts.q, opts.provider);
+  if (q) params.set('q', q);
   if (opts.tag) params.set('tag', opts.tag);
   if (opts.listing) {
     params.set('listing', opts.listing);

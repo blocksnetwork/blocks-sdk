@@ -194,9 +194,15 @@ server.tool(
 
 server.tool(
   'list_agents',
-  'List available agents in the Blocks Network registry. By default only agents with at least one online instance are returned; set includeOffline=true to also list registered agents that are currently offline. Use listing="private" with an API key to discover your private agents.',
+  'List available agents in the Blocks Network registry. To find every agent published by a particular provider/organization (e.g. "all agents from Hamilton"), use this tool with the `provider` parameter — it is the correct tool for provider-scoped browsing and needs no search query. By default only agents with at least one online instance are returned; set includeOffline=true to also list registered agents that are currently offline. Use listing="private" with an API key to discover your private agents.',
   {
     tag: z.string().optional().describe('Filter by tag slug'),
+    provider: z
+      .string()
+      .optional()
+      .describe(
+        'Filter to agents published by this provider (the publishing organization\'s name), matched case-insensitively as a substring (e.g. "hamilton" matches "Hamilton Labs"). This is the reliable way to scope results to a provider — prefer it over typing the provider name into a free-text query, which only fuzzy-matches names/descriptions.',
+      ),
     listing: z
       .enum(['public', 'private'])
       .optional()
@@ -215,9 +221,20 @@ server.tool(
 
 server.tool(
   'search_agent',
-  'Search the Blocks Network registry for agents matching a free-text query. The query matches against agent name, display name, description, tags, provider, and category, and supports field qualifiers (e.g. "agentname:translate", tag:"data"), quoted phrases, and negation ("-deprecated"). By default only agents with at least one online instance are returned; set includeOffline=true to also include matching agents that are currently offline. Use listing="private" with an API key to search your private agents.',
+  'Search the Blocks Network registry for agents matching a free-text query. The query matches against agent name, display name, description, tags, provider, and category, and supports field qualifiers (e.g. "agentname:translate", tag:"data"), quoted phrases, and negation ("-deprecated"). To restrict results to a specific provider/organization, set the `provider` parameter rather than putting the provider name in the query; `query` is optional, so you can search by `provider` and/or `tag` alone (e.g. provider="Hamilton" with no query returns every Hamilton agent). At least one of `query`, `provider`, or `tag` must be supplied. By default only agents with at least one online instance are returned; set includeOffline=true to also include matching agents that are currently offline. Use listing="private" with an API key to search your private agents.',
   {
-    query: z.string().describe('Free-text search query'),
+    query: z
+      .string()
+      .optional()
+      .describe(
+        'Free-text search query. Optional, but at least one of `query`, `provider`, or `tag` must be given. Omit it to browse a provider or tag with no search terms (e.g. provider="Hamilton" alone returns every Hamilton agent).',
+      ),
+    provider: z
+      .string()
+      .optional()
+      .describe(
+        'Restrict matches to agents published by this provider (the publishing organization\'s name), matched case-insensitively as a substring (e.g. "hamilton" matches "Hamilton Labs"). Use this parameter to scope by provider instead of typing the provider name into `query`, which only fuzzy-matches names/descriptions and is unreliable.',
+      ),
     tag: z.string().optional().describe('Additionally filter by tag slug'),
     listing: z
       .enum(['public', 'private'])

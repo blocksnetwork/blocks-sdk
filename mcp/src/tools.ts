@@ -126,6 +126,8 @@ export interface ToolDeps {
     apiKey?: string;
     /** Free-text search query (`q`); matches agent name, description, tags, etc. */
     q?: string;
+    /** Filter to agents whose provider (organization) name matches (substring). */
+    provider?: string;
     tag?: string;
     listing?: 'public' | 'private';
     /** Optional cap on the total number of agents to fetch across all pages. */
@@ -228,6 +230,8 @@ export interface CancelTaskParams {
 
 export interface ListAgentsParams {
   tag?: string;
+  /** Filter to agents whose provider (organization) name matches (substring, case-insensitive). */
+  provider?: string;
   listing?: 'public' | 'private';
   limit?: number;
   /**
@@ -240,8 +244,14 @@ export interface ListAgentsParams {
 }
 
 export interface SearchAgentsParams {
-  /** Free-text search query; matches agent name, description, tags, etc. */
-  query: string;
+  /**
+   * Free-text search query; matches agent name, description, tags, etc.
+   * Optional, but at least one of `query`, `provider`, or `tag` must be
+   * supplied — a search with no constraints at all is rejected.
+   */
+  query?: string;
+  /** Filter to agents whose provider (organization) name matches (substring, case-insensitive). */
+  provider?: string;
   tag?: string;
   listing?: 'public' | 'private';
   limit?: number;
@@ -438,6 +448,7 @@ export async function listAgents(
   const result = await deps.listAgents({
     baseUrl,
     apiKey,
+    provider: params.provider,
     tag: params.tag,
     listing: params.listing,
     maxAgents: params.limit,
@@ -469,10 +480,22 @@ export async function searchAgents(
   params: SearchAgentsParams,
   deps: ToolDeps,
 ): Promise<ToolResult> {
-  const query = params.query.trim();
-  if (!query) {
+  const query = params.query?.trim();
+  const provider = params.provider?.trim();
+  const tag = params.tag?.trim();
+
+  // A search needs at least one constraint. Provider- or tag-only searches are
+  // valid (e.g. "every agent from Hamilton"); only a completely empty request
+  // is rejected, since that's just an unfiltered list and should use
+  // list_agents instead.
+  if (!query && !provider && !tag) {
     return {
-      content: [{ type: 'text', text: 'Search query must not be empty.' }],
+      content: [
+        {
+          type: 'text',
+          text: 'Provide at least one of `query`, `provider`, or `tag` to search. To list every agent without a filter, use list_agents.',
+        },
+      ],
       isError: true,
     };
   }
@@ -483,31 +506,55 @@ export async function searchAgents(
     baseUrl,
     apiKey,
     q: query,
-    tag: params.tag,
+    provider,
+    tag,
     listing: params.listing,
     maxAgents: params.limit,
   });
 
   const total = result.totalCount ?? result.agents.length;
 
+  // Describe whatever constraints were actually applied so the header reflects
+  // a provider/tag-only search as accurately as a free-text one.
+  const criteria = describeSearchCriteria(query, provider, tag);
+
   // Mirror list_agents: default to online-only so we never surface agents
   // that can't actually take a task; `includeOffline` opts back into the
   // full set of matches.
   if (params.includeOffline) {
     const lines = result.agents.map(formatAgentRow);
-    const header = `Agents matching "${query}" (${result.agents.length} of ${total} total):`;
+    const header = `Agents ${criteria} (${result.agents.length} of ${total} total):`;
     return { content: [{ type: 'text', text: [header, ...lines].join('\n') }] };
   }
 
   const online = await filterOnlineAgents(result.agents, { baseUrl, apiKey }, deps);
   const lines = online.map(formatAgentRow);
-  const header = `Agents matching "${query}" (${online.length} online of ${total} total):`;
+  const header = `Agents ${criteria} (${online.length} online of ${total} total):`;
   return { content: [{ type: 'text', text: [header, ...lines].join('\n') }] };
 }
 
 function formatAgentRow(a: ListAgentsResult['agents'][number]): string {
   const tags = a.tags?.map((t) => t.name).join(', ') ?? '';
-  return `${a.agentName} | ${a.name ?? a.agentName} | ${a.listing ?? 'public'} | ${tags}`;
+  const provider = a.orgName ?? '';
+  return `${a.agentName} | ${a.name ?? a.agentName} | ${provider} | ${a.listing ?? 'public'} | ${tags}`;
+}
+
+/**
+ * Build the result-header phrase from whichever search constraints were
+ * applied, e.g. `matching "trans"`, `from provider "Hamilton"`, or
+ * `matching "trans" from provider "Hamilton" with tag "data"`. At least one
+ * constraint is always present (the handler rejects an empty search).
+ */
+function describeSearchCriteria(
+  query: string | undefined,
+  provider: string | undefined,
+  tag: string | undefined,
+): string {
+  const parts: string[] = [];
+  if (query) parts.push(`matching "${query}"`);
+  if (provider) parts.push(`from provider "${provider}"`);
+  if (tag) parts.push(`with tag "${tag}"`);
+  return parts.join(' ');
 }
 
 /**

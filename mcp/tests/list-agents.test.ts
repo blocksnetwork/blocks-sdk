@@ -21,6 +21,7 @@ describe('list_agents', () => {
             agentName: 'alice',
             name: 'Alice',
             listing: 'public',
+            orgName: 'Hamilton Labs',
             tags: [
               { id: 'translate', name: 'Translate' },
               { id: 'summarize', name: 'Summarize' },
@@ -35,10 +36,11 @@ describe('list_agents', () => {
 
     const res = await listAgents({}, deps);
     const lines = res.content[0].text.split('\n');
+    // Row format: agentName | displayName | provider | listing | tags
     expect(lines).toEqual([
       'Agents (2 online of 2 total):',
-      'alice | Alice | public | Translate, Summarize',
-      'bob | bob | private | ',
+      'alice | Alice | Hamilton Labs | public | Translate, Summarize',
+      'bob | bob |  | private | ',
     ]);
   });
 
@@ -62,6 +64,16 @@ describe('list_agents', () => {
     });
   });
 
+  it('forwards the provider filter to the registry helper', async () => {
+    const { deps, mocks } = makeFakeDeps();
+
+    await listAgents({ provider: 'Acme Corp' }, deps);
+
+    expect(mocks.listAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'Acme Corp' }),
+    );
+  });
+
   it('defaults to "public" for missing listing and uses agentName when name is absent', async () => {
     const { deps } = makeFakeDeps({
       listAgentsResult: {
@@ -72,7 +84,7 @@ describe('list_agents', () => {
     });
 
     const res = await listAgents({}, deps);
-    expect(res.content[0].text).toContain('naked | naked | public |');
+    expect(res.content[0].text).toContain('naked | naked |  | public |');
   });
 
   it('uses the online agent count for the header, falling back to length for total', async () => {
@@ -124,7 +136,7 @@ describe('list_agents', () => {
     const lines = res.content[0].text.split('\n');
     expect(lines).toEqual([
       'Agents (1 online of 2 total):',
-      'online | Online | public | ',
+      'online | Online |  | public | ',
     ]);
     expect(mocks.fetchAgentStatus).toHaveBeenCalledWith({
       baseUrl: 'http://api.test',
@@ -165,7 +177,7 @@ describe('list_agents', () => {
     const lines = res.content[0].text.split('\n');
     expect(lines).toEqual([
       'Agents (1 online of 2 total):',
-      'valid_name | valid_name | public | ',
+      'valid_name | valid_name |  | public | ',
     ]);
   });
 });
