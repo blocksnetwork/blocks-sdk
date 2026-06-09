@@ -6,6 +6,9 @@
   "skills": {
     "blocks-network": {
       "path": "SKILL.md"
+    },
+    "blocks-getstarted": {
+      "path": "GETSTARTED.md"
     }
   }
 }

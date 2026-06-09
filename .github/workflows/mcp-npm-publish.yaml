@@ -33,16 +33,36 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Stamp version from tag
+      # Lockstep: the MCP server must build and test against the Node SDK
+      # being released in this same run, not the older version mcp's lockfile
+      # pins. Stamp sdks/node to the shared version, build + pack it exactly as
+      # node-npm-publish.yaml does, then install that tarball over mcp's
+      # npm-resolved copy with --no-save so mcp/package.json keeps its caret
+      # range for end users. Race-free: no dependency on the SDK tarball being
+      # live on npm yet.
+      - name: Build + pack the sibling Node SDK at the release version
+        run: |
+          npm ci
+          npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version --workspace sdks/node
+          npm run build:release --workspace sdks/node
+          npm pack --workspace sdks/node --pack-destination "$RUNNER_TEMP"
+
+      - name: Stamp MCP version from tag
         run: npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version
         working-directory: mcp
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install MCP deps and overlay the freshly built SDK
+        run: |
+          npm ci
+          npm install --no-save "$RUNNER_TEMP/blocks-network-sdk-${{ steps.tag.outputs.version }}.tgz"
         working-directory: mcp
 
       - name: Build package
         run: npm run build
+        working-directory: mcp
+
+      - name: Run tests
+        run: npm test
         working-directory: mcp
 
       - name: Publish to npm

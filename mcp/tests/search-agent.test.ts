@@ -34,6 +34,16 @@ describe('search_agent', () => {
     });
   });
 
+  it('forwards the provider filter to the registry helper', async () => {
+    const { deps, mocks } = makeFakeDeps();
+
+    await searchAgents({ query: 'translate', provider: 'Acme Corp' }, deps);
+
+    expect(mocks.listAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ q: 'translate', provider: 'Acme Corp' }),
+    );
+  });
+
   it('renders matching agents with the query in the header', async () => {
     const { deps } = makeFakeDeps({
       listAgentsResult: {
@@ -42,6 +52,7 @@ describe('search_agent', () => {
             agentName: 'alice',
             name: 'Alice',
             listing: 'public',
+            orgName: 'Hamilton Labs',
             tags: [{ id: 'translate', name: 'Translate' }],
           },
         ],
@@ -52,9 +63,10 @@ describe('search_agent', () => {
 
     const res = await searchAgents({ query: 'trans' }, deps);
     const lines = res.content[0].text.split('\n');
+    // Row format: agentName | displayName | provider | listing | tags
     expect(lines).toEqual([
       'Agents matching "trans" (1 online of 1 total):',
-      'alice | Alice | public | Translate',
+      'alice | Alice | Hamilton Labs | public | Translate',
     ]);
   });
 
@@ -68,13 +80,63 @@ describe('search_agent', () => {
     );
   });
 
-  it('rejects an empty (or whitespace-only) query without calling the registry', async () => {
+  it('rejects a search with no query, provider, or tag without calling the registry', async () => {
     const { deps, mocks } = makeFakeDeps();
 
     const res = await searchAgents({ query: '   ' }, deps);
     expect(res.isError).toBe(true);
-    expect(res.content[0].text).toContain('must not be empty');
+    expect(res.content[0].text).toContain('at least one of');
     expect(mocks.listAgents).not.toHaveBeenCalled();
+  });
+
+  it('allows a provider-only search with no query', async () => {
+    const { deps, mocks } = makeFakeDeps({
+      listAgentsResult: {
+        agents: [{ agentName: 'alice', name: 'Alice', listing: 'public' }],
+        totalCount: 1,
+      },
+      agentStatusResult: allOnline('alice'),
+    });
+
+    const res = await searchAgents({ provider: 'Hamilton' }, deps);
+
+    expect(res.isError).toBeUndefined();
+    expect(mocks.listAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ q: undefined, provider: 'Hamilton' }),
+    );
+    expect(res.content[0].text.split('\n')[0]).toBe(
+      'Agents from provider "Hamilton" (1 online of 1 total):',
+    );
+  });
+
+  it('allows a tag-only search with no query', async () => {
+    const { deps, mocks } = makeFakeDeps({
+      listAgentsResult: { agents: [], totalCount: 0 },
+    });
+
+    const res = await searchAgents({ tag: 'data' }, deps);
+
+    expect(res.isError).toBeUndefined();
+    expect(mocks.listAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ tag: 'data' }),
+    );
+    expect(res.content[0].text.split('\n')[0]).toBe(
+      'Agents with tag "data" (0 online of 0 total):',
+    );
+  });
+
+  it('combines query, provider, and tag in the header', async () => {
+    const { deps } = makeFakeDeps({
+      listAgentsResult: { agents: [], totalCount: 0 },
+    });
+
+    const res = await searchAgents(
+      { query: 'trans', provider: 'Hamilton', tag: 'data' },
+      deps,
+    );
+    expect(res.content[0].text.split('\n')[0]).toBe(
+      'Agents matching "trans" from provider "Hamilton" with tag "data" (0 online of 0 total):',
+    );
   });
 
   it('drops offline matches by default, keeping only online ones', async () => {
@@ -98,7 +160,7 @@ describe('search_agent', () => {
     const lines = res.content[0].text.split('\n');
     expect(lines).toEqual([
       'Agents matching "foo" (1 online of 2 total):',
-      'online | Online | public | ',
+      'online | Online |  | public | ',
     ]);
   });
 
