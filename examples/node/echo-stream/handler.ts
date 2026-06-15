@@ -21,7 +21,11 @@ export default async function handler(
 ): Promise<HandlerResult> {
   const fullText = extractInputText(task.requestParts);
 
-  if (ctx) {
+  // Streaming is negotiated per task: the agent must be stream-capable AND,
+  // for request tasks, the consumer must opt in (extensions.blocks.stream).
+  // When hasStream is false, createStream() would throw — so guard on it and
+  // degrade gracefully to returning only the final artifact.
+  if (ctx?.hasStream) {
     ctx.reportStatus('Streaming echo output...');
     // createStream negotiates a dedicated channel for streaming via the streamSetup handshake
     const stream = await ctx.createStream({

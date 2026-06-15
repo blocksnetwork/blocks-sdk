@@ -129,6 +129,15 @@ export interface SendMessageParams {
   duration?: number;
   /** Consumer's public key for E2E encryption. Included in extensions.blocks. */
   consumerPublicKey?: string;
+  /**
+   * Request live streaming for this task (request tasks only). When `true`,
+   * the task streams token output if the agent supports it; when `false`,
+   * streaming is suppressed and you receive only status updates and the
+   * final result. Omitted leaves the server default in place. Ignored for
+   * pipe tasks (pipe streaming is capability-driven). Sent as
+   * `extensions.blocks.stream`.
+   */
+  stream?: boolean;
   pushNotificationConfig?: {
     url: string;
     filter?: string;
@@ -962,6 +971,7 @@ export class TaskClient {
     if (taskKind) blocksExt.taskKind = taskKind;
     if (duration !== undefined && duration !== null) blocksExt.duration = duration;
     if (params.consumerPublicKey) blocksExt.consumerPublicKey = params.consumerPublicKey;
+    if (params.stream !== undefined) blocksExt.stream = params.stream;
 
     if (Object.keys(blocksExt).length > 0) {
       rpcParams.extensions = { blocks: blocksExt };

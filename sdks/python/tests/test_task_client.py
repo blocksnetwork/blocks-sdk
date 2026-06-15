@@ -575,6 +575,75 @@ class TestSendMessage:
 
         session.close()
 
+    @patch("blocks_network.task_client.TaskClient._create_session_pubnub")
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_includes_stream_true(self, mock_urlopen, mock_create_pn):
+        mock_urlopen.return_value = _mock_urlopen_response(
+            self._full_response(taskId="stream-on")
+        )
+        fake = create_fake_pubnub()
+        mock_create_pn.return_value = fake["pubnub"]
+
+        client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
+        session = client.send_message(
+            agent_name="agent-b",
+            request_parts=[],
+            owner_id="test-user",
+            stream=True,
+        )
+
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["params"]["extensions"] == {"blocks": {"stream": True}}
+
+        session.close()
+
+    @patch("blocks_network.task_client.TaskClient._create_session_pubnub")
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_includes_stream_false(self, mock_urlopen, mock_create_pn):
+        mock_urlopen.return_value = _mock_urlopen_response(
+            self._full_response(taskId="stream-off")
+        )
+        fake = create_fake_pubnub()
+        mock_create_pn.return_value = fake["pubnub"]
+
+        client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
+        session = client.send_message(
+            agent_name="agent-b",
+            request_parts=[],
+            owner_id="test-user",
+            stream=False,
+        )
+
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["params"]["extensions"] == {"blocks": {"stream": False}}
+
+        session.close()
+
+    @patch("blocks_network.task_client.TaskClient._create_session_pubnub")
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_omits_stream_when_not_supplied(self, mock_urlopen, mock_create_pn):
+        mock_urlopen.return_value = _mock_urlopen_response(
+            self._full_response(taskId="stream-omit")
+        )
+        fake = create_fake_pubnub()
+        mock_create_pn.return_value = fake["pubnub"]
+
+        client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")
+        session = client.send_message(
+            agent_name="agent-b",
+            request_parts=[],
+            owner_id="test-user",
+        )
+
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode("utf-8"))
+        # No blocks fields set → no extensions object at all.
+        assert "extensions" not in body["params"]
+
+        session.close()
+
     @patch("blocks_network.rpc_client.urllib.request.urlopen")
     def test_rejects_pipe_without_duration(self, mock_urlopen):
         client = TaskClient(subscribe_key="sub-c-test", billing_mode="free", base_url="http://localhost:3001")

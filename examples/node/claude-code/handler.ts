@@ -357,7 +357,10 @@ async function runClaudeSession(
   bashSafetyEnabled: boolean,
   requestModel: string | null,
 ): Promise<HandlerResult> {
-  const stream = await ctx?.createStream();
+  // Stream only when negotiated (request streaming is consumer opt-in,
+  // BLOCKS-181); otherwise createStream() would throw. The code below already
+  // treats stream as optional (stream?.write / stream?.end).
+  const stream = ctx?.hasStream ? await ctx.createStream() : undefined;
 
   try {
     let currentSessionId = sessionId;

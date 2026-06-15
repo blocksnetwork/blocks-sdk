@@ -587,6 +587,15 @@ client.destroy();
 - `billingMode` is **required** and must match the target agent's
   registered `billingMode`. Mismatch is rejected with
   `BillingModeMismatchError`.
+- `sendMessage({ stream })` / `send_message(stream=)` is an optional
+  request-task streaming opt-in (BLOCKS-181): `true` requests live token
+  output, `false` suppresses it (status + final result only), omitted
+  leaves the server default. Resolved streaming still requires agent
+  capability, so `stream: true` against a non-streaming agent yields no
+  stream (soft hint, no error). Ignored for pipe tasks (pipe streaming is
+  capability-driven). A future Phase 2 will flip the omitted-flag default
+  from stream-if-capable to off, so pass `stream: true` explicitly if you
+  rely on streaming.
 - Always `client.destroy()` (and `session.close()` / `await
   session.asyncClose()`) when finished -- they unsubscribe transports.
 - If background token refresh permanently fails (3 retries exhausted),
@@ -753,7 +762,7 @@ is already terminal (live-only data is gone; artifacts persist).
 | `agentName` rejected | Must match `^[a-zA-Z0-9_]+$` -- underscores only, no hyphens. |
 | Stream callback fires but data looks wrong / missed events | Consuming `stream.inbound` instead of `stream.events()` / `stream.bytes()`. |
 | `StreamUnavailableError` on `ref.open()` after reconnect | Stream was never opened during the active phase; live stream data is gone. Artifacts remain on the session. |
-| `"Streaming was not negotiated for this task."` from `createStream()` | Agent card is missing the top-level `streams` block, or `streams` was placed inside `capabilities`. Re-publish after fixing. |
+| `"Streaming was not negotiated for this task."` from `createStream()` | `hasStream` is false. Either the agent card is missing the top-level `streams` block (or it was placed inside `capabilities`) — re-publish after fixing — or, for a request task, the consumer didn't opt in via `extensions.blocks.stream` (BLOCKS-181). Guard handler code on `ctx.hasStream` / `ctx.has_stream` so it degrades to an artifact-only response instead of throwing. |
 | `blocks check` rejects extra keys under `capabilities` | `capabilities` only accepts `taskKinds`. Streaming config goes in the top-level `streams` block. |
 | `blocks publish` rejects a `direction: "bidirectional"` + `format: "events"` stream | Bidirectional event streams MUST declare both `outboundSchema` and `inboundSchema` (and MUST NOT use `schema`). Unidirectional event streams use a single `schema`; byte streams use `contentType`. See [Streaming Agents](#streaming-agents). |
 | `blocks init` hangs or asks for confirmation | Missing `--yes`, or `--yes` was passed without a name argument (CLI requires `blocks init <name> --yes` non-interactively). Always include both. |

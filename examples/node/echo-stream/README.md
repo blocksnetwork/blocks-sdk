@@ -43,6 +43,9 @@ prints the final artifact.
 
 ### Provider side (handler.ts)
 
+- Guarding on `ctx.hasStream` before streaming — request streaming is
+  consumer opt-in (BLOCKS-181), so the handler degrades to an
+  artifact-only response when the consumer didn't opt in
 - `ctx.createStream()` to open an outbound stream
 - `stream.write()` for incremental chunk delivery
 - `await stream.end()` to signal `stream_end` to consumers
@@ -50,7 +53,8 @@ prints the final artifact.
 
 ### Consumer side (echo-stream-consumer.ts)
 
-- `TaskClient.sendMessage()` returning a `TaskSession`
+- `TaskClient.sendMessage({ stream: true })` — opting into request-task
+  streaming — returning a `TaskSession`
 - `session.onStream()` callback for stream discovery
 - `streamRef.open()` to get a `StreamClient`
 - `for await (const ev of stream.events<EchoEvent>())` async iteration (decoded events)
@@ -58,7 +62,12 @@ prints the final artifact.
 
 ## Stream lifecycle
 
-1. The handler calls `ctx.createStream()` to create an outbound stream.
+0. The consumer submits with `stream: true`, opting into request-task
+   streaming. Without it (and once the Phase 2 default flips off), the
+   handler's `hasStream` is false and steps 1–4 are skipped — only the
+   final artifact (step 5) is delivered.
+1. The handler sees `ctx.hasStream === true` and calls `ctx.createStream()`
+   to create an outbound stream.
 2. The consumer receives a `stream_started` event via `session.onStream()`.
 3. The consumer opens the stream with `streamRef.open()` and iterates
    over `stream.events<T>()` (decoded events). `stream.inbound` is the

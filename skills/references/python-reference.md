@@ -81,9 +81,11 @@ The `ctx` parameter provides handler APIs:
 ## Streaming Handler
 
 <!-- sync: streaming rules duplicated in SKILL.md, agent-card-reference.md, node-reference.md -->
-**Requires** a top-level `streams` block in `agent-card.json`. Without it
-`ctx.create_stream()` throws:
-`"Streaming was not negotiated for this task."`
+**Requires** a top-level `streams` block in `agent-card.json`. `ctx.create_stream()`
+raises `"Streaming was not negotiated for this task."` whenever `ctx.has_stream`
+is false — either the card lacks `streams`, or (for request tasks) the consumer
+didn't opt in via `extensions.blocks.stream` (BLOCKS-181). Guard on
+`ctx.has_stream` before calling it.
 
 Add this to `agent-card.json` (peer of `identity`, `capabilities`, `io`):
 
@@ -130,7 +132,9 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     parts = task.request_parts or []
     text = parts[0].text if parts and hasattr(parts[0], "text") else "Hello!"
 
-    if ctx:
+    # Guard on has_stream — request-task streaming is consumer opt-in
+    # (BLOCKS-181), so create_stream() raises when the consumer didn't opt in.
+    if ctx and ctx.has_stream:
         ctx.report_status("Streaming...")
         stream = ctx.create_stream(
             declared_stream="main-stream",
@@ -194,7 +198,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 ## TaskClient & TaskSession
 
-**send_message(\*, agent_name, request_parts, ...)** -- all keyword-only. `owner_id` is auto-populated from auth (optional override). Optional: `idempotency_key`, `task_kind` (`"request"`|`"pipe"`), `duration`, `consumer_public_key`, `push_notification_config`, `retry_policy`, `auto_drain`, `drain_window_s` (default 30.0; overrides the per-session auto-drain window for already-open streams). Returns `TaskSession`.
+**send_message(\*, agent_name, request_parts, ...)** -- all keyword-only. `owner_id` is auto-populated from auth (optional override). Optional: `idempotency_key`, `task_kind` (`"request"`|`"pipe"`), `duration`, `consumer_public_key`, `stream` (request-task streaming opt-in — `True` requests streaming, `False` suppresses it; omitted uses the server default; ignored for pipe; resolved `has_stream` still requires agent capability), `push_notification_config`, `retry_policy`, `auto_drain`, `drain_window_s` (default 30.0; overrides the per-session auto-drain window for already-open streams). Returns `TaskSession`.
 
 **TaskClient.connect(task_id, auto_drain=True, drain_window_s=None, role="consumer")** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`. `role` defaults to `"consumer"` (task submitter — server checks `user_id == task.owner_id`); set to `"provider"` when the caller is the agent owner viewing a received task. Provider-role access is scoped by the caller's active org: the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org. Admins with an admin-typed active org get the cross-org bypass; when no active org is resolved at all (legacy callers), the server falls back to admin-bypass / non-admin membership check on the agent's org.
 
