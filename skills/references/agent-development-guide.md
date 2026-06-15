@@ -457,7 +457,10 @@ export default async function handler(
   const input = task.requestParts?.[0];
   const text = typeof input === 'string' ? input : 'Hello from streaming agent!';
 
-  if (ctx) {
+  // Guard on hasStream: request-task streaming is consumer opt-in
+  // (BLOCKS-181), so createStream() throws when the consumer didn't opt in.
+  // Degrade to an artifact-only response in that case.
+  if (ctx?.hasStream) {
     ctx.reportStatus('Streaming...');
     const stream = await ctx.createStream({
       declaredStream: 'main-stream',

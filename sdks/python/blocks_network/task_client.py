@@ -99,6 +99,12 @@ class SendMessageParams:
     task_kind: Optional[str] = None
     duration: Optional[int] = None
     consumer_public_key: Optional[str] = None
+    # Request live streaming for this task (request tasks only). ``True``
+    # streams token output if the agent supports it; ``False`` suppresses
+    # streaming (status updates + final result only); ``None`` leaves the
+    # server default in place. Ignored for pipe tasks. Sent as
+    # ``extensions.blocks.stream``.
+    stream: Optional[bool] = None
     push_notification_config: Optional[Dict[str, Any]] = None
     retry_policy: Optional[Dict[str, Any]] = None
     auto_drain: Optional[bool] = None
@@ -882,6 +888,7 @@ class TaskClient:
         task_kind: Optional[str] = None,
         duration: Optional[int] = None,
         consumer_public_key: Optional[str] = None,
+        stream: Optional[bool] = None,
         push_notification_config: Optional[Dict[str, Any]] = None,
         retry_policy: Optional[Dict[str, Any]] = None,
         auto_drain: Optional[bool] = None,
@@ -925,6 +932,7 @@ class TaskClient:
             task_kind=task_kind,
             duration=duration,
             consumer_public_key=consumer_public_key,
+            stream=stream,
             push_notification_config=push_notification_config,
             retry_policy=retry_policy,
             auto_drain=auto_drain,
@@ -1046,8 +1054,10 @@ class TaskClient:
         if upload_session_id:
             rpc_params["uploadSessionId"] = upload_session_id
 
-        # Build extensions.blocks with task_kind, duration, and consumer_public_key
+        # Build extensions.blocks with stream, task_kind, duration, and consumer_public_key
         blocks_ext: Dict[str, Any] = {}
+        if params.stream is not None:
+            blocks_ext["stream"] = params.stream
         if task_kind:
             blocks_ext["taskKind"] = task_kind
         if duration is not None:

@@ -107,8 +107,12 @@ required on each stream.
 }
 ```
 
-Without the `streams` block, `ctx.createStream()` throws at runtime:
-`"Streaming was not negotiated for this task."`
+`ctx.createStream()` throws `"Streaming was not negotiated for this task."`
+at runtime whenever `hasStream` is false — either the card lacks the `streams`
+block, or (for request tasks) the consumer did not opt in via
+`extensions.blocks.stream` (BLOCKS-181; in Phase 1 an omitted flag still
+defaults on, in Phase 2 it defaults off). Guard handler code on
+`ctx.hasStream` / `ctx.has_stream` before calling it.
 
 ### Full Streaming Agent Card Example
 

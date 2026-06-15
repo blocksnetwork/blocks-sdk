@@ -505,6 +505,60 @@ describe('TaskClient', () => {
       session.close();
     });
 
+    it('includes extensions.blocks.stream: true when stream is true', async () => {
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse(fullResponse({ taskId: 'stream-on' })));
+
+      const client = new TaskClient({ billingMode: 'free', subscribeKey: 'sub-c-test', baseUrl: 'http://localhost:3001' });
+
+      const session = await client.sendMessage({
+        agentName: 'agent-b',
+        requestParts: [],
+        ownerId: 'test-user',
+        stream: true,
+      });
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+      expect(body.params.extensions).toEqual({ blocks: { stream: true } });
+
+      session.close();
+    });
+
+    it('includes extensions.blocks.stream: false when stream is false', async () => {
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse(fullResponse({ taskId: 'stream-off' })));
+
+      const client = new TaskClient({ billingMode: 'free', subscribeKey: 'sub-c-test', baseUrl: 'http://localhost:3001' });
+
+      const session = await client.sendMessage({
+        agentName: 'agent-b',
+        requestParts: [],
+        ownerId: 'test-user',
+        stream: false,
+      });
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+      expect(body.params.extensions).toEqual({ blocks: { stream: false } });
+
+      session.close();
+    });
+
+    it('omits extensions.blocks.stream when stream is not supplied', async () => {
+      fetchSpy.mockResolvedValueOnce(mockRpcResponse(fullResponse({ taskId: 'stream-omit' })));
+
+      const client = new TaskClient({ billingMode: 'free', subscribeKey: 'sub-c-test', baseUrl: 'http://localhost:3001' });
+
+      const session = await client.sendMessage({
+        agentName: 'agent-b',
+        requestParts: [],
+        ownerId: 'test-user',
+      });
+
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+      // No extensions object at all when no blocks fields are set.
+      expect(body.params.extensions).toBeUndefined();
+
+      session.close();
+    });
+
     it('rejects pipe tasks without duration before sending RPC', async () => {
       const client = new TaskClient({ billingMode: 'free', subscribeKey: 'sub-c-test', baseUrl: 'http://localhost:3001' });
 

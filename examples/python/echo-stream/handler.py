@@ -20,7 +20,11 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     """Handle an incoming task by streaming the echo before returning artifact."""
     full_text = _extract_input_text(task.request_parts or [])
 
-    if ctx:
+    # Streaming is negotiated per task: the agent must be stream-capable AND,
+    # for request tasks, the consumer must opt in (extensions.blocks.stream).
+    # When has_stream is False, create_stream() would raise — so guard on it
+    # and degrade gracefully to returning only the final artifact.
+    if ctx and ctx.has_stream:
         ctx.report_status("Streaming echo output...")
         # create_stream negotiates a dedicated channel for streaming via the streamSetup handshake
         stream = ctx.create_stream(

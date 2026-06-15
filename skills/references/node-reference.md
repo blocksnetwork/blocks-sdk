@@ -88,7 +88,9 @@ export default async function handler(
   const input = task.requestParts?.[0];
   const text = typeof input === 'string' ? input : 'Hello from streaming agent!';
 
-  if (ctx) {
+  // Guard on hasStream — request-task streaming is consumer opt-in
+  // (BLOCKS-181), so createStream() throws when the consumer didn't opt in.
+  if (ctx?.hasStream) {
     ctx.reportStatus('Streaming...');
     const stream = await ctx.createStream({
       declaredStream: 'main-stream',
@@ -138,8 +140,11 @@ export default async function handler(
 `agent-card.json` -- NOT inside `capabilities`. The `capabilities` object only
 accepts `taskKinds` and rejects all other fields (`additionalProperties: false`).
 
-Without the `streams` declaration, `ctx.createStream()` will throw:
-`"Streaming was not negotiated for this task."`
+`ctx.createStream()` throws `"Streaming was not negotiated for this task."`
+whenever `ctx.hasStream` is false — either the card lacks the `streams`
+declaration, or (for request tasks) the consumer didn't opt in via
+`extensions.blocks.stream` (BLOCKS-181). Guard on `ctx.hasStream` before
+calling it.
 
 ### agent-card.json (streams section)
 
@@ -255,7 +260,7 @@ client.destroy();
 
 ## TaskClient & TaskSession
 
-**sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
+**sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `stream` (request-task streaming opt-in — `true` requests streaming, `false` suppresses it; omitted uses the server default; ignored for pipe; resolved `hasStream` still requires agent capability), `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
 
 **TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId`); set to `'provider'` when the caller is the agent owner viewing a received task. Provider-role access is scoped by the caller's active org: the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org. Admins with an admin-typed active org get the cross-org bypass; when no active org is resolved at all (legacy callers), the server falls back to admin-bypass / non-admin membership check on the agent's org.
 

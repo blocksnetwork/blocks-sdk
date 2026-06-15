@@ -54,6 +54,9 @@ async function main() {
   const session = await client.sendMessage({
     agentName: AGENT_NAME,
     requestParts: [{ partId: 'text', text: inputText }],
+    // Request-task streaming is consumer opt-in (BLOCKS-181). Pass stream: true
+    // so this stays forward-compatible once the omitted-flag default flips off.
+    stream: true,
   });
 
   console.log(`Task created: ${session.taskId}`);

@@ -35,6 +35,13 @@ class MockPubNub:
         self._listener = None
         self._subscribed_channels: List[str] = []
         self.publish_calls: List[Dict[str, Any]] = []
+        # Real PubNub stamps each message with a unique timetoken, which
+        # TaskSession uses to dedup replays. Hand out a distinct one per message:
+        # leaving it unset makes the listener stringify an auto-vivified MagicMock
+        # whose repr embeds id(obj), and a GC'd mock's address can be reused — so
+        # two distinct messages collide and the second is silently dropped (a
+        # flaky, GC/interpreter-version-dependent failure).
+        self._next_timetoken = 17_000_000_000_000_000
 
     def add_listener(self, listener):
         self._listener = listener
@@ -56,9 +63,11 @@ class MockPubNub:
 
     def simulate_message(self, channel: str, message: dict):
         if self._listener and hasattr(self._listener, "message"):
+            self._next_timetoken += 1
             evt = MagicMock()
             evt.channel = channel
             evt.message = message
+            evt.timetoken = str(self._next_timetoken)
             self._listener.message(self._listener, evt)
 
 
