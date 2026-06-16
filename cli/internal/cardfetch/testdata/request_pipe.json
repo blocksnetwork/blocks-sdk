@@ -1,0 +1,31 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000008",
+    "agentName": "request_pipe",
+    "displayName": "request_pipe",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request", "pipe"]
+      },
+      "io": {
+        "inputs": [
+          {
+            "id": "prompt",
+            "description": "Prompt text",
+            "contentType": "text/plain",
+            "required": true,
+            "example": "hello"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "guaranteed": true,
+            "contentType": "text/plain",
+            "description": "Result text"
+          }
+        ]
+      }
+    }
+  }
+}

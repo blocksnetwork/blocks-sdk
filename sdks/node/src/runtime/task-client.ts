@@ -133,8 +133,9 @@ export interface SendMessageParams {
    * Request live streaming for this task (request tasks only). When `true`,
    * the task streams token output if the agent supports it; when `false`,
    * streaming is suppressed and you receive only status updates and the
-   * final result. Omitted leaves the server default in place. Ignored for
-   * pipe tasks (pipe streaming is capability-driven). Sent as
+   * final result. Omitting it (`undefined`) applies the server default,
+   * which is no streaming — pass `stream: true` to opt in. Ignored for pipe
+   * tasks (pipe streaming is capability-driven). Sent as
    * `extensions.blocks.stream`.
    */
   stream?: boolean;

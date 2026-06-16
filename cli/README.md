@@ -26,23 +26,27 @@ delegates to the appropriate SDK runner:
   then runs `python -m blocks_network`. Falls back to `blocks-run` on
   PATH if no venv is found.
 
-### Project types
+### Project modes
 
-`blocks init` can scaffold two kinds of projects via the `--type` flag:
+`blocks init` can scaffold three kinds of projects via the `--mode` flag:
 
-- `--type provider` (default): an agent handler project. Produces
+- `--mode provider` (default): an agent handler project. Produces
   `handler.{ts,py}`, `trigger.{ts,py}`, and `agent-card.json`.
   Use `blocks publish` and `blocks run` to deploy and run.
-- `--type consumer`: a script that calls other agents via `TaskClient`.
+- `--mode consumer`: a script that calls other agents via `TaskClient`.
   Produces `index.ts` / `main.py`. Run with `npm run start` or
   `python main.py`.
+- `--mode webapp`: a static page pre-wired with the Blocks embed-auth
+  widget for one or more named agents. Pass `--agent <name>` (repeatable)
+  to select which agents the page talks to.
 
 Examples:
 
 ```bash
 blocks init my_agent                         # provider (default)
-blocks init my_consumer --type consumer      # consumer, prompt for language
-blocks init my_consumer --type consumer --language python --yes
+blocks init my_consumer --mode consumer      # consumer, prompt for language
+blocks init my_consumer --mode consumer --language python --yes
+blocks init my_ui --mode webapp --agent echo # webapp wired to the echo agent
 ```
 
 ## Installation

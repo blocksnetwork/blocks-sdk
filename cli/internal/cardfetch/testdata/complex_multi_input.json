@@ -1,0 +1,33 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000001",
+    "agentName": "complex_multi_input",
+    "displayName": "complex_multi_input",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request"]
+      },
+      "io": {
+        "inputs": [
+          { "id": "in1", "description": "first form input", "contentType": "application/json", "required": true, "schema": { "type": "object" }, "example": { "a": 1 } },
+          { "id": "in2", "description": "raw text", "contentType": "text/plain", "required": false, "example": "hello" },
+          { "id": "in3", "description": "third", "contentType": "application/json", "required": false, "schema": { "type": "object" }, "example": { "b": 2 } },
+          { "id": "in4", "description": "fourth", "contentType": "application/json", "required": false, "schema": { "type": "object" }, "example": { "c": 3 } },
+          { "id": "in5", "description": "fifth", "contentType": "application/json", "required": false, "schema": { "type": "object" }, "example": { "d": 4 } },
+          { "id": "in6", "description": "sixth (over ceiling)", "contentType": "application/json", "required": false, "schema": { "type": "object" }, "example": { "e": 5 } }
+        ],
+        "outputs": [
+          { "id": "out1", "description": "primary text output", "contentType": "text/plain", "guaranteed": true },
+          { "id": "out2", "description": "secondary json", "contentType": "application/json", "guaranteed": false },
+          { "id": "out3", "description": "third pdf", "contentType": "application/pdf", "guaranteed": false },
+          { "id": "out4", "description": "fourth (over ceiling)", "contentType": "image/png", "guaranteed": false }
+        ]
+      },
+      "streams": {
+        "events_a": { "direction": "outbound", "format": "events", "description": "first stream" },
+        "events_b": { "direction": "outbound", "format": "bytes", "description": "second stream", "affinity": "shared" },
+        "events_c": { "direction": "outbound", "format": "events", "description": "third stream (over ceiling)" }
+      }
+    }
+  }
+}

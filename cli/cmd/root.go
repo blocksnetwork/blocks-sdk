@@ -45,7 +45,7 @@ var rootCmd = &cobra.Command{
 
 Quick start:
   blocks init my_agent                    Scaffold a new agent (provider) project
-  blocks init my_consumer --type consumer Scaffold a new consumer project
+  blocks init my_consumer --mode consumer Scaffold a new consumer project
   cd my_agent && blocks login --write-env Authenticate (first time only)
   blocks publish                          Publish the agent to the registry
   blocks run                              Start the agent locally

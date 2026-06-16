@@ -85,3 +85,15 @@ func loadCredentials() (string, error) {
 
 	return creds.ApiKey, nil
 }
+
+// optionalCredentials returns the stored API key when a valid, unexpired
+// credential exists, or an empty string otherwise (anonymous access). Unlike
+// loadCredentials it never errors — callers use it when the operation can
+// proceed against public-only resources without a login.
+func optionalCredentials() string {
+	creds, err := auth.Load()
+	if err != nil || creds.IsExpired() {
+		return ""
+	}
+	return creds.ApiKey
+}

@@ -16,7 +16,7 @@ func pythonConfig() wizard.Config {
 		Name:              "test_agent",
 		Description:       "test_agent agent",
 		Language:          "python",
-		Type:              "provider",
+		Mode:              "provider",
 		Concurrency:       1,
 		ExpectedInstances: 1,
 		Streaming:         false,
@@ -33,7 +33,7 @@ func nodeConfig() wizard.Config {
 
 func TestProjectPythonDefault(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,7 +60,7 @@ func TestProjectPythonDefault(t *testing.T) {
 
 func TestProjectNodeDefault(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, nodeConfig()); err != nil {
+	if err := Project(dir, nodeConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,7 +95,7 @@ func TestProjectNoDocker(t *testing.T) {
 	cfg := pythonConfig()
 	cfg.Docker = false
 
-	if err := Project(dir, cfg); err != nil {
+	if err := Project(dir, cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,7 +106,7 @@ func TestProjectNoDocker(t *testing.T) {
 
 func TestProjectAgentCardContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,7 +226,7 @@ func TestProjectAgentCardStreaming(t *testing.T) {
 	cfg := pythonConfig()
 	cfg.Streaming = true
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, cfg); err != nil {
+	if err := Project(dir, cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,7 +261,7 @@ func TestProjectAgentCardStreamingPipeOnly(t *testing.T) {
 	cfg.Streaming = true
 	cfg.TaskKinds = []string{"pipe"}
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, cfg); err != nil {
+	if err := Project(dir, cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -312,7 +312,7 @@ func TestProjectAgentCardStreamingRequestPipe(t *testing.T) {
 	cfg.Streaming = true
 	cfg.TaskKinds = []string{"request", "pipe"}
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, cfg); err != nil {
+	if err := Project(dir, cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -348,7 +348,7 @@ func TestProjectAgentCardStreamingRequestPipe(t *testing.T) {
 
 func TestProjectAgentCardNoStreamingByDefault(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -371,7 +371,7 @@ func TestProjectAgentCardTaskKinds(t *testing.T) {
 	cfg := pythonConfig()
 	cfg.TaskKinds = []string{"request", "pipe"}
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, cfg); err != nil {
+	if err := Project(dir, cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -399,7 +399,7 @@ func TestProjectNodeAgentCardHandler(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
 	cfg := nodeConfig()
 	cfg.TaskKinds = []string{"request"}
-	if err := Project(dir, cfg); err != nil {
+	if err := Project(dir, cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -433,7 +433,7 @@ func TestProjectNodeAgentCardHandler(t *testing.T) {
 
 func TestProjectPackageJSONContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, nodeConfig()); err != nil {
+	if err := Project(dir, nodeConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -482,7 +482,7 @@ func TestProjectPackageJSONContent(t *testing.T) {
 
 func TestProjectNodeNoMainTS(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, nodeConfig()); err != nil {
+	if err := Project(dir, nodeConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -493,7 +493,7 @@ func TestProjectNodeNoMainTS(t *testing.T) {
 
 func TestProjectPythonNoRunPy(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -504,7 +504,7 @@ func TestProjectPythonNoRunPy(t *testing.T) {
 
 func TestProjectPyprojectContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -531,7 +531,7 @@ func TestProjectPyprojectContent(t *testing.T) {
 
 func TestProjectEnvContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -561,7 +561,7 @@ func TestProjectEnvContent(t *testing.T) {
 
 func TestNodeTriggerNoPubNub(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, nodeConfig()); err != nil {
+	if err := Project(dir, nodeConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -593,7 +593,7 @@ func TestNodeTriggerNoPubNub(t *testing.T) {
 
 func TestPythonTriggerNoPubNub(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -625,7 +625,7 @@ func TestPythonTriggerNoPubNub(t *testing.T) {
 
 func TestNodeHandlerArtifactsShape(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, nodeConfig()); err != nil {
+	if err := Project(dir, nodeConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -646,7 +646,7 @@ func TestNodeHandlerArtifactsShape(t *testing.T) {
 
 func TestPythonHandlerArtifactsShape(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -666,7 +666,7 @@ func TestPythonHandlerArtifactsShape(t *testing.T) {
 
 func TestPythonTriggerKeywordArgs(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -689,7 +689,7 @@ func TestPythonTriggerKeywordArgs(t *testing.T) {
 
 func TestNodeTriggerTypedEvents(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, nodeConfig()); err != nil {
+	if err := Project(dir, nodeConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -712,7 +712,7 @@ func TestNodeTriggerTypedEvents(t *testing.T) {
 
 func TestTriggerUsesPartHelpers(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent_node")
-	if err := Project(dir, nodeConfig()); err != nil {
+	if err := Project(dir, nodeConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -725,7 +725,7 @@ func TestTriggerUsesPartHelpers(t *testing.T) {
 	}
 
 	dir2 := filepath.Join(t.TempDir(), "test_agent_py")
-	if err := Project(dir2, pythonConfig()); err != nil {
+	if err := Project(dir2, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -740,7 +740,7 @@ func TestTriggerUsesPartHelpers(t *testing.T) {
 
 func TestProjectGeneratedCardPassesValidation(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -754,7 +754,7 @@ func TestProjectGeneratedCardPassesValidation(t *testing.T) {
 
 func TestPythonNoClientPy(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -765,7 +765,7 @@ func TestPythonNoClientPy(t *testing.T) {
 
 func TestPythonTriggerImportsFromSDK(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig()); err != nil {
+	if err := Project(dir, pythonConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -796,7 +796,7 @@ func TestProjectRejectsUnknownLanguage(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "x")
 	cfg := pythonConfig()
 	cfg.Language = "rust"
-	err := Project(dir, cfg)
+	err := Project(dir, cfg, nil)
 	if err == nil {
 		t.Fatal("Project should reject unknown Language")
 	}
@@ -805,16 +805,16 @@ func TestProjectRejectsUnknownLanguage(t *testing.T) {
 	}
 }
 
-func TestProjectRejectsUnknownType(t *testing.T) {
+func TestProjectRejectsUnknownMode(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "x")
 	cfg := pythonConfig()
-	cfg.Type = "not-a-real-type"
-	err := Project(dir, cfg)
+	cfg.Mode = "not-a-real-mode"
+	err := Project(dir, cfg, nil)
 	if err == nil {
-		t.Fatal("Project should reject unknown Type")
+		t.Fatal("Project should reject unknown Mode")
 	}
-	if !strings.Contains(err.Error(), "unsupported type") {
-		t.Errorf("error = %q, want 'unsupported type' wording", err.Error())
+	if !strings.Contains(err.Error(), "unsupported mode") {
+		t.Errorf("error = %q, want 'unsupported mode' wording", err.Error())
 	}
 }
 
@@ -823,13 +823,13 @@ func nodeConsumerConfig() wizard.Config {
 		Name:        "my_consumer",
 		Description: "my_consumer consumer",
 		Language:    "node",
-		Type:        "consumer",
+		Mode:        "consumer",
 	}
 }
 
 func TestProjectConsumerNodeFiles(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, nodeConsumerConfig()); err != nil {
+	if err := Project(dir, nodeConsumerConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 	expected := []string{"index.ts", "package.json", ".env", ".gitignore"}
@@ -848,7 +848,7 @@ func TestProjectConsumerNodeFiles(t *testing.T) {
 
 func TestConsumerNodeIndexContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, nodeConsumerConfig()); err != nil {
+	if err := Project(dir, nodeConsumerConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "index.ts"))
@@ -880,7 +880,7 @@ func TestConsumerNodeIndexContent(t *testing.T) {
 
 func TestConsumerNodePackageScripts(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, nodeConsumerConfig()); err != nil {
+	if err := Project(dir, nodeConsumerConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -906,7 +906,7 @@ func TestConsumerNodePackageScripts(t *testing.T) {
 
 func TestConsumerNoAgentCard(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, nodeConsumerConfig()); err != nil {
+	if err := Project(dir, nodeConsumerConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "agent-card.json")); err == nil {
@@ -919,13 +919,13 @@ func pythonConsumerConfig() wizard.Config {
 		Name:        "my_consumer",
 		Description: "my_consumer consumer",
 		Language:    "python",
-		Type:        "consumer",
+		Mode:        "consumer",
 	}
 }
 
 func TestProjectConsumerPythonFiles(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, pythonConsumerConfig()); err != nil {
+	if err := Project(dir, pythonConsumerConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 	expected := []string{"main.py", "pyproject.toml", ".env", ".gitignore"}
@@ -944,7 +944,7 @@ func TestProjectConsumerPythonFiles(t *testing.T) {
 
 func TestConsumerPythonMainContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, pythonConsumerConfig()); err != nil {
+	if err := Project(dir, pythonConsumerConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "main.py"))
@@ -977,7 +977,7 @@ func TestConsumerPythonMainContent(t *testing.T) {
 
 func TestConsumerPythonPyprojectContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, pythonConsumerConfig()); err != nil {
+	if err := Project(dir, pythonConsumerConfig(), nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))

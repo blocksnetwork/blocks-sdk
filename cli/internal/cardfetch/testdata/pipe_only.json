@@ -1,0 +1,33 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000007",
+    "agentName": "pipe_only",
+    "displayName": "pipe_only",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["pipe"]
+      },
+      "io": {
+        "inputs": [
+          {
+            "id": "request",
+            "description": "JSON pipe input",
+            "contentType": "application/json",
+            "required": true,
+            "schema": { "type": "object" },
+            "example": { "text": "hi" }
+          }
+        ],
+        "outputs": []
+      },
+      "streams": {
+        "stream": {
+          "direction": "outbound",
+          "format": "events",
+          "description": "Primary event stream",
+          "affinity": "dedicated"
+        }
+      }
+    }
+  }
+}

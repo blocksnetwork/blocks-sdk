@@ -101,9 +101,10 @@ class SendMessageParams:
     consumer_public_key: Optional[str] = None
     # Request live streaming for this task (request tasks only). ``True``
     # streams token output if the agent supports it; ``False`` suppresses
-    # streaming (status updates + final result only); ``None`` leaves the
-    # server default in place. Ignored for pipe tasks. Sent as
-    # ``extensions.blocks.stream``.
+    # streaming (status updates + final result only). Omitting it (``None``)
+    # applies the server default, which is no streaming — pass ``stream=True``
+    # to opt in. Ignored for pipe tasks (pipe streaming is capability-driven).
+    # Sent as ``extensions.blocks.stream``.
     stream: Optional[bool] = None
     push_notification_config: Optional[Dict[str, Any]] = None
     retry_policy: Optional[Dict[str, Any]] = None

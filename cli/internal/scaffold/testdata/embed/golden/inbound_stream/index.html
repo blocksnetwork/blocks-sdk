@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>inbound_stream</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  
+  <script src="/__blocks_embed_dev.js"></script>
+  
+  <script>
+  (function () {
+    var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
+    var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : 'https:\/\/blocks.ai';
+    document.write('\x3Cscript src="' + base + '/embed/auth.0.1.0.min.js"><\/script>');
+  })();
+  </script>
+  <script src="app.js" defer></script>
+  <div id="app">
+    <div id="auth-bar">
+      <button id="sign-in-btn" type="button">Sign in with Blocks</button>
+      <button id="sign-out-btn" type="button" hidden>Sign out</button>
+      <span id="auth-error"></span>
+    </div>
+    <section class="agent-section" id="section-inbound_stream" hidden>
+      <h2>inbound_stream</h2>
+      <label for="input-inbound_stream-request">request — JSON request</label>
+      <textarea id="input-inbound_stream-request" rows="4">{
+  &quot;text&quot;: &quot;hi&quot;
+}</textarea>
+      <button id="send-inbound_stream" type="button">Send</button>
+      <label>Output</label>
+      <pre class="output" id="output-inbound_stream"></pre>
+    </section>
+  </div>
+</body>
+</html>

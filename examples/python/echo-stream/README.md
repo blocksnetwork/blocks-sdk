@@ -37,9 +37,8 @@ blocks run
 ## Stream lifecycle
 
 0. The consumer submits with `stream=True`, opting into request-task
-   streaming. Without it (and once the Phase 2 default flips off),
-   `has_stream` is false and steps 1–4 are skipped — only the final
-   artifact (step 5) is delivered.
+   streaming. Without it, `has_stream` is false and steps 1–4 are
+   skipped — only the final artifact (step 5) is delivered.
 1. The handler sees `ctx.has_stream` is true and calls `ctx.create_stream()`
    to create an outbound stream.
 2. Consumers receive a `stream_started` event and open the stream.

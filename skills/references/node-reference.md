@@ -221,6 +221,36 @@ readable.pipe(createWriteStream('./output.bin'));
 The low-level `stream.inbound` iterator is still available for advanced use. Its `InboundMessage` is a `format`-discriminated union: `.data` is `string[]` for `bytes`, `unknown[]` for `events`, and `Record<string, unknown>` for `raw`.
 ---
 
+## Consumer Auth Patterns
+
+Three browser/runtime patterns are supported (see SDK Contract
+§8.6.4 for the full taxonomy):
+
+1. **API key** (`TaskClient.create({ apiKey })`) — for Node trigger
+   scripts, CI, server-side jobs. **Never** embed an API key in
+   browser code.
+2. **`tokenEndpoint`** (Mode 2 / `browser_sdk`) — the developer
+   operates their own backend that mints short-lived JWTs from their
+   API key. The browser calls `tokenEndpoint` to refresh. Used by
+   the in-tree dashboard and any partner with their own server.
+3. **Embedded auth** (Mode 3 / partner-hosted static page) — drop-in
+   `BlocksAuth` widget served at `blocks.ai/embed/auth.<version>.min.js`
+   (or `npm i @blocks-network/embed-auth`). Call
+   `BlocksAuth.signInAndGetClient({ agent })` (one agent) or
+   `BlocksAuth.signInAndGetClients({ agents })` (several); the widget runs a
+   popup handshake against `/api/v1/auth/embed/popup`, gets short-lived
+   per-agent JWTs back via `postMessage`, and returns ready-to-use
+   `TaskClient` instances. No backend required on the partner side.
+   Authoring flow: `blocks init my-ui --mode webapp --agent <name>` (writes
+   `blocks.config.json` + a generated `web/`; pipe-capable agents get a
+   duration control, minutes 1..43200), then `blocks dev` /
+   `blocks deploy <partner>` (positional target — cloudflare, vercel,
+   netlify, or a user-defined plugin; for non-interactive deploys set
+   `CLOUDFLARE_API_TOKEN` / `VERCEL_TOKEN` / `NETLIFY_AUTH_TOKEN`). See
+   `blocks-sdk/embed-auth/README.md` for the widget API,
+   `docs/embed-getting-started.md` and SDK Contract §8.6.4h for the
+   wire-level pattern.
+
 ## Trigger Scripts (Consumer Task Submission)
 
 Trigger scripts submit tasks to agents using `TaskClient.create()`
@@ -260,7 +290,7 @@ client.destroy();
 
 ## TaskClient & TaskSession
 
-**sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `stream` (request-task streaming opt-in — `true` requests streaming, `false` suppresses it; omitted uses the server default; ignored for pipe; resolved `hasStream` still requires agent capability), `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
+**sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `stream` (request-task streaming opt-in — `true` requests streaming, `false` suppresses it; omitted uses the server default, now no-streaming, so pass `true` to stream; ignored for pipe; resolved `hasStream` still requires agent capability), `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
 
 **TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId`); set to `'provider'` when the caller is the agent owner viewing a received task. Provider-role access is scoped by the caller's active org: the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org. Admins with an admin-typed active org get the cross-org bypass; when no active org is resolved at all (legacy callers), the server falls back to admin-bypass / non-admin membership check on the agent's org.
 
@@ -558,10 +588,10 @@ Always use `--language node` when scaffolding. Do NOT mkdir before `blocks init`
 
 ```bash
 blocks init <name> --yes --language node                  # Provider scaffold (handler + agent-card.json)
-blocks init <name> --yes --language node --type consumer  # Consumer scaffold (index.ts using TaskClient)
+blocks init <name> --yes --language node --mode consumer  # Consumer scaffold (index.ts using TaskClient)
 ```
 
-`blocks init` defaults `--type provider`. Consumer projects produce
+`blocks init` defaults `--mode provider`. Consumer projects produce
 `index.ts` plus a `package.json` with a `start` script -- no
 `agent-card.json`, no handler, no publish step. The non-interactive
 mode requires the name argument; without it, the CLI errors out.

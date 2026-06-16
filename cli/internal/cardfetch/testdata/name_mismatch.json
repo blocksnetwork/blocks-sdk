@@ -1,0 +1,33 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000003",
+    "agentName": "actually_other_agent",
+    "displayName": "Other Agent",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request"]
+      },
+      "io": {
+        "inputs": [
+          {
+            "id": "request",
+            "description": "Generic input",
+            "contentType": "application/json",
+            "required": true,
+            "schema": { "type": "object" },
+            "example": { "text": "hi" }
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "description": "Generic output",
+            "contentType": "text/plain",
+            "guaranteed": true
+          }
+        ]
+      },
+      "streams": {}
+    }
+  }
+}

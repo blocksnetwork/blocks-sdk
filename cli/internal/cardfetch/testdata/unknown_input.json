@@ -1,0 +1,31 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000005",
+    "agentName": "unknown_input",
+    "displayName": "unknown_input",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request"]
+      },
+      "io": {
+        "inputs": [
+          {
+            "id": "weird",
+            "description": "Unrecognized contentType",
+            "contentType": "application/x-acme-blob",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "description": "Some output",
+            "contentType": "application/x-acme-out",
+            "guaranteed": false
+          }
+        ]
+      },
+      "streams": {}
+    }
+  }
+}

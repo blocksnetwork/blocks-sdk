@@ -132,6 +132,49 @@ def rpc_endpoint(subscribe_key: str, base_url: Optional[str] = None) -> str:
 
 _TRANSIENT_MARKERS = ("ENOTFOUND", "ETIMEDOUT", "ECONNRESET", "NetworkIssues")
 
+# Backend AppError codes (carried in JSON-RPC ``error.data.code``, where the
+# transport code is a generic JSON-RPC number rather than 401) that mean the
+# JWT's underlying embedded session was rotated/superseded and a refresh will
+# recover. Parity with Node ``rpc-client.ts``
+# ``AUTH_REFRESH_RETRYABLE_RPC_DATA_CODES``. Raised in auth middleware BEFORE
+# the task is processed, so retrying once cannot double-submit:
+#   - EMBEDDED_JWT_REVOKED: refresh-token rotation race -> refresh yields the
+#     rotated token and the retry succeeds.
+#   - EMBEDDED_JWT_LOGOUT: refresh re-checks the logout watermark and 401s,
+#     clearing the dead session at once.
+#   - EMBEDDED_JWT_KILLED: refresh drops killed agents; survivors re-mint a
+#     narrowed token, all-killed 401s and clears.
+#   - EMBEDDED_JWT_SCOPE_DRIFT: refresh re-mints scoped to the current
+#     refresh-token row so the new JWT matches and the retry succeeds.
+#   - AGENT_OUT_OF_SCOPE: one of several scoped agents had its grant
+#     revoked; refresh narrows the token to the still-reachable subset so
+#     requests to the surviving agents recover (all-revoked 401s and clears).
+_AUTH_REFRESH_RETRYABLE_RPC_DATA_CODES = frozenset(
+    {
+        "EMBEDDED_JWT_REVOKED",
+        "EMBEDDED_JWT_LOGOUT",
+        "EMBEDDED_JWT_KILLED",
+        "EMBEDDED_JWT_SCOPE_DRIFT",
+        "AGENT_OUT_OF_SCOPE",
+    }
+)
+
+
+def _is_auth_refresh_retryable(err: RpcError) -> bool:
+    """Whether an ``RpcError`` should trigger one reactive refresh + retry.
+
+    Matches either a transport 401, or an embedded-auth liveness code carried
+    in the JSON-RPC ``error.data.code`` (the transport ``code`` being a generic
+    JSON-RPC code is why a plain ``code == 401`` check misses these).
+    """
+    if err.code == 401:
+        return True
+    data = err.data
+    return (
+        isinstance(data, dict)
+        and data.get("code") in _AUTH_REFRESH_RETRYABLE_RPC_DATA_CODES
+    )
+
 
 def _is_transient(err: BaseException) -> bool:
     """Return ``True`` if the error looks like a transient network issue."""
@@ -259,8 +302,10 @@ def call_rpc(
         try:
             return _execute_request(hdrs)
         except RpcError as err:
-            # 401 reactive refresh: retry once if auth_provider can refresh
-            if err.code == 401 and auth_provider is not None:
+            # Reactive refresh: retry once if auth_provider can refresh. Fires
+            # on a transport 401 OR an embedded-auth liveness code carried in
+            # error.data.code (parity with Node rpc-client).
+            if _is_auth_refresh_retryable(err) and auth_provider is not None:
                 if auth_provider.on_auth_failure():
                     return _execute_request(_build_headers())
             raise

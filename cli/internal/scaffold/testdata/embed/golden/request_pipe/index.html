@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>request_pipe</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  
+  <script src="/__blocks_embed_dev.js"></script>
+  
+  <script>
+  (function () {
+    var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
+    var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : 'https:\/\/blocks.ai';
+    document.write('\x3Cscript src="' + base + '/embed/auth.0.1.0.min.js"><\/script>');
+  })();
+  </script>
+  <script src="app.js" defer></script>
+  <div id="app">
+    <div id="auth-bar">
+      <button id="sign-in-btn" type="button">Sign in with Blocks</button>
+      <button id="sign-out-btn" type="button" hidden>Sign out</button>
+      <span id="auth-error"></span>
+    </div>
+    <section class="agent-section" id="section-request_pipe" hidden>
+      <h2>request_pipe</h2>
+      <label for="input-request_pipe-prompt">prompt — Prompt text</label>
+      <textarea id="input-request_pipe-prompt" rows="4">hello</textarea>
+      <label class="pipe-toggle"><input type="checkbox" id="pipe-toggle-request_pipe" /> Run as a pipe session</label>
+      <label for="duration-request_pipe">Duration (minutes, 1–43200)</label>
+      <input type="number" class="duration" id="duration-request_pipe" min="1" max="43200" value="30" />
+      <button id="send-request_pipe" type="button">Send</button>
+      <label>Output</label>
+      <pre class="output" id="output-request_pipe"></pre>
+    </section>
+  </div>
+</body>
+</html>

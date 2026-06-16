@@ -183,6 +183,110 @@ class TestCallRpc:
 # ============================================================================
 
 
+class _FakeAuthProvider:
+    """Minimal auth provider: supplies a header and a refresh callback.
+
+    Deliberately omits ``get_last_auth_error`` so ``preflight_auth_or_raise``
+    is a no-op and the test exercises only the reactive-retry path.
+    """
+
+    def __init__(self, refresh_ok: bool = True) -> None:
+        self._refresh_ok = refresh_ok
+        self.on_auth_failure_calls = 0
+
+    def get_auth_header(self) -> str:
+        return "Bearer jwt-1"
+
+    def on_auth_failure(self) -> bool:
+        self.on_auth_failure_calls += 1
+        return self._refresh_ok
+
+    def ensure_ready(self) -> None:
+        return None
+
+
+def _rpc_error_body(data_code: str) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "error": {
+            "code": -32000,
+            "message": "Embedded JWT liveness failure",
+            "data": {"code": data_code},
+        },
+    }
+
+
+class TestReactiveAuthRefresh:
+    """Parity with Node ``rpc-client``: a JSON-RPC error whose ``data.code``
+    is an embedded-JWT liveness code (not a transport 401) must trigger one
+    reactive refresh + retry. Python previously only retried on transport
+    401, so it missed every ``data.code`` revoke — including the already-
+    documented ``EMBEDDED_JWT_REVOKED``.
+    """
+
+    @pytest.mark.parametrize(
+        "data_code",
+        [
+            "EMBEDDED_JWT_REVOKED",
+            "EMBEDDED_JWT_LOGOUT",
+            "EMBEDDED_JWT_KILLED",
+            "EMBEDDED_JWT_SCOPE_DRIFT",
+            "AGENT_OUT_OF_SCOPE",
+        ],
+    )
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_liveness_code_refreshes_and_retries(self, mock_urlopen, data_code):
+        provider = _FakeAuthProvider(refresh_ok=True)
+        # First call: liveness revoke. Second call (after refresh): success.
+        mock_urlopen.side_effect = [
+            _make_urlopen_response(_rpc_error_body(data_code)),
+            _make_urlopen_response({"jsonrpc": "2.0", "id": "x", "result": {"ok": True}}),
+        ]
+        result = call_rpc(
+            "sub-c-test",
+            "submitTask",
+            {},
+            base_url="http://localhost:3001",
+            auth_provider=provider,
+        )
+        assert result == {"ok": True}
+        assert provider.on_auth_failure_calls == 1
+        assert mock_urlopen.call_count == 2
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_non_auth_data_code_does_not_refresh(self, mock_urlopen):
+        provider = _FakeAuthProvider(refresh_ok=True)
+        mock_urlopen.return_value = _make_urlopen_response(
+            _rpc_error_body("SOME_OTHER_ERROR")
+        )
+        with pytest.raises(RpcError):
+            call_rpc(
+                "sub-c-test",
+                "submitTask",
+                {},
+                base_url="http://localhost:3001",
+                auth_provider=provider,
+            )
+        assert provider.on_auth_failure_calls == 0
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_revoke_but_refresh_fails_propagates(self, mock_urlopen):
+        provider = _FakeAuthProvider(refresh_ok=False)
+        mock_urlopen.return_value = _make_urlopen_response(
+            _rpc_error_body("EMBEDDED_JWT_REVOKED")
+        )
+        with pytest.raises(RpcError):
+            call_rpc(
+                "sub-c-test",
+                "submitTask",
+                {},
+                base_url="http://localhost:3001",
+                auth_provider=provider,
+            )
+        assert provider.on_auth_failure_calls == 1
+
+
 class TestWithRetry:
     @patch("blocks_network.rpc_client.time.sleep")
     def test_retries_on_transient_error(self, mock_sleep):

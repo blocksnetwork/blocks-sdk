@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/auth/partners"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -16,6 +17,7 @@ import (
 var loginApiKey string
 var loginApiKeyStdin bool
 var loginWriteEnv bool
+var loginProvider string
 var loginNoWriteEnv bool
 var loginDir string
 
@@ -24,6 +26,7 @@ func init() {
 	loginCmd.Flags().StringVar(&loginApiKey, "api-key", "", "Use a pre-obtained API key")
 	loginCmd.Flags().BoolVar(&loginApiKeyStdin, "api-key-stdin", false, "Read API key from stdin")
 	loginCmd.Flags().BoolVar(&loginWriteEnv, "write-env", false, "Also write BLOCKS_API_KEY to the project .env (non-interactive)")
+	loginCmd.Flags().StringVar(&loginProvider, "provider", "blocks", "Provider to authenticate: blocks|cloudflare|vercel|netlify")
 	loginCmd.Flags().BoolVar(&loginNoWriteEnv, "no-write-env", false, "Skip writing BLOCKS_API_KEY to the project .env and skip the prompt")
 	loginCmd.Flags().StringVar(&loginDir, "dir", "", "Directory to write .env into (default: current directory)")
 	loginCmd.MarkFlagsMutuallyExclusive("write-env", "no-write-env")
@@ -51,6 +54,35 @@ Non-interactive usage (CI / automation):
 }
 
 func runLogin(ctx context.Context) error {
+	switch loginProvider {
+	case "blocks", "":
+		return runBlocksLogin(ctx)
+	case "cloudflare":
+		return runPartnerLogin(ctx, &partners.CloudflareFlow{})
+	case "vercel":
+		return runPartnerLogin(ctx, &partners.VercelFlow{})
+	case "netlify":
+		return runPartnerLogin(ctx, &partners.NetlifyFlow{})
+	default:
+		return fmt.Errorf("unknown provider %q — must be one of: blocks, cloudflare, vercel, netlify", loginProvider)
+	}
+}
+
+// runPartnerLogin runs the Ensure flow for a partner adapter and prints
+// a confirmation message. Existing Blocks login is unaffected.
+func runPartnerLogin(ctx context.Context, flow auth.CredentialFlow) error {
+	creds, err := flow.Ensure(ctx)
+	if err != nil {
+		return fmt.Errorf("login failed: %w", err)
+	}
+
+	providerName := strings.ToUpper(creds.Provider[:1]) + creds.Provider[1:]
+	fmt.Printf("Logged in to %s\n", providerName)
+	return nil
+}
+
+// runBlocksLogin is the existing Blocks login path, unchanged.
+func runBlocksLogin(ctx context.Context) error {
 	backendURL := resolveBackendURL()
 	clientID := resolveClientID()
 
@@ -62,7 +94,10 @@ func runLogin(ctx context.Context) error {
 		if existing, err := auth.Load(); err == nil {
 			backedUp = existing
 		}
-		auth.Delete() // ignore error — file may not exist
+		// Remove only the "blocks" namespace so partner credentials are preserved.
+		if credPath, pathErr := auth.CredentialPathFunc(); pathErr == nil {
+			_ = auth.DeleteProviderCredential(credPath, "blocks")
+		}
 	}
 
 	apiKey, err := auth.EnsureCredentials(ctx, backendURL, clientID, loginApiKey, loginApiKeyStdin)

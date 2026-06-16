@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "version 4.1.3 — impl_07 follow-up r2: webApps[].url pattern now enforces port range 1-65535 (rejects :0, :65536, :99999). The semantic checks the schema regex cannot express (percent-encoding validity, IPv6 literal correctness, IDN normalization) live in language-layer helpers — Go: `deploy.ValidateWebAppURL`; backend Zod refine; frontend `normalizeWebAppUrl` after parse — applied uniformly across CLI `blocks check`, plugin stdout validation, backend Zod, and the frontend agent-detail render. 4.1.2 added the non-empty host requirement. 4.1.1 introduced the https-or-loopback pattern. 4.1.0 added identity.webApps[]. host_static_pages REMOVE_PER_ORIGIN_IMPL: dropped the optional `embeddedAuth` block. Per-origin allowlisting is removed; embed-auth access decisions collapse to the user-identity layer (canUserReachAgent + hasAgentGrant).",
   "title": "Agent Card",
   "description": "Agent card authored by developers (agent-card.json).",
   "type": "object",
@@ -226,7 +227,34 @@
         },
         "documentationUrl": { "type": "string" },
         "repositoryUrl": { "type": "string" },
-        "iconUrl": { "type": "string" }
+        "iconUrl": { "type": "string" },
+        "webApps": {
+          "type": "array",
+          "maxItems": 25,
+          "items": {
+            "type": "object",
+            "required": ["url"],
+            "additionalProperties": false,
+            "properties": {
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^(https://[^/?#:\\s]+(:(?:[1-9]\\d{0,3}|[1-5]\\d{4}|6[0-4]\\d{3}|65[0-4]\\d{2}|655[0-2]\\d|6553[0-5]))?([/?#][^\\s]*)?|http://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:(?:[1-9]\\d{0,3}|[1-5]\\d{4}|6[0-4]\\d{3}|65[0-4]\\d{2}|655[0-2]\\d|6553[0-5]))?([/?#][^\\s]*)?)$",
+                "description": "Absolute https URL of a webapp that uses this agent. http:// is accepted only for the loopback hostnames (localhost, 127.0.0.1, [::1]) to support local dev. Port (if specified) must be in 1-65535. Semantic checks the regex cannot express (percent-encoding validity, IPv6-literal correctness, IDN normalization) are enforced by language-layer helpers in CLI `blocks check`, plugin stdout validation, backend Zod, and the frontend."
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "Display label (defaults to the URL hostname when omitted)."
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 280,
+                "description": "Short description of what the webapp does (optional)."
+              }
+            }
+          }
+        }
       }
     },
     "capabilities": {
