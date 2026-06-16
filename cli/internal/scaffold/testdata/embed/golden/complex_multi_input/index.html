@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>complex_multi_input</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  
+  <script src="/__blocks_embed_dev.js"></script>
+  
+  <script>
+  (function () {
+    var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
+    var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : 'https:\/\/blocks.ai';
+    document.write('\x3Cscript src="' + base + '/embed/auth.0.1.0.min.js"><\/script>');
+  })();
+  </script>
+  <script src="app.js" defer></script>
+  <div id="app">
+    <div id="auth-bar">
+      <button id="sign-in-btn" type="button">Sign in with Blocks</button>
+      <button id="sign-out-btn" type="button" hidden>Sign out</button>
+      <span id="auth-error"></span>
+    </div>
+    <section class="agent-section" id="section-complex_multi_input" hidden>
+      <h2>complex_multi_input</h2>
+      <label for="input-complex_multi_input-in1">in1 — first form input</label>
+      <textarea id="input-complex_multi_input-in1" rows="4">{
+  &quot;a&quot;: 1
+}</textarea>
+      <label for="input-complex_multi_input-in2">in2 — raw text</label>
+      <textarea id="input-complex_multi_input-in2" rows="4">hello</textarea>
+      <label for="input-complex_multi_input-in3">in3 — third</label>
+      <textarea id="input-complex_multi_input-in3" rows="4">{
+  &quot;b&quot;: 2
+}</textarea>
+      <label for="input-complex_multi_input-in4">in4 — fourth</label>
+      <textarea id="input-complex_multi_input-in4" rows="4">{
+  &quot;c&quot;: 3
+}</textarea>
+      <label for="input-complex_multi_input-in5">in5 — fifth</label>
+      <textarea id="input-complex_multi_input-in5" rows="4">{
+  &quot;d&quot;: 4
+}</textarea>
+      <button id="send-complex_multi_input" type="button">Send</button>
+      <label>Output</label>
+      <pre class="output" id="output-complex_multi_input"></pre>
+      <label>Stream</label>
+      <pre class="stream" id="stream-complex_multi_input"></pre>
+    </section>
+  </div>
+</body>
+</html>

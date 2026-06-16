@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>stest1</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  
+  <script src="/__blocks_embed_dev.js"></script>
+  
+  <script>
+  (function () {
+    var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
+    var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : 'https:\/\/blocks.ai';
+    document.write('\x3Cscript src="' + base + '/embed/auth.0.1.0.min.js"><\/script>');
+  })();
+  </script>
+  <script src="app.js" defer></script>
+  <div id="app">
+    <div id="auth-bar">
+      <button id="sign-in-btn" type="button">Sign in with Blocks</button>
+      <button id="sign-out-btn" type="button" hidden>Sign out</button>
+      <span id="auth-error"></span>
+    </div>
+    <section class="agent-section" id="section-stest1" hidden>
+      <h2>stest1</h2>
+      <label for="input-stest1-request">request — String to repeat over the stream</label>
+      <textarea id="input-stest1-request" rows="4">{
+  &quot;text&quot;: &quot;hello&quot;
+}</textarea>
+      <button id="send-stest1" type="button">Send</button>
+      <label>Output</label>
+      <pre class="output" id="output-stest1"></pre>
+      <label>Stream</label>
+      <pre class="stream" id="stream-stest1"></pre>
+    </section>
+  </div>
+</body>
+</html>

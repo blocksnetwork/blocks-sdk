@@ -1,0 +1,12 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000008",
+    "agentName": "minimal",
+    "displayName": "minimal",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request"]
+      }
+    }
+  }
+}

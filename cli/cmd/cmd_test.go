@@ -252,10 +252,10 @@ func TestInitCommandConsumerNonInteractive(t *testing.T) {
 
 	initYes = false
 	initLanguage = ""
-	initType = ""
+	initMode = ""
 
 	captureStdout(func() {
-		rootCmd.SetArgs([]string{"init", "myconsumer", "--type", "consumer", "--language", "node", "--yes"})
+		rootCmd.SetArgs([]string{"init", "myconsumer", "--mode", "consumer", "--language", "node", "--yes"})
 		if err := rootCmd.Execute(); err != nil {
 			t.Fatalf("expected no error, got: %v", err)
 		}
@@ -280,10 +280,10 @@ func TestInitCommandConsumerPythonNonInteractiveDescription(t *testing.T) {
 
 	initYes = false
 	initLanguage = ""
-	initType = ""
+	initMode = ""
 
 	captureStdout(func() {
-		rootCmd.SetArgs([]string{"init", "myconsumer", "--type", "consumer", "--language", "python", "--yes"})
+		rootCmd.SetArgs([]string{"init", "myconsumer", "--mode", "consumer", "--language", "python", "--yes"})
 		if err := rootCmd.Execute(); err != nil {
 			t.Fatalf("expected no error, got: %v", err)
 		}
@@ -363,7 +363,7 @@ func TestLoadEnvFileSkipsExistingVars(t *testing.T) {
 	}
 }
 
-func TestInitCommandInvalidType(t *testing.T) {
+func TestInitCommandInvalidMode(t *testing.T) {
 	dir := t.TempDir()
 	oldDir, _ := os.Getwd()
 	if err := os.Chdir(dir); err != nil {
@@ -373,20 +373,20 @@ func TestInitCommandInvalidType(t *testing.T) {
 
 	initYes = false
 	initLanguage = ""
-	initType = ""
+	initMode = ""
 
 	captureStdout(func() {
-		rootCmd.SetArgs([]string{"init", "x", "--type", "bogus", "--yes"})
+		rootCmd.SetArgs([]string{"init", "x", "--mode", "bogus", "--yes"})
 		err := rootCmd.Execute()
 		if err == nil {
-			t.Fatal("expected error for unknown --type value")
+			t.Fatal("expected error for unknown --mode value")
 		}
-		if !strings.Contains(err.Error(), "unsupported type") {
-			t.Errorf("error = %q, want 'unsupported type' wording", err.Error())
+		if !strings.Contains(err.Error(), "unsupported mode") {
+			t.Errorf("error = %q, want 'unsupported mode' wording", err.Error())
 		}
 	})
 
 	if _, err := os.Stat(filepath.Join(dir, "x")); err == nil {
-		t.Error("directory should not be created on invalid --type")
+		t.Error("directory should not be created on invalid --mode")
 	}
 }

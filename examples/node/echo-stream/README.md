@@ -63,9 +63,8 @@ prints the final artifact.
 ## Stream lifecycle
 
 0. The consumer submits with `stream: true`, opting into request-task
-   streaming. Without it (and once the Phase 2 default flips off), the
-   handler's `hasStream` is false and steps 1–4 are skipped — only the
-   final artifact (step 5) is delivered.
+   streaming. Without it, the handler's `hasStream` is false and steps
+   1–4 are skipped — only the final artifact (step 5) is delivered.
 1. The handler sees `ctx.hasStream === true` and calls `ctx.createStream()`
    to create an outbound stream.
 2. The consumer receives a `stream_started` event via `session.onStream()`.

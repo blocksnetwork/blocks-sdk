@@ -45,7 +45,17 @@ my-agent/
 
 Required top-level: `identity`, `capabilities`, `tags`, `runtime`.
 
-Required in `identity`: `agentName` (pattern `^[a-zA-Z0-9_]+$`), `displayName`, `description`, `version`, `provider` (`{ organization }`). Optional in `identity`: `documentationUrl`, `repositoryUrl`, `iconUrl`. Optional in `provider`: `url`.
+Required in `identity`: `agentName` (pattern `^[a-zA-Z0-9_]+$`), `displayName`, `description`, `version`, `provider` (`{ organization }`). Optional in `identity`: `documentationUrl`, `repositoryUrl`, `iconUrl`, `webApps`. Optional in `provider`: `url`.
+
+### Optional `identity.*` fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provider.url` | string (URL) | Provider website. |
+| `documentationUrl` | string (URL) | Docs site for the agent. |
+| `repositoryUrl` | string (URL) | Source-code repository. |
+| `iconUrl` | string (URL) | Square icon shown in registry listings. |
+| `webApps` | `Array<{ url, label?, description? }>` | Up to 25 entries. Webapps built on this agent (advertised on the agent-detail page). `url` is required and must be absolute http(s); `label` (≤80 chars) defaults to the URL hostname when omitted; `description` (≤280 chars) is optional. |
 
 Required in `capabilities`: `taskKinds` (array of `"request"`, `"pipe"`, or both).
 
@@ -110,9 +120,10 @@ required on each stream.
 `ctx.createStream()` throws `"Streaming was not negotiated for this task."`
 at runtime whenever `hasStream` is false — either the card lacks the `streams`
 block, or (for request tasks) the consumer did not opt in via
-`extensions.blocks.stream` (BLOCKS-181; in Phase 1 an omitted flag still
-defaults on, in Phase 2 it defaults off). Guard handler code on
-`ctx.hasStream` / `ctx.has_stream` before calling it.
+`extensions.blocks.stream` (BLOCKS-181; the omitted-flag default is now off, so
+an omitted flag also yields `hasStream` false unless the consumer sends
+`stream: true`). Guard handler code on `ctx.hasStream` / `ctx.has_stream` before
+calling it.
 
 ### Full Streaming Agent Card Example
 

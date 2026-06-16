@@ -2,6 +2,8 @@ package wizard
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +13,15 @@ import (
 )
 
 var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// projectNameRe constrains a webapp project directory name to safe characters
+// (no path separators, no spaces). It is intentionally looser than
+// agentNameRe — a directory may contain '.' and '-'.
+var projectNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+// maxAgentsPerWebapp caps how many agents a single webapp page may wire up.
+// Mirrors the limit enforced by internal/config.Validate and cmd/init.go.
+const maxAgentsPerWebapp = 25
 
 // Help text constants for inline ? help across wizard prompts.
 const (
@@ -48,6 +59,17 @@ const (
 	helpDocker = "  Adds a Dockerfile to your project for deploying your agent as a container.\n" +
 		"  If you're just running locally with 'blocks run', you don't need this.\n" +
 		"  You can add it later."
+
+	helpWebappName = "  A name for your web app project. This becomes the directory the files are\n" +
+		"  scaffolded into. Letters, numbers, dots, dashes, and underscores only."
+
+	helpWebappAgents = "  The bare name(s) of the Blocks agent(s) this page will call (e.g. 'translator').\n" +
+		"  Start typing to search the registry — public agents plus any private ones\n" +
+		"  your account can access. You can add several agents to one page."
+
+	helpProjectKind = "  Agent: build an agent that processes tasks, or a consumer that calls agents.\n" +
+		"  Web app: scaffold a static page pre-wired with the Blocks embed-auth widget\n" +
+		"  that calls one or more existing agents."
 )
 
 // Config holds all wizard answers needed to scaffold a project.
@@ -56,18 +78,36 @@ type Config struct {
 	DisplayName       string   // human-readable display name
 	Description       string
 	Language          string   // "node" or "python"
-	Type              string   // "provider" (default) or "consumer"
+	Mode              string   // "provider" (default) | "consumer" | "webapp"
 	Concurrency       int
 	ExpectedInstances int
 	Streaming         bool
 	TaskKinds         []string // "request", "pipe", or both
 	Docker            bool
+
+	// Webapp-scaffold fields (only used when Mode == "webapp").
+	Agents        []string // one or more bare agent names (each ^[a-zA-Z0-9_]+$)
+	BlocksBaseURL string   // defaults to "https://blocks.ai" when empty
 }
 
 // ValidateAgentName checks that name matches /^[a-zA-Z0-9_]+$/.
 func ValidateAgentName(name string) error {
 	if !agentNameRe.MatchString(name) {
 		return fmt.Errorf("agentName must contain only alphanumeric characters and underscores")
+	}
+	return nil
+}
+
+// ValidateProjectName checks that name is a safe directory name.
+func ValidateProjectName(name string) error {
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("name cannot be %q", name)
+	}
+	if !projectNameRe.MatchString(name) {
+		return fmt.Errorf("use only letters, numbers, '.', '-', and '_' (no spaces or slashes)")
 	}
 	return nil
 }
@@ -80,7 +120,7 @@ func DefaultConfig(name string) Config {
 		DisplayName:       name,
 		Description:       name + " agent",
 		Language:          "python",
-		Type:              "provider",
+		Mode:              "provider",
 		Concurrency:       1,
 		ExpectedInstances: 1,
 		Streaming:         false,
@@ -92,8 +132,8 @@ func DefaultConfig(name string) Config {
 // Run executes the interactive wizard, prompting the user for project config.
 // If nameFromArgs is non-empty, the name prompt is skipped.
 // If langFromFlag is non-empty ("node" or "python"), the language prompt is skipped.
-// If typeFromFlag is non-empty ("provider" or "consumer"), the type prompt is skipped.
-func Run(nameFromArgs string, langFromFlag string, typeFromFlag string) (Config, error) {
+// If modeFromFlag is non-empty ("provider" or "consumer"), the mode prompt is skipped.
+func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config, error) {
 	r := bufio.NewReader(os.Stdin)
 	var cfg Config
 
@@ -135,25 +175,25 @@ func Run(nameFromArgs string, langFromFlag string, typeFromFlag string) (Config,
 		}
 	}
 
-	// Type (provider or consumer). Skip prompt if --type flag was passed.
-	if typeFromFlag != "" {
-		cfg.Type = typeFromFlag
-		displayType := "Provider"
-		if typeFromFlag == "consumer" {
-			displayType = "Consumer"
+	// Mode (provider or consumer). Skip prompt if --mode flag was passed.
+	if modeFromFlag != "" {
+		cfg.Mode = modeFromFlag
+		displayMode := "Provider"
+		if modeFromFlag == "consumer" {
+			displayMode = "Consumer"
 		}
-		fmt.Printf("+ Type: %s\n", displayType)
+		fmt.Printf("+ Mode: %s\n", displayMode)
 	} else {
-		typeIdx, err := InteractiveSelect("Type", []string{"Provider", "Consumer"}, 0, helpType)
+		modeIdx, err := InteractiveSelect("Mode", []string{"Provider", "Consumer"}, 0, helpType)
 		if err != nil {
 			return cfg, err
 		}
-		cfg.Type = typeFromIndex(typeIdx)
+		cfg.Mode = modeFromIndex(modeIdx)
 	}
 
 	// DisplayName and Description are provider-only; consumers have no
 	// agent identity and don't publish an agent-card.
-	if cfg.Type == "provider" {
+	if cfg.Mode == "provider" {
 		displayName, err := readLine(r, "Display name", cfg.Name, helpDisplayName)
 		if err != nil {
 			return cfg, err
@@ -190,7 +230,7 @@ func Run(nameFromArgs string, langFromFlag string, typeFromFlag string) (Config,
 		}
 	}
 
-	if cfg.Type == "consumer" {
+	if cfg.Mode == "consumer" {
 		// Consumer scaffolds don't use concurrency/instances/streaming/task-kinds/docker.
 		return cfg, nil
 	}
@@ -240,10 +280,145 @@ func Run(nameFromArgs string, langFromFlag string, typeFromFlag string) (Config,
 	return cfg, nil
 }
 
-// typeFromIndex maps the InteractiveSelect index for the Type prompt to
-// the canonical Config.Type string. Kept as a free function so tests can
+// Project-kind indices returned by SelectProjectKind.
+const (
+	ProjectKindAgent  = 0
+	ProjectKindWebapp = 1
+)
+
+// SelectProjectKind asks the top-level "Agent vs Web app" question and returns
+// ProjectKindAgent or ProjectKindWebapp. On a non-terminal stdin it returns
+// the default (ProjectKindAgent), preserving the historical agent behavior.
+func SelectProjectKind() (int, error) {
+	return InteractiveSelect("What are you building?", []string{"Agent", "Web app"}, ProjectKindAgent, helpProjectKind)
+}
+
+// RunWebapp executes the interactive webapp wizard: it prompts for a project
+// name, then collects one or more agent names via the live type-ahead
+// autocomplete (backed by suggest). It returns a Config with Mode == "webapp".
+//
+// The project-name prompt runs in canonical line mode; the agent-collection
+// loop runs under a single raw-mode session so only one goroutine ever reads
+// stdin. When stdin is not a terminal, the agent loop falls back to plain line
+// prompts (no live suggestions).
+func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
+	r := bufio.NewReader(os.Stdin)
+
+	var name string
+	for {
+		n, err := readLine(r, "Web app name", "", helpWebappName)
+		if err != nil {
+			return Config{}, err
+		}
+		n = strings.TrimSpace(n)
+		if err := ValidateProjectName(n); err != nil {
+			fmt.Printf("  Invalid: %v\n", err)
+			continue
+		}
+		name = n
+		break
+	}
+
+	ri, ok := newRawInput()
+	if !ok {
+		agents, err := collectAgentsPlain(r)
+		if err != nil {
+			return Config{}, err
+		}
+		return Config{Mode: "webapp", Name: name, Agents: agents}, nil
+	}
+	defer ri.close()
+
+	fmt.Print("\r\nAdd the agents this web app will call (esc when done):\r\n")
+	var agents []string
+	for {
+		value, err := ri.autocomplete(ctx, "Agent to use", suggest, ValidateAgentName)
+		if err != nil {
+			if errors.Is(err, ErrCanceled) {
+				if len(agents) > 0 {
+					break // esc finishes once we have at least one agent
+				}
+				return Config{}, fmt.Errorf("canceled")
+			}
+			return Config{}, err
+		}
+
+		switch {
+		case containsString(agents, value):
+			fmt.Printf("  %s already added.\r\n", value)
+		case len(agents) >= maxAgentsPerWebapp:
+			fmt.Printf("  Reached the %d-agent limit.\r\n", maxAgentsPerWebapp)
+		default:
+			agents = append(agents, value)
+		}
+		if len(agents) >= maxAgentsPerWebapp {
+			break
+		}
+
+		more, err := ri.confirm("Add another agent?", false)
+		if err != nil {
+			if errors.Is(err, ErrCanceled) {
+				break
+			}
+			return Config{}, err
+		}
+		if !more {
+			break
+		}
+	}
+
+	if len(agents) == 0 {
+		return Config{}, fmt.Errorf("at least one agent is required")
+	}
+	return Config{Mode: "webapp", Name: name, Agents: agents}, nil
+}
+
+// collectAgentsPlain is the non-TTY fallback for agent collection: repeated
+// line prompts with no live suggestions.
+func collectAgentsPlain(r *bufio.Reader) ([]string, error) {
+	var agents []string
+	for {
+		line, err := readLine(r, "Agent name (blank to finish)", "", helpWebappAgents)
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if len(agents) == 0 {
+				fmt.Println("  At least one agent is required.")
+				continue
+			}
+			return agents, nil
+		}
+		if err := ValidateAgentName(line); err != nil {
+			fmt.Printf("  Invalid: %v\n", err)
+			continue
+		}
+		if containsString(agents, line) {
+			fmt.Printf("  %s already added.\n", line)
+			continue
+		}
+		if len(agents) >= maxAgentsPerWebapp {
+			fmt.Printf("  Reached the %d-agent limit.\n", maxAgentsPerWebapp)
+			return agents, nil
+		}
+		agents = append(agents, line)
+	}
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+// modeFromIndex maps the InteractiveSelect index for the Mode prompt to
+// the canonical Config.Mode string. Kept as a free function so tests can
 // exercise it without driving stdin.
-func typeFromIndex(idx int) string {
+func modeFromIndex(idx int) string {
 	if idx == 1 {
 		return "consumer"
 	}

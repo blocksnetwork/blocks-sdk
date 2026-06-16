@@ -1144,3 +1144,76 @@ func TestFriendlyPreservesContentTypeGuidance(t *testing.T) {
 		t.Errorf("expected contentType guidance on input 1 to survive, got: %v", res.Errors)
 	}
 }
+
+// TestValidateWebAppURLs exercises the post-schema step 7 added by F1
+// follow-up r2: `blocks check` now runs `deploy.ValidateWebAppURL` over
+// each identity.webApps[].url so the CLI catches parser-level rejections
+// the JSON Schema pattern alone can't express (invalid percent-encoding,
+// out-of-range port, malformed IPv6 literal). Without this step a card
+// passing `blocks check` could still fail `blocks publish` at the
+// backend's Zod refine.
+func TestValidateWebAppURLs(t *testing.T) {
+	cases := []struct {
+		name string
+		urls []string
+		// expectErr is the substring expected on stderr; "" means valid.
+		expectErr string
+	}{
+		{
+			name: "production https accepted",
+			urls: []string{"https://my-app.pages.dev", "https://example.com/path?q=1"},
+		},
+		{
+			name: "loopback http accepted",
+			urls: []string{"http://localhost:5173", "http://127.0.0.1:8080"},
+		},
+		{
+			name:      "port out of range rejected",
+			urls:      []string{"https://example.com:99999"},
+			expectErr: "1-65535",
+		},
+		{
+			name:      "invalid percent-encoding rejected",
+			urls:      []string{"https://%zz"},
+			expectErr: "percent-encoding",
+		},
+		{
+			name:      "malformed IPv6 rejected",
+			urls:      []string{"https://[gggg::1]"},
+			expectErr: "invalid host",
+		},
+		{
+			name:      "wrong scheme rejected",
+			urls:      []string{"http://example.com"},
+			expectErr: "loopback",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "handler.py"), []byte("# handler"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			card := validCard()
+			identity := card["identity"].(map[string]interface{})
+			webApps := []interface{}{}
+			for _, u := range tc.urls {
+				webApps = append(webApps, map[string]interface{}{"url": u})
+			}
+			identity["webApps"] = webApps
+			path := writeCard(t, dir, card)
+			res := Validate(path)
+
+			joined := strings.Join(res.Errors, "\n")
+			if tc.expectErr == "" {
+				if strings.Contains(joined, "identity.webApps[") {
+					t.Errorf("unexpected webApps error: %v", res.Errors)
+				}
+			} else {
+				if !strings.Contains(joined, tc.expectErr) {
+					t.Errorf("expected webApps error containing %q, got:\n%s", tc.expectErr, joined)
+				}
+			}
+		})
+	}
+}

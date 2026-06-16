@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>binary_input</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  
+  <script src="/__blocks_embed_dev.js"></script>
+  
+  <script>
+  (function () {
+    var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
+    var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : 'https:\/\/blocks.ai';
+    document.write('\x3Cscript src="' + base + '/embed/auth.0.1.0.min.js"><\/script>');
+  })();
+  </script>
+  <script src="app.js" defer></script>
+  <div id="app">
+    <div id="auth-bar">
+      <button id="sign-in-btn" type="button">Sign in with Blocks</button>
+      <button id="sign-out-btn" type="button" hidden>Sign out</button>
+      <span id="auth-error"></span>
+    </div>
+    <section class="agent-section" id="section-binary_input" hidden>
+      <h2>binary_input</h2>
+      <label for="input-binary_input-blob">blob — raw binary blob</label>
+      <input type="file" id="input-binary_input-blob" accept="application/octet-stream" />
+      <button id="send-binary_input" type="button">Send</button>
+      <label>Output</label>
+      <pre class="output" id="output-binary_input"></pre>
+    </section>
+  </div>
+</body>
+</html>

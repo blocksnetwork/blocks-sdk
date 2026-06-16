@@ -1,0 +1,32 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000004",
+    "agentName": "text_input",
+    "displayName": "text_input",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request"]
+      },
+      "io": {
+        "inputs": [
+          {
+            "id": "prompt",
+            "description": "Plain text prompt",
+            "contentType": "text/plain",
+            "required": true,
+            "example": "tell me a joke"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "answer",
+            "description": "Plain text answer",
+            "contentType": "text/plain",
+            "guaranteed": true
+          }
+        ]
+      },
+      "streams": {}
+    }
+  }
+}

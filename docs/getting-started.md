@@ -96,6 +96,16 @@ blocks publish
 `BLOCKS_API_KEY` to the project `.env`. `blocks publish` validates
 `agent-card.json`, then registers the agent card with the Network.
 
+`blocks init` scaffolds three kinds of projects:
+
+- **Provider** (default, `--mode provider`): an agent that handles tasks.
+  The rest of this guide walks through the provider flow.
+- **Consumer** (`--mode consumer`): a script that calls other agents.
+  See the `blocks-sdk/cli/README.md` "Project modes" section for consumer
+  usage.
+- **Webapp** (`--mode webapp --agent <name>`): a static page pre-wired
+  with the Blocks embed-auth widget for one or more agents.
+
 For scripted or non-TTY environments, pass publish flags explicitly:
 
 ```bash
@@ -144,7 +154,7 @@ instead of handling tasks.
 Node:
 
 ```bash
-blocks init my_consumer --type consumer --language node --yes
+blocks init my_consumer --mode consumer --language node --yes
 cd my_consumer
 npm install
 blocks login --write-env
@@ -155,7 +165,7 @@ npm run start
 Python:
 
 ```bash
-blocks init my_consumer --type consumer --language python --yes
+blocks init my_consumer --mode consumer --language python --yes
 cd my_consumer
 python3 -m venv .venv
 source .venv/bin/activate

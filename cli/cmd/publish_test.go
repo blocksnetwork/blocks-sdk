@@ -792,6 +792,53 @@ func TestPublishPaidPrivatePayload(t *testing.T) {
 	}
 }
 
+// ─── shared-helper migration regression ──────────────────────────────────────
+
+// TestPublishSharedHelperAttachesProtocolVersionHeader verifies that the
+// publish command attaches the Blocks-Protocol-Version header on every
+// outbound request through the shared blocksapi.Client (migration regression).
+// Simulates a backend that rejects requests missing the header (HTTP 412).
+func TestPublishSharedHelperAttachesProtocolVersionHeader(t *testing.T) {
+	cleanup := setupFakeCredentials(t)
+	defer cleanup()
+
+	headerSeen := ""
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headerSeen = r.Header.Get("Blocks-Protocol-Version")
+		if headerSeen == "" {
+			// Simulate a backend that rejects missing header.
+			w.WriteHeader(412)
+			w.Write([]byte(`{"error":"Blocks-Protocol-Version required"}`))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer ts.Close()
+
+	dir := writeValidProject(t)
+	cardPath := filepath.Join(dir, "agent-card.json")
+
+	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	resetPublishFlags()
+
+	captureStdout(func() {
+		rootCmd.SetArgs([]string{"publish", cardPath, "--listing", "public", "--billing-mode", "free", "--accept-terms"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("publish failed: %v", err)
+		}
+	})
+
+	if headerSeen != registry.ProtocolVersion {
+		t.Errorf("Blocks-Protocol-Version = %q, want %q (shared helper must auto-attach it)", headerSeen, registry.ProtocolVersion)
+	}
+}
+
 // TestPublishNoCredentialsFails verifies that publish without stored credentials
 // (and no --api-key flag) fails fast with an actionable error.
 func TestPublishNoCredentialsFails(t *testing.T) {

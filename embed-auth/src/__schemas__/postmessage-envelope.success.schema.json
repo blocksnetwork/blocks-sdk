@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "version 1.0.0 — host_static_pages embedded auth (postMessage success envelope)",
+  "title": "Embedded Auth — postMessage success envelope (v1)",
+  "description": "Wire shape posted by the embed-auth popup back to its opener via `window.opener.postMessage(envelope, requestedOrigin)` after a successful auth flow. The widget verifies `event.origin === blocksApiOrigin`, asserts `event.data.type === 'blocks-auth-success'` and `event.data.version === 1`, asserts `event.data.state` matches the nonce the widget generated before opening the popup (per `embed-popup-request.schema.json`), and then routes `jwt`, `refreshToken`, `expiresAt`, `agentIds`, `agents`, `orgId`, and `userId` into the SDK. v1 envelopes are intentionally exact (`additionalProperties: false`); see the README for the versioning principle.",
+  "type": "object",
+  "required": [
+    "type",
+    "version",
+    "state",
+    "jwt",
+    "refreshToken",
+    "expiresAt",
+    "agentIds",
+    "agents",
+    "orgId",
+    "userId"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "type": { "const": "blocks-auth-success" },
+    "version": { "const": 1 },
+    "state": {
+      "type": "string",
+      "minLength": 22,
+      "description": "Cryptographically random nonce echoed from the popup request. Minimum 22 base64 chars (~128 bits) or 32 hex chars (128 bits)."
+    },
+    "jwt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short-lived consumer JWT for the requested agents."
+    },
+    "refreshToken": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Refresh token consumed by POST /api/v1/auth/embed/refresh and revoked by POST /api/v1/auth/embed/revoke."
+    },
+    "expiresAt": {
+      "type": "integer",
+      "description": "JWT expiry as Unix epoch milliseconds."
+    },
+    "agentIds": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "minItems": 1,
+      "maxItems": 25,
+      "uniqueItems": true,
+      "description": "Agent UUIDs the JWT covers. 25-agent cap is shared with `embed-popup-request.schema.json`, `embed-refresh-response.schema.json`, and `internal/blocks-config.schema.json`."
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 25,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "id", "billingMode"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Bare agent name (matching `agent.agentName` — `^[a-zA-Z0-9_]+$`, no slashes)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Agent UUID. MUST appear in `agentIds` as well."
+          },
+          "billingMode": {
+            "enum": ["free", "paid"],
+            "description": "Snapshot billing mode at popup time. The SDK uses this to pick free vs paid call paths without a separate registry GET."
+          }
+        }
+      },
+      "description": "Per-agent metadata for the requested agents. Order is not significant; uniqueness is enforced."
+    },
+    "orgId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Org UUID the JWT acts under. Forced to the private agent's org if any requested agent is private; otherwise either the user's only org or the org chosen by the popup picker (see HOST_PAGES_PLAN §5.3)."
+    },
+    "userId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "User UUID that completed the popup flow."
+    }
+  }
+}

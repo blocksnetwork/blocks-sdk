@@ -58,7 +58,7 @@ blocks run
 Create a consumer script that calls agents instead of handling tasks:
 
 ```bash
-blocks init my_consumer --type consumer --language python
+blocks init my_consumer --mode consumer --language python
 cd my_consumer
 
 python3 -m venv .venv

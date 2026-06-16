@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{.PageTitle}}</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Local-dev only: served by `blocks dev`. Returns 404 in production
+       deploys (Cloudflare / Vercel / Netlify), and the widget gates on
+       window.__BLOCKS_EMBED_DEV__ so the 404 is harmless. -->
+  <script src="/__blocks_embed_dev.js"></script>
+  <!-- Embed-auth widget bundle, pinned at scaffold time. -->
+  <script>
+  (function () {
+    var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
+    var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : '{{.BlocksAssetBaseUrl}}';
+    document.write('<script src="' + base + '/embed/auth.{{.WidgetVersion}}.min.js"><\/script>');
+  })();
+  </script>
+  <script src="app.js" defer></script>
+  <div id="app">
+    <div id="auth-bar">
+      <button id="sign-in-btn" type="button">Sign in with Blocks</button>
+      <button id="sign-out-btn" type="button" hidden>Sign out</button>
+      <span id="auth-error"></span>
+    </div>
+{{.AgentSections}}
+  </div>
+</body>
+</html>

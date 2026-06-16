@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "version 2.0.0 — host_static_pages REMOVE_PER_ORIGIN_IMPL: code enum trimmed from eight values to seven (per-origin allowlisting gone). See schemas/README.md changelog for the dropped value.",
+  "title": "Embedded Auth — postMessage error envelope (v1)",
+  "description": "Wire shape posted by the embed-auth popup back to its opener via `window.opener.postMessage(envelope, requestedOrigin)` when the auth flow fails. The seven error codes are stable and machine-readable. `agent` is populated only for per-agent failures (`AGENT_ARCHIVED`, `AGENT_DISABLED`, `AGENT_KILLED`); other codes MUST omit `agent` to avoid leaking existence information. v1 envelopes are intentionally exact (`additionalProperties: false`).",
+  "type": "object",
+  "required": ["type", "version", "state", "code", "message"],
+  "additionalProperties": false,
+  "properties": {
+    "type": { "const": "blocks-auth-error" },
+    "version": { "const": 1 },
+    "state": {
+      "type": "string",
+      "minLength": 22,
+      "description": "Cryptographically random nonce echoed from the popup request, so the widget can correlate the error with its in-flight request."
+    },
+    "code": {
+      "enum": [
+        "AGENT_ARCHIVED",
+        "AGENT_DISABLED",
+        "AGENT_KILLED",
+        "USER_CANCELLED",
+        "MULTI_ORG_PRIVATE_AGENTS_NOT_SUPPORTED",
+        "TOO_MANY_AGENTS",
+        "EMBEDDED_AUTH_DAILY_QUOTA_EXCEEDED"
+      ],
+      "description": "Stable, machine-readable error code."
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable error message; not localized in v1."
+    },
+    "agent": {
+      "type": "string",
+      "description": "Bare agent name (matching `agent.agentName`) when the error is per-agent (`AGENT_ARCHIVED`, `AGENT_DISABLED`, `AGENT_KILLED`). Omitted otherwise."
+    }
+  }
+}

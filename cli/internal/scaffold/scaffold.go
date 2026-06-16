@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"text/template"
+	"time"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/cardfetch"
+	"github.com/pubnub/blocks-sdk/cli/internal/config"
 	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 )
 
@@ -18,10 +22,20 @@ var templateFS embed.FS
 // Update this when releasing a new SDK version.
 const SDKVersion = "latest"
 
+// agentNameRe enforces the bare agent-name pattern (matches registry column).
+var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
 // Project generates all project files in dir based on the given config.
-func Project(dir string, cfg wizard.Config) error {
-	if cfg.Type != "provider" && cfg.Type != "consumer" {
-		return fmt.Errorf("unsupported type %q (use \"provider\" or \"consumer\")", cfg.Type)
+//
+// For webapp scaffolds (cfg.Mode == "webapp"), cards must contain one entry
+// per agent listed in cfg.Agents (in the same order). Provider/consumer
+// scaffolds ignore cards and may be passed nil.
+func Project(dir string, cfg wizard.Config, cards []*cardfetch.AgentCard) error {
+	if cfg.Mode == "webapp" {
+		return scaffoldWebapp(dir, cfg, cards)
+	}
+	if cfg.Mode != "provider" && cfg.Mode != "consumer" {
+		return fmt.Errorf("unsupported mode %q (use \"provider\", \"consumer\", or \"webapp\")", cfg.Mode)
 	}
 	if cfg.Language != "node" && cfg.Language != "python" {
 		return fmt.Errorf("unsupported language %q (use \"node\" or \"python\")", cfg.Language)
@@ -41,7 +55,7 @@ func Project(dir string, cfg wizard.Config) error {
 		return err
 	}
 
-	switch cfg.Type {
+	switch cfg.Mode {
 	case "consumer":
 		if cfg.Language == "node" {
 			return scaffoldConsumerNode(dir, cfg)
@@ -350,6 +364,69 @@ func writeNodeConsumerPackageJSON(dir string, cfg wizard.Config) error {
 	}
 
 	return os.WriteFile(filepath.Join(dir, "package.json"), data, 0644)
+}
+
+// scaffoldWebapp creates a webapp project from a slice of pre-fetched
+// AgentCards. The caller (cmd/init.go) is responsible for resolving
+// credentials, contacting the registry, and constructing the cards; this
+// function is a pure transformation: card slice → files on disk.
+func scaffoldWebapp(dir string, cfg wizard.Config, cards []*cardfetch.AgentCard) error {
+	if len(cfg.Agents) == 0 {
+		return fmt.Errorf("at least one agent is required for --mode webapp")
+	}
+	if len(cards) != len(cfg.Agents) {
+		return fmt.Errorf("scaffoldWebapp: expected %d cards, got %d", len(cfg.Agents), len(cards))
+	}
+	for _, name := range cfg.Agents {
+		if !agentNameRe.MatchString(name) {
+			return fmt.Errorf("use the bare agent name (e.g. 'translator'), not the namespaced form (e.g. 'acme/translator'); got %q", name)
+		}
+	}
+
+	baseURL := cfg.BlocksBaseURL
+	if baseURL == "" {
+		baseURL = "https://blocks.ai"
+	}
+
+	vars := EmbedVars{
+		ProjectName:        cfg.Name,
+		WidgetVersion:      WidgetVersion(),
+		BlocksAssetBaseUrl: baseURL,
+		CardSnapshotDate:   time.Now().UTC().Format("2006-01-02"),
+	}
+
+	app, err := GenerateApp(cards, vars)
+	if err != nil {
+		return fmt.Errorf("generate embed scaffold: %w", err)
+	}
+
+	webDir := filepath.Join(dir, "web")
+	if err := os.MkdirAll(webDir, 0755); err != nil {
+		return fmt.Errorf("create web directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, "index.html"), []byte(app.IndexHTML), 0644); err != nil {
+		return fmt.Errorf("write web/index.html: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, "app.js"), []byte(app.AppJS), 0644); err != nil {
+		return fmt.Errorf("write web/app.js: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, "styles.css"), []byte(app.StylesCSS), 0644); err != nil {
+		return fmt.Errorf("write web/styles.css: %w", err)
+	}
+	// README lives at the project root, not under web/.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(app.ReadmeMD), 0644); err != nil {
+		return fmt.Errorf("write README.md: %w", err)
+	}
+
+	cfg2 := &config.BlocksConfig{
+		TemplateVersion: "1.0.0",
+		Agents:          append([]string(nil), cfg.Agents...),
+	}
+	if err := config.Save(filepath.Join(dir, "blocks.config.json"), cfg2); err != nil {
+		return fmt.Errorf("write blocks.config.json: %w", err)
+	}
+
+	return nil
 }
 
 func copyEmbedded(dir, filename, embedPath string) error {

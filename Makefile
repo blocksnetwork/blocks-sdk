@@ -5,6 +5,7 @@
 setup:  ## Unix/macOS only — see README.md for Windows notes
 	npm install
 	npm run build --workspace sdks/node
+	npm run build --workspace embed-auth
 	python3 -m venv .venv
 	.venv/bin/pip install -e sdks/python
 	$(MAKE) -C cli build install
@@ -12,6 +13,7 @@ setup:  ## Unix/macOS only — see README.md for Windows notes
 
 build:
 	npm run build --workspace sdks/node
+	npm run build --workspace embed-auth
 	cd mcp && npm install --ignore-scripts && npm run build
 	$(MAKE) -C cli build
 

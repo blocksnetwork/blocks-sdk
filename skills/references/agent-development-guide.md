@@ -232,15 +232,15 @@ blocks init my-agent --yes --language node
 ```
 
 ```bash
-blocks init <name> --yes --language node                  # Provider scaffold (default --type provider)
-blocks init <name> --yes --language node --type consumer  # Consumer script (calls agents via TaskClient)
+blocks init <name> --yes --language node                  # Provider scaffold (default --mode provider)
+blocks init <name> --yes --language node --mode consumer  # Consumer script (calls agents via TaskClient)
 blocks check                                              # Validate agent-card.json + handler existence
 blocks run                                                # Start agent (Go CLI delegates to language runner)
 ```
 
-`blocks init` defaults to `--type provider` -- it scaffolds a handler
+`blocks init` defaults to `--mode provider` -- it scaffolds a handler
 agent (`handler.{ts,py}`, `trigger.{ts,py}`, `agent-card.json`).
-Passing `--type consumer` scaffolds a script (`index.ts` or `main.py`)
+Passing `--mode consumer` scaffolds a script (`index.ts` or `main.py`)
 that calls other agents via `TaskClient`; consumer projects have no
 `agent-card.json` and no handler, and they don't publish.
 

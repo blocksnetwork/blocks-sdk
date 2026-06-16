@@ -518,6 +518,93 @@ For CLI invocations, set `<agent-name>` from the card's
 Use the actual directory path for `cd`, the agentName for `blocks
 invite send`, etc.
 
+> Run this command to start your agent:
+> ```bash
+> cd <your-agent-name> && blocks run
+> ```
+
+## Step 9: Test
+
+```bash
+cd <your-agent-name> && npx tsx trigger.ts
+```
+
+For Python agents:
+
+```bash
+cd <your-agent-name> && python trigger.py
+```
+
+Report the result to the user.
+
+The scaffolded `trigger.ts` is also the canonical pattern for **consumer
+code** that drives agents from another app or script. See [Consumer
+Projects](#consumer-projects--trigger--client-code) below before editing it
+or porting the same pattern into a separate codebase.
+
+## Step 10: Dashboard
+
+```bash
+cd <your-agent-name> && blocks dashboard
+```
+
+`blocks dashboard` reads the dashboard URL from the CDM config (or
+from `BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` if either is
+set), then opens the agent's page. To target a non-prod environment
+(staging, a worktree, or a self-hosted deployment), export the env
+var before invoking the command, for example:
+
+```bash
+BLOCKS_APP_BASE_URL=https://staging.blocks.ai blocks dashboard
+```
+
+## Step 11: Ship a Web UI (Optional)
+
+If the user wants a browser UI in front of the agent (chat box, form,
+streaming preview) without standing up a backend, scaffold a static page
+using the embedded-auth template:
+
+```bash
+blocks init my-ui --mode webapp --agent <agent-name>   # repeat --agent for multiple agents (max 25)
+blocks dev                 # serves ./web locally against prod Blocks auth
+blocks deploy cloudflare  # or vercel, netlify
+```
+
+The generated page drops in a "Sign in with Blocks" widget — the page calls
+`BlocksAuth.signInAndGetClient({ agent })` (one agent) or
+`BlocksAuth.signInAndGetClients({ agents })` (several) — that mints
+short-lived per-agent JWTs via a popup handshake — no API key in the
+browser, no provider-hosted backend required. End users authenticate to
+Blocks; paid agent usage is billed to those end users, not the page
+author.
+
+The scaffolder writes **`blocks.config.json`** (`templateVersion`, `agents`,
+optional `deployTarget` / `lastDeployedUrl`) plus a generated `web/`
+(`index.html`, `app.js`, `styles.css`) wired from each agent's card. For any
+agent that declares the **pipe** task kind, the page includes a duration
+control (minutes, range 1..43200): pipe-only agents always send it; mixed
+request+pipe agents send it only when the "run as a pipe session" box is
+checked.
+
+**Deploy credentials (non-interactive).** `blocks deploy <partner>` needs a
+partner API token. This skill runs with no TTY, so export the matching env
+var BEFORE deploying (the CLI's interactive `blocks login --provider <partner>`
+paste flow cannot be used here):
+
+- Cloudflare Pages: `CLOUDFLARE_API_TOKEN`
+- Vercel: `VERCEL_TOKEN`
+- Netlify: `NETLIFY_AUTH_TOKEN`
+
+See `blocks-sdk/embed-auth/README.md` for the widget API, [SDK Contract §8.6.4h]
+for the wire-level pattern (popup flow, refresh, sign-out, error envelopes),
+`docs/embed-getting-started.md` for a step-by-step partner-page walkthrough, and
+`blocks-sdk/docs/embed-multi-agent.md` for the multi-agent composition pattern.
+
+For full-fledged apps that already have a backend, use the existing
+`backend_jwt_proxy` (server-mints-JWT) or `browser_sdk` (dashboard-style
+session) patterns documented in the [Node Reference] — those are still
+the right call when the developer is already operating server-side code.
+
 ## Consumer Projects & Trigger / Client Code
 
 This section covers code that **calls** an agent -- the scaffolded
@@ -531,12 +618,12 @@ The consumer SDK is browser-safe.
 
 If the user wants to **call** other Blocks agents from a script or app
 rather than build a new agent, scaffold a consumer project with
-`--type consumer`:
+`--mode consumer`:
 
 ```bash
-blocks init <your-script-name> --yes --language node --type consumer
+blocks init <your-script-name> --yes --language node --mode consumer
 # or
-blocks init <your-script-name> --yes --language python --type consumer
+blocks init <your-script-name> --yes --language python --mode consumer
 ```
 
 A consumer project produces:
@@ -590,12 +677,11 @@ client.destroy();
 - `sendMessage({ stream })` / `send_message(stream=)` is an optional
   request-task streaming opt-in (BLOCKS-181): `true` requests live token
   output, `false` suppresses it (status + final result only), omitted
-  leaves the server default. Resolved streaming still requires agent
-  capability, so `stream: true` against a non-streaming agent yields no
-  stream (soft hint, no error). Ignored for pipe tasks (pipe streaming is
-  capability-driven). A future Phase 2 will flip the omitted-flag default
-  from stream-if-capable to off, so pass `stream: true` explicitly if you
-  rely on streaming.
+  leaves the server default — which is now **no streaming** for request
+  tasks, so pass `stream: true` explicitly if you rely on a stream.
+  Resolved streaming still requires agent capability, so `stream: true`
+  against a non-streaming agent yields no stream (soft hint, no error).
+  Ignored for pipe tasks (pipe streaming is capability-driven).
 - Always `client.destroy()` (and `session.close()` / `await
   session.asyncClose()`) when finished -- they unsubscribe transports.
 - If background token refresh permanently fails (3 retries exhausted),
@@ -777,6 +863,7 @@ is already terminal (live-only data is gone; artifacts persist).
 - [IO Schema Reference] -- **read before editing agent-card.json** -- io input/output rules, JSON Schema format, examples
 - [Node Reference] -- handler patterns, streaming, agent-to-agent, TaskClient, env vars, CLI commands, deployment
 - [Python Reference] -- Python handler signature, snake_case APIs, run/test commands (use only when user requests Python)
+- [SDK Contract §8.6.4h] -- Embedded Auth (third-party page) consumer pattern: popup handshake, refresh, sign-out, error envelopes
 - [Agent Development Guide] -- narrative walkthrough of the build / publish / run flow; useful for first-time agent authors as a companion to `GETSTARTED.md`
 
 [Agent Card Schema]: https://config.blocks.ai/references/agent-card.schema.json
@@ -784,4 +871,5 @@ is already terminal (live-only data is gone; artifacts persist).
 [IO Schema Reference]: https://config.blocks.ai/references/io-schema-reference.md
 [Node Reference]: https://config.blocks.ai/references/node-reference.md
 [Python Reference]: https://config.blocks.ai/references/python-reference.md
+[SDK Contract §8.6.4h]: https://github.com/pubnub/blocksnetwork/blob/master/dev_docs/SDK_CONTRACT.md#8.6.4h-embedded-auth-third-party-page-pattern
 [Agent Development Guide]: https://config.blocks.ai/references/agent-development-guide.md

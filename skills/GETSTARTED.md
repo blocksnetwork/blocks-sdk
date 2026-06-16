@@ -169,7 +169,7 @@ For Python agents, use `--language node` → `--language python`. The CLI
 defaults to Python when `--language` is omitted, so always pass
 `--language node` explicitly for TypeScript agents.
 
-`blocks init` defaults `--type provider` -- it scaffolds a handler
+`blocks init` defaults `--mode provider` -- it scaffolds a handler
 agent (`handler.{ts,py}`, `trigger.{ts,py}`, `agent-card.json`). That's
 what this skill is for. If the user actually wants to **call** other
 Blocks agents from a script (a consumer project), stop here and use

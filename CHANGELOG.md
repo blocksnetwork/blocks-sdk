@@ -13,7 +13,7 @@ Each component (Node SDK, Python SDK, CLI) is versioned independently.
 ### [Unreleased]
 
 #### Added
-- `sendMessage({ stream })` — opt in or out of live streaming per request task. Pass `stream: true` to receive token streaming, or `stream: false` to skip it and get only status updates and the final result. Streaming still requires the agent to support it. Pipe tasks are unaffected. Omitting `stream` keeps today's behavior; a future release will stop streaming request tasks unless you pass `stream: true`, so set it now to be forward-compatible.
+- `sendMessage({ stream })` — opt in or out of live streaming per request task. Pass `stream: true` to receive token streaming, or `stream: false` to skip it and get only status updates and the final result. Streaming still requires the agent to support it. Pipe tasks are unaffected. Omitting `stream` means no streaming for request tasks — pass `stream: true` to opt in.
 - MCP Server support for Consumer SDK — programmatic access to agent capabilities through the Model Context Protocol
 - `session.listEvents()` for seeding full task timelines from history
 - Agent-side stream APIs now match consumer-side in shape and behavior
@@ -87,7 +87,7 @@ consumer-side task submission, real-time event subscriptions, streaming
 ### [Unreleased]
 
 #### Added
-- `send_message(stream=...)` — opt in or out of live streaming per request task. Pass `stream=True` to receive token streaming, or `stream=False` to skip it and get only status updates and the final result. Streaming still requires the agent to support it. Pipe tasks are unaffected. Omitting `stream` keeps today's behavior; a future release will stop streaming request tasks unless you pass `stream=True`, so set it now to be forward-compatible.
+- `send_message(stream=...)` — opt in or out of live streaming per request task. Pass `stream=True` to receive token streaming, or `stream=False` to skip it and get only status updates and the final result. Streaming still requires the agent to support it. Pipe tasks are unaffected. Omitting `stream` means no streaming for request tasks — pass `stream=True` to opt in.
 - `session.list_events()` for seeding full task timelines from history
 - Agent-side stream APIs now match consumer-side interface
 - Agent owners can view full task details for received tasks
@@ -167,6 +167,7 @@ validation.
 - `blocks login` no longer hangs on the `Write BLOCKS_API_KEY to project .env? (Y/n):` prompt in non-interactive sessions where a TTY is attached. Pass `--write-env` to opt in or `--no-write-env` to opt out non-interactively.
 
 #### Changed
+- `blocks init` flag `--type`/`-t` renamed to `--mode`/`-m`, which also accepts the new `webapp` value. `--type` continues to work as a deprecated alias for `provider` and `consumer` and prints a deprecation notice; it will be removed in a future release. Migrate `--type provider|consumer` to `--mode`.
 - Scaffolded projects no longer include Artifactory/.npmrc/pip.conf configuration — simplified for public registry use
 - Default CDM config URL updated to `https://config.blocks.ai/config.json`
 - OAuth callback pages redesigned to match blocks.ai aesthetic

@@ -198,7 +198,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 ## TaskClient & TaskSession
 
-**send_message(\*, agent_name, request_parts, ...)** -- all keyword-only. `owner_id` is auto-populated from auth (optional override). Optional: `idempotency_key`, `task_kind` (`"request"`|`"pipe"`), `duration`, `consumer_public_key`, `stream` (request-task streaming opt-in — `True` requests streaming, `False` suppresses it; omitted uses the server default; ignored for pipe; resolved `has_stream` still requires agent capability), `push_notification_config`, `retry_policy`, `auto_drain`, `drain_window_s` (default 30.0; overrides the per-session auto-drain window for already-open streams). Returns `TaskSession`.
+**send_message(\*, agent_name, request_parts, ...)** -- all keyword-only. `owner_id` is auto-populated from auth (optional override). Optional: `idempotency_key`, `task_kind` (`"request"`|`"pipe"`), `duration`, `consumer_public_key`, `stream` (request-task streaming opt-in — `True` requests streaming, `False` suppresses it; omitted uses the server default, now no-streaming, so pass `True` to stream; ignored for pipe; resolved `has_stream` still requires agent capability), `push_notification_config`, `retry_policy`, `auto_drain`, `drain_window_s` (default 30.0; overrides the per-session auto-drain window for already-open streams). Returns `TaskSession`.
 
 **TaskClient.connect(task_id, auto_drain=True, drain_window_s=None, role="consumer")** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`. `role` defaults to `"consumer"` (task submitter — server checks `user_id == task.owner_id`); set to `"provider"` when the caller is the agent owner viewing a received task. Provider-role access is scoped by the caller's active org: the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org. Admins with an admin-typed active org get the cross-org bypass; when no active org is resolved at all (legacy callers), the server falls back to admin-bypass / non-admin membership check on the agent's org.
 
@@ -236,6 +236,30 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 | `FileUploadError` | `presigned_upload_flow` | Presign rejection or object-storage upload failure. Carries the original cause. |
 
 ---
+
+## Consumer Auth Patterns
+
+The Python SDK is server-side: trigger scripts authenticate with an API
+key passed to `TaskClient.create(api_key=...)`. **Never** check the
+API key into a browser-shipped bundle.
+
+For browser-based consumers (a chat UI, form, streaming page) two
+options exist on top of the same per-task JWT model, both implemented
+in the Node/JS bundle, not Python:
+
+- `tokenEndpoint` (Mode 2) — the developer hosts a backend that mints
+  short-lived JWTs from the API key; the browser calls it to refresh.
+- Embedded auth (Mode 3) — drop-in `BlocksAuth` widget (JS only) served
+  by Blocks runs a popup handshake; no partner backend needed. The page
+  calls `BlocksAuth.signInAndGetClient(s)`. Authoring flow:
+  `blocks init my-ui --mode webapp --agent <name>` (writes
+  `blocks.config.json` + a generated `web/`; pipe-capable agents get a
+  duration control), then `blocks dev` / `blocks deploy <partner>`
+  (positional target; set `CLOUDFLARE_API_TOKEN` / `VERCEL_TOKEN` /
+  `NETLIFY_AUTH_TOKEN` for non-interactive deploys). The widget is
+  JS-only; the scaffolded page is not Python. See
+  `blocks-sdk/embed-auth/README.md`, `docs/embed-getting-started.md`, and
+  SDK Contract §8.6.4h.
 
 ## Trigger Script
 
@@ -507,10 +531,10 @@ for the complete reference; the Python-specific entry points are below.
 
 ```bash
 blocks init <name> --yes --language python                  # Provider scaffold (handler.py + agent-card.json)
-blocks init <name> --yes --language python --type consumer  # Consumer scaffold (main.py using TaskClient)
+blocks init <name> --yes --language python --mode consumer  # Consumer scaffold (main.py using TaskClient)
 ```
 
-`blocks init` defaults `--type provider`. Consumer projects produce
+`blocks init` defaults `--mode provider`. Consumer projects produce
 `main.py` plus `pyproject.toml` -- no `agent-card.json`, no handler,
 no publish step. Non-interactive mode requires the name argument.
 

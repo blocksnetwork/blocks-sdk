@@ -79,17 +79,17 @@ func TestValidateAgentName(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigTypeProvider(t *testing.T) {
+func TestDefaultConfigModeProvider(t *testing.T) {
 	cfg := DefaultConfig("myagent")
-	if cfg.Type != "provider" {
-		t.Errorf("Type = %q, want %q", cfg.Type, "provider")
+	if cfg.Mode != "provider" {
+		t.Errorf("Mode = %q, want %q", cfg.Mode, "provider")
 	}
 }
 
 // runWithClosedStdin redirects os.Stdin to a closed pipe, so every prompt
 // returns its default immediately (InteractiveSelect returns defaultIdx
 // because IsTerminal returns false; readLine returns defaultVal on EOF).
-func runWithClosedStdin(t *testing.T, nameFromArgs, langFromFlag, typeFromFlag string) Config {
+func runWithClosedStdin(t *testing.T, nameFromArgs, langFromFlag, modeFromFlag string) Config {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -102,17 +102,17 @@ func runWithClosedStdin(t *testing.T, nameFromArgs, langFromFlag, typeFromFlag s
 		os.Stdin = orig
 		r.Close()
 	}()
-	cfg, err := Run(nameFromArgs, langFromFlag, typeFromFlag)
+	cfg, err := Run(nameFromArgs, langFromFlag, modeFromFlag)
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	return cfg
 }
 
-func TestWizardTypeFlagSkipsPrompt(t *testing.T) {
+func TestWizardModeFlagSkipsPrompt(t *testing.T) {
 	cfg := runWithClosedStdin(t, "my_consumer", "node", "consumer")
-	if cfg.Type != "consumer" {
-		t.Errorf("Type = %q, want %q", cfg.Type, "consumer")
+	if cfg.Mode != "consumer" {
+		t.Errorf("Mode = %q, want %q", cfg.Mode, "consumer")
 	}
 	if cfg.Language != "node" {
 		t.Errorf("Language = %q, want %q", cfg.Language, "node")
@@ -121,7 +121,7 @@ func TestWizardTypeFlagSkipsPrompt(t *testing.T) {
 
 func TestWizardSkipsProviderPromptsForConsumer(t *testing.T) {
 	cfg := runWithClosedStdin(t, "my_consumer", "python", "consumer")
-	// Provider-only prompts must be skipped — their zero values prove
+	// Provider-only prompts must be skipped - their zero values prove
 	// Run() returned before the Concurrency prompt would have defaulted
 	// them to 1.
 	if cfg.Concurrency != 0 {
@@ -164,26 +164,26 @@ func TestWizardProviderPromptsDefaultFilled(t *testing.T) {
 	}
 }
 
-func TestTypeFromIndex(t *testing.T) {
-	if got := typeFromIndex(0); got != "provider" {
-		t.Errorf("typeFromIndex(0) = %q, want %q", got, "provider")
+func TestModeFromIndex(t *testing.T) {
+	if got := modeFromIndex(0); got != "provider" {
+		t.Errorf("modeFromIndex(0) = %q, want %q", got, "provider")
 	}
-	if got := typeFromIndex(1); got != "consumer" {
-		t.Errorf("typeFromIndex(1) = %q, want %q", got, "consumer")
+	if got := modeFromIndex(1); got != "consumer" {
+		t.Errorf("modeFromIndex(1) = %q, want %q", got, "consumer")
 	}
 	// Defensive: any other value falls back to provider.
-	if got := typeFromIndex(99); got != "provider" {
-		t.Errorf("typeFromIndex(99) = %q, want %q", got, "provider")
+	if got := modeFromIndex(99); got != "provider" {
+		t.Errorf("modeFromIndex(99) = %q, want %q", got, "provider")
 	}
 }
 
 func TestWizardNonTTYDefaultsToProvider(t *testing.T) {
-	// When no --type flag is given and stdin is non-TTY,
+	// When no --mode flag is given and stdin is non-TTY,
 	// InteractiveSelect returns the default index (0) and the wizard
 	// picks "provider". This exercises the same mapping path that a
 	// human pressing Enter without navigating the arrow keys would hit.
 	cfg := runWithClosedStdin(t, "x", "python", "")
-	if cfg.Type != "provider" {
-		t.Errorf("Type = %q, want %q (default index 0)", cfg.Type, "provider")
+	if cfg.Mode != "provider" {
+		t.Errorf("Mode = %q, want %q (default index 0)", cfg.Mode, "provider")
 	}
 }

@@ -466,6 +466,7 @@ from blocks_network import TaskClient, text_part
 session = client.send_message(
     agent_name="multi_stream_agent",
     request_parts=[text_part("start")],
+    stream=True,  # request-task streaming is opt-in (BLOCKS-181)
 )
 
 # Option 1 — react to each stream as it is announced
@@ -499,6 +500,7 @@ window per session:
 session = client.send_message(
     agent_name="llm_streamer",
     request_parts=[text_part("stream please")],
+    stream=True,          # request-task streaming is opt-in (BLOCKS-181)
     drain_window_s=5.0,   # 5 seconds
 )
 

@@ -97,6 +97,53 @@ export class RpcError extends Error {
 }
 
 /**
+ * Backend AppError codes that mean the JWT's underlying session was rotated/
+ * superseded and a refresh will recover. The embedded-auth flow rotates the
+ * refresh-token row and the backend revokes the old row the instant a new
+ * token is minted, so a request that raced the rotation comes back with
+ * `EMBEDDED_JWT_REVOKED`; refreshing yields the rotated token and the retry
+ * succeeds. These are raised in auth middleware BEFORE the task is processed,
+ * so retrying once cannot double-submit.
+ *
+ * The other embedded-JWT liveness codes are likewise refresh-recoverable and
+ * must be retried so a dead session clears immediately instead of lingering
+ * until JWT expiry (~60s):
+ *   - `EMBEDDED_JWT_LOGOUT`: the refresh endpoint re-checks the logout
+ *     watermark and 401s, so the refresh path clears the session at once.
+ *   - `EMBEDDED_JWT_KILLED`: refresh drops killed agents from the scope;
+ *     surviving agents re-mint a narrowed token, all-killed 401s and clears.
+ *   - `EMBEDDED_JWT_SCOPE_DRIFT`: refresh re-mints scoped to the current
+ *     refresh-token row, so the new JWT matches and the retry succeeds.
+ *   - `AGENT_OUT_OF_SCOPE`: one of several scoped agents had its grant
+ *     revoked; refresh narrows the token to the still-reachable subset so
+ *     requests to the surviving agents recover (all-revoked 401s and clears).
+ */
+const AUTH_REFRESH_RETRYABLE_RPC_DATA_CODES = new Set([
+  'EMBEDDED_JWT_REVOKED',
+  'EMBEDDED_JWT_LOGOUT',
+  'EMBEDDED_JWT_KILLED',
+  'EMBEDDED_JWT_SCOPE_DRIFT',
+  'AGENT_OUT_OF_SCOPE',
+]);
+
+/**
+ * Whether an RpcError should trigger one reactive token refresh + retry.
+ * Matches either a transport 401, or a backend auth-revoke code carried in the
+ * JSON-RPC error `data.code` (where the transport `code` is a generic JSON-RPC
+ * code rather than 401 — which is why a plain `err.code === 401` check misses
+ * embedded-auth revocations).
+ */
+function isAuthRefreshRetryable(err: unknown): boolean {
+  if (!(err instanceof RpcError)) return false;
+  if (err.code === 401) return true;
+  const data = err.data as { code?: unknown } | null | undefined;
+  return (
+    typeof data?.code === 'string' &&
+    AUTH_REFRESH_RETRYABLE_RPC_DATA_CODES.has(data.code)
+  );
+}
+
+/**
  * Typed error for backend `BillingModeMismatch` responses.
  *
  * Backend wire shape (per Phase 1 `bmc-data` IMPL_REPORT):
@@ -277,10 +324,11 @@ export async function callRpc<T>(
     try {
       return await doRequest();
     } catch (err) {
-      // 401 reactive refresh: if authProvider can refresh, retry once
+      // Reactive refresh: a transport 401 OR a backend auth-revoke code
+      // (e.g. EMBEDDED_JWT_REVOKED from a refresh-token rotation race) — if the
+      // authProvider can refresh, retry once with the rotated token.
       if (
-        err instanceof RpcError &&
-        err.code === 401 &&
+        isAuthRefreshRetryable(err) &&
         config.authProvider &&
         !config.agentAuth // agentAuth handles its own 401 retry
       ) {

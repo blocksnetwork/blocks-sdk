@@ -1,0 +1,39 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000006",
+    "agentName": "inbound_stream",
+    "displayName": "inbound_stream",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request"]
+      },
+      "io": {
+        "inputs": [
+          {
+            "id": "request",
+            "description": "JSON request",
+            "contentType": "application/json",
+            "required": true,
+            "schema": { "type": "object" },
+            "example": { "text": "hi" }
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "description": "Result",
+            "contentType": "text/plain",
+            "guaranteed": true
+          }
+        ]
+      },
+      "streams": {
+        "uploads": {
+          "direction": "inbound",
+          "format": "bytes",
+          "description": "Caller uploads bytes here"
+        }
+      }
+    }
+  }
+}

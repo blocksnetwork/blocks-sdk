@@ -2,19 +2,19 @@ package cmd
 
 import (
 	"bufio"
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 	"github.com/shopspring/decimal"
@@ -56,11 +56,13 @@ var publishCmd = &cobra.Command{
 	Long:  "Publish the agent card to the registry. Requires prior authentication via 'blocks login' or --api-key.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runPublish(cmd, args)
+		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+		defer stop()
+		return runPublish(ctx, cmd, args)
 	},
 }
 
-func runPublish(cmd *cobra.Command, args []string) error {
+func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 	backendURL := resolveBackendURL()
 
 	apiKey, err := resolvePublishApiKey()
@@ -203,15 +205,9 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		envelope["freeMinutesPerConsumer"] = *promInput.FreeMinutesPerConsumer
 	}
 
-	body, err := json.Marshal(envelope)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
 	if backendURL == "" {
 		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
 	}
-	registryURL := backendURL + "/api/v1/registry/agents"
 
 	// Apply org name update right before publishing (after all prompts succeed).
 	// If --org-name was explicitly provided, treat conflicts as hard errors (no re-prompt).
@@ -224,39 +220,30 @@ func runPublish(cmd *cobra.Command, args []string) error {
 
 	printPublishSummary(agentName, promInput)
 
-	req, err := http.NewRequest("POST", registryURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Blocks-Protocol-Version", registry.ProtocolVersion)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
+	// Use the shared blocksapi.Client so Authorization and Blocks-Protocol-Version
+	// headers are attached automatically on every outbound Blocks-backend call.
+	client := blocksapi.NewClient(backendURL, apiKey)
+	var respPayload map[string]interface{}
+	if err := client.DoJSON(ctx, "POST", "/api/v1/registry/agents", envelope, &respPayload); err != nil {
+		if apiErr, ok := err.(*blocksapi.APIError); ok {
+			if apiErr.StatusCode == 401 {
+				if publishApiKey != "" {
+					return fmt.Errorf("authentication failed — the provided --api-key was rejected; replace it with a valid key and retry")
+				}
+				if publishApiKeyStdin {
+					return fmt.Errorf("authentication failed — the API key provided via --api-key-stdin was rejected; replace it with a valid key and retry")
+				}
+				return fmt.Errorf("authentication failed — run 'blocks login' to re-authenticate, then retry 'blocks publish'")
+			}
+			if apiErr.StatusCode == 403 {
+				return fmt.Errorf("permission denied (HTTP 403) — check that your API key owns this agent")
+			}
+			return publishFailedError(agentName, promInput, apiErrorToMap(apiErr))
+		}
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode == 401 {
-		if publishApiKey != "" {
-			return fmt.Errorf("authentication failed — the provided --api-key was rejected; replace it with a valid key and retry")
-		}
-		if publishApiKeyStdin {
-			return fmt.Errorf("authentication failed — the API key provided via --api-key-stdin was rejected; replace it with a valid key and retry")
-		}
-		return fmt.Errorf("authentication failed — run 'blocks login' to re-authenticate, then retry 'blocks publish'")
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var errResp map[string]interface{}
-		if json.Unmarshal(respBody, &errResp) == nil {
-			return publishFailedError(agentName, promInput, errResp)
-		}
-		return fmt.Errorf("publish failed: HTTP %d", resp.StatusCode)
-	}
-
+	respBody, _ := json.Marshal(respPayload)
 	agentURL := publishedAgentURL(respBody, agentName, interactive)
 	printPublishSuccess(agentName, promInput, agentURL)
 
@@ -266,6 +253,10 @@ func runPublish(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// resolvePublishApiKey resolves the API key from (in order): --api-key flag,
+// --api-key-stdin flag, BLOCKS_API_KEY env var, then stored credentials.
+// Does NOT trigger any browser/login flow — publish requires prior `blocks
+// login` per BLOCKS-321.
 func resolvePublishApiKey() (string, error) {
 	if publishApiKey != "" {
 		return publishApiKey, nil
@@ -298,6 +289,19 @@ func resolvePublishApiKey() (string, error) {
 		return "", fmt.Errorf("credentials expired — run 'blocks login' to re-authenticate")
 	}
 	return creds.ApiKey, nil
+}
+
+// apiErrorToMap converts an *APIError into the map[string]interface{} shape
+// that publishFailedError expects.
+func apiErrorToMap(e *blocksapi.APIError) map[string]interface{} {
+	m := map[string]interface{}{}
+	if e.Code != "" {
+		m["code"] = e.Code
+	}
+	if e.Message != "" {
+		m["error"] = e.Message
+	}
+	return m
 }
 
 func publishFailedError(agentName string, input registry.PromotionInput, payload map[string]interface{}) error {

@@ -1,0 +1,37 @@
+{
+  "agent": {
+    "id": "019e0700-0000-0000-0000-000000000002",
+    "agentName": "binary_input",
+    "displayName": "binary_input",
+    "card": {
+      "capabilities": {
+        "taskKinds": ["request"]
+      },
+      "io": {
+        "inputs": [
+          {
+            "id": "blob",
+            "description": "raw binary blob",
+            "contentType": "application/octet-stream",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "thumbnail",
+            "description": "Image preview",
+            "contentType": "image/png",
+            "guaranteed": true
+          },
+          {
+            "id": "report",
+            "description": "PDF report",
+            "contentType": "application/pdf",
+            "guaranteed": false
+          }
+        ]
+      },
+      "streams": {}
+    }
+  }
+}

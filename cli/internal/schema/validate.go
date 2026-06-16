@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/deploy"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
@@ -129,7 +130,47 @@ func ValidateBytes(raw []byte, cardPath string) ValidationResult {
 		res.Successes = append(res.Successes, "All IDs are unique")
 	}
 
+	// 7. identity.webApps[].url semantic validation. The JSON Schema regex
+	// is a coarse-grained shape gate; it can't enforce port-range bounds,
+	// percent-encoding validity, or IPv6 literal correctness. Parse each
+	// URL through the canonical helper so `blocks check` rejects anything
+	// the backend Zod validator would reject at registration time.
+	webAppErrors := checkWebAppURLs(card)
+	if len(webAppErrors) > 0 {
+		res.Errors = append(res.Errors, webAppErrors...)
+	}
+
 	return res
+}
+
+// checkWebAppURLs runs `deploy.ValidateWebAppURL` against each
+// identity.webApps[].url so the CLI surfaces parser-level errors
+// (invalid percent-encoding, out-of-range port, malformed IPv6) before
+// the user runs `blocks publish` and discovers the backend reject.
+func checkWebAppURLs(card map[string]interface{}) []string {
+	identity, ok := card["identity"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	rawList, ok := identity["webApps"].([]interface{})
+	if !ok {
+		return nil
+	}
+	var errs []string
+	for i, entry := range rawList {
+		obj, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		urlStr, ok := obj["url"].(string)
+		if !ok {
+			continue
+		}
+		if err := deploy.ValidateWebAppURL(urlStr); err != nil {
+			errs = append(errs, fmt.Sprintf("identity.webApps[%d].%s", i, err.Error()))
+		}
+	}
+	return errs
 }
 
 // checkIDUniqueness validates that io.inputs[].id, io.outputs[].id, and tags[].id
