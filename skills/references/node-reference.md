@@ -335,6 +335,7 @@ Additional env vars read by the SDK:
 - `BLOCKS_CDM_URL` -- CDM config endpoint (defaults to production S3-hosted endpoint)
 - `LOG_LEVEL` -- error/warn/info/debug (default info)
 - `BLOCKS_DEBUG_INTERNAL` -- comma-separated debug subsystems. Values: `diagnostics` (transport-status listener — connectivity transitions and alive snapshots; **Node SDK only**), `forward_transport` (surface the underlying transport's own log output; **both SDKs** — Node forwards it through the Blocks logger under `[Transport]`, Python stops filtering the `httpx`/`httpcore` request lines; see `python-reference.md`). Neither implied by `LOG_LEVEL=debug`. See `dev_docs/SDK_CONTRACT.md` §11.2 for the canonical contract.
+- `BLOCKS_PROFILE` -- comma-separated opt-in local profilers. `timing` makes the runtime log one `dispatch timing` line per task with `received_to_running_ms` / `running_to_handler_ms` / `received_to_handler_ms` (single process clock, skew-free). **Local-only, no egress**; off by default; for bench use. See `dev_docs/SDK_CONTRACT.md` §11.2.
 - `STREAM_BUNDLE_SIZE` -- stream flush byte threshold (default 4096)
 - `STREAM_MAX_LATENCY_MS` -- stream flush time threshold in ms (default 250)
 - `STREAM_MAX_MESSAGE_SIZE` -- max message size before multipart splitting (default 16384)

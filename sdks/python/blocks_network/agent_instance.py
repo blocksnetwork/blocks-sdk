@@ -45,6 +45,7 @@ from .agent_registry import get_agent
 from .channel_manager import ChannelManager, create_channel_manager
 from .credential_cache import CredentialCache
 from .logging_utils import log_agent_instance_event
+from .profiling import is_profiling_enabled, log_dispatch_timing
 from .pubnub_client import create_pubnub_client
 from .stream_context import (
     ExternalStreamObject,
@@ -69,6 +70,9 @@ from .types import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+_profile_received_at: dict[str, float] = {}
 
 
 def _extract_owner_id(
@@ -916,6 +920,7 @@ def start_agent_instance(
             "progress": 0,
             "state": "running",
         })
+        prof_running_ms = time.monotonic() * 1000.0
 
 
         # Stream tracking for this task
@@ -1570,6 +1575,15 @@ def start_agent_instance(
         )
 
         # Execute the user-supplied handler
+        prof_handler_ms = time.monotonic() * 1000.0
+        prof_recv_ms = _profile_received_at.pop(task.task_id, None)
+        if prof_recv_ms is not None:
+            log_dispatch_timing(
+                task.task_id,
+                received_ms=int(prof_recv_ms),
+                running_ms=int(prof_running_ms),
+                handler_ms=int(prof_handler_ms),
+            )
         result = None
         try:
             if options.handler:
@@ -1833,6 +1847,8 @@ def start_agent_instance(
             return
 
         if isinstance(msg, StartTaskMessage):
+            if is_profiling_enabled():
+                _profile_received_at[msg.task_id] = time.monotonic() * 1000.0
             task_env = active_env  # capture environment at task receipt
             owner_id = _extract_owner_id(msg.owner_id, msg.caller_claims)
             org_id = msg.org_id or owner_id
