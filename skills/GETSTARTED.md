@@ -182,12 +182,15 @@ the agent should do. The scaffold ships a working hello-world
 template -- you can publish it as-is to confirm the round-trip, or
 customize it now.
 
-Two requirements **must** be met before publish:
+Two things to get right before publish:
 
-1. **Set `runtime.maxRunningTimeSec`** in `agent-card.json`. This is
-   the wall-clock timeout (seconds) for a single task invocation.
-   Reasonable starting values: simple request/response `30`-`60`,
-   LLM-backed `120`-`300`, long-running pipe tasks `600`-`3600`.
+1. **Set `runtime.maxRunningTimeSec`** in `agent-card.json` (strongly
+   recommended -- not enforced by `blocks check`, and not added by
+   `blocks init`, but omitting it leaves you with a default timeout
+   that is often wrong). This is the wall-clock timeout (seconds) for a
+   single task invocation. Reasonable starting values: simple
+   request/response `30`-`60`, LLM-backed `120`-`300`, long-running
+   pipe tasks `600`-`3600`.
 2. **Update `io.inputs[]` / `io.outputs[]`** to match what the handler
    reads from `task.requestParts[0]` and returns. Without a correct
    schema, the dashboard can't render input forms.

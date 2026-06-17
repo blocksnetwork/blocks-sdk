@@ -39,8 +39,25 @@ ambiguous directory) must be confirmed via the host's question tool
 `GETSTARTED.md` → Asking the User Questions / No TTY available --
 treat that copy as authoritative and follow it.
 
+## Required Reading: the Agent Card Schema
+
+The **[Agent Card Schema]** is the single source of truth for the
+structure of `agent-card.json` — every field, type, and constraint the
+platform enforces. `blocks check` validates your card against it, and
+`blocks publish` rejects anything that does not conform. **Read it
+before authoring or editing any `agent-card.json`.** Do not infer the
+card shape from examples alone (including the snippets in this file) —
+examples illustrate, the schema decides.
+
+> [Agent Card Schema] — https://config.blocks.ai/references/agent-card.schema.json
+
+When the schema and any prose or example in this skill appear to
+disagree, the schema wins. See also [Agent Card Reference] (field
+guidance) and [IO Schema Reference] (input/output rules).
+
 ## Section Index
 
+- [Required Reading: the Agent Card Schema](#required-reading-the-agent-card-schema) -- **read first** -- canonical, enforced `agent-card.json` structure
 - [CLI Reference](#cli-reference) -- install, login, whoami, run, check, dashboard, env overrides
 - [Agent Card Reference](#agent-card-reference) -- runtime config, optional fields
 - [IO Schema Rules](#io-schema-rules) -- transport classes, examples, drafting from a handler
@@ -156,9 +173,17 @@ BLOCKS_APP_BASE_URL=https://staging.blocks.ai blocks dashboard
 
 ## Agent Card Reference
 
-### Required: `runtime.maxRunningTimeSec`
+The authoritative structure of `agent-card.json` is the
+**[Agent Card Schema]** (see [Required Reading](#required-reading-the-agent-card-schema)).
+This section gives field-level guidance; the schema is what
+`blocks check` and `blocks publish` enforce.
 
-**Always** set `runtime.maxRunningTimeSec` in `agent-card.json`. This
+### Recommended: `runtime.maxRunningTimeSec`
+
+**Strongly recommended:** set `runtime.maxRunningTimeSec` in
+`agent-card.json`. It is not enforced -- `blocks check` passes without
+it and `blocks init` does not scaffold it -- but omitting it means the
+platform applies a default that is often wrong for the workload. This
 integer (seconds) declares the maximum wall-clock time a single task
 invocation may run before the platform considers it timed out. Choose
 a value appropriate for the workload:
@@ -496,9 +521,10 @@ don't assume they want to edit the handler.
    - **Card present:** Read it. Verify it has the required fields per
      [Agent Card Reference] minimal example (`identity.{agentName,
      displayName, description, version, provider.organization}`,
-     `capabilities.taskKinds`, `tags[]`, `runtime.{handler,
-     maxRunningTimeSec}`). If anything required is missing, treat as
-     "card missing" below.
+     `capabilities.taskKinds`, `tags[]`, `runtime.handler`). If
+     anything required is missing, treat as "card missing" below.
+     `runtime.maxRunningTimeSec` is recommended but optional -- its
+     absence alone does not make a card "missing"; just add it.
    - **Card missing:** Read the handler to infer input/output shape,
      then draft a minimal `agent-card.json` per [IO Schema Rules →
      Drafting an IO schema from an existing
@@ -767,7 +793,7 @@ import { textPart, filePart } from '@blocks-network/sdk';
 
 requestParts: [
   textPart(JSON.stringify({ query: 'weather', limit: 10 }), 'request'),
-  filePart(blobOrUint8Array, { partId: 'photo', mimeType: 'image/png' }),
+  filePart(blobOrUint8Array, { partId: 'photo', contentType: 'image/png' }),
 ]
 ```
 
@@ -779,7 +805,9 @@ requestParts: [
   `schema.properties`.
 - `filePart()` accepts `Uint8Array | ArrayBuffer | Blob | File` --
   browser callers can pass a `File` straight through. `partId` is
-  required on file parts.
+  required on file parts. The options object is
+  `{ partId, fileName?, contentType? }` -- use `contentType` (not
+  `mimeType`) to set the part's MIME type.
 
 ### Reading artifacts
 

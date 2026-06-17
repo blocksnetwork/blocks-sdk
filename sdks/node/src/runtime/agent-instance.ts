@@ -65,6 +65,9 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
   isProtocolVersionSupported,
 } from './protocol-version.js';
+import { isProfilingEnabled, logDispatchTiming } from './profiling.js';
+
+const profileReceivedAt = new Map<string, number>();
 
 /**
  * A single artifact entry within HandlerResult.artifacts.
@@ -1122,6 +1125,7 @@ export const startAgentInstance = async (
       progress: 0,
       state: 'running',
     });
+    const profRunningMs = Date.now();
 
     // Per-task unnamed stream counter
     taskStreamCounters.set(task.taskId, 0);
@@ -1704,6 +1708,16 @@ export const startAgentInstance = async (
 
     // Execute the user-supplied handler
     let result: HandlerResult | undefined;
+    const profHandlerMs = Date.now();
+    const profRecvMs = profileReceivedAt.get(task.taskId);
+    if (profRecvMs !== undefined) {
+      logDispatchTiming(task.taskId, {
+        receivedMs: profRecvMs,
+        runningMs: profRunningMs,
+        handlerMs: profHandlerMs,
+      });
+      profileReceivedAt.delete(task.taskId);
+    }
     try {
       result = opts.handler ? await opts.handler(task, taskContext) : undefined;
     } finally {
@@ -1884,6 +1898,7 @@ export const startAgentInstance = async (
     meta?: Record<string, unknown>,
   ): Promise<void> => {
     if (msg.type === 'StartTask') {
+      if (isProfilingEnabled()) profileReceivedAt.set(msg.taskId, Date.now());
       const taskEnv = activeEnv; // capture environment at task receipt
       const ownerId = extractOwnerId(msg.ownerId, msg.callerClaims);
       const orgId = msg.orgId ?? ownerId;
