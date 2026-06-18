@@ -1,0 +1,62 @@
+{
+  "identity": {
+    "agentName": "chat_agent_node",
+    "displayName": "chat-agent (Node)",
+    "description": "Multi-turn chat agent that remembers context across turns. Each turn is an independent request task; the agent mints a conversationId on the first turn and returns it in the artifact so the consumer can thread it back into later turns.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "message",
+        "description": "A chat message, plus an optional conversationId returned by a previous turn. Omit conversationId on the first turn.",
+        "contentType": "application/json",
+        "required": true,
+        "example": { "text": "hi, I'm Alice" },
+        "schema": {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "title": "Message",
+              "default": "hi, I'm Alice"
+            },
+            "conversationId": {
+              "type": "string",
+              "title": "Conversation ID",
+              "description": "Returned by the previous turn's artifact. Omit on the first turn."
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "reply",
+        "description": "Agent reply plus conversationId, turn number, and how many prior messages are remembered.",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "chat",
+      "name": "Multi-turn Chat",
+      "description": "Context-preserving conversation across independent request tasks."
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1
+  }
+}
