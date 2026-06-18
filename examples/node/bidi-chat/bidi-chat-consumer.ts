@@ -32,7 +32,11 @@ if (!apiKey) {
 const cdmUrl = process.env.BLOCKS_CDM_URL;
 const baseUrl = process.env.BLOCKS_BACKEND_URL ?? (await fetchCdmConfig(cdmUrl)).api.baseUrl;
 
-const entry = await getAgent(AGENT_NAME, { baseUrl });
+// Pass the API key so the registry lookup is authenticated: the
+// GET /registry/agents route uses optionalAuth, so an anonymous lookup
+// only sees *public* agents. A freshly published agent is private to your
+// org and is invisible without the key.
+const entry = await getAgent(AGENT_NAME, { baseUrl, apiKey });
 if (!entry) {
   console.error(`Agent "${AGENT_NAME}" not found at ${baseUrl}.`);
   process.exit(1);

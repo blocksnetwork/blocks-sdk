@@ -1,0 +1,12 @@
+[project]
+name = "chat-agent-example"
+version = "1.0.0"
+description = "Multi-turn chat agent example for Blocks Network"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.setuptools]
+py-modules = ["handler", "main"]
