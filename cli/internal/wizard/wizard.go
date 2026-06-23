@@ -10,9 +10,18 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/pubnub/blocks-sdk/cli/internal/branding"
 )
 
 var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// helpDisplayNameText is the display-name prompt help. It reads the active
+// product name at call time so enterprise deployments brand it correctly.
+func helpDisplayNameText() string {
+	return "  A human-readable name shown in the " + branding.ProductName() + " UI (e.g. \"Weather Forecast Agent\").\n" +
+		"  Defaults to your agent name. Can include spaces and special characters."
+}
 
 // projectNameRe constrains a webapp project directory name to safe characters
 // (no path separators, no spaces). It is intentionally looser than
@@ -28,9 +37,6 @@ const (
 	helpType = "  Provider: You're building an agent that processes tasks.\n" +
 		"  Consumer: You're building a client that calls other agents.\n" +
 		"  Choose Provider if you're unsure."
-
-	helpDisplayName = "  A human-readable name shown in the Blocks Network UI (e.g. \"Weather Forecast Agent\").\n" +
-		"  Defaults to your agent name. Can include spaces and special characters."
 
 	helpDescription = "  A short sentence describing what your agent does. Shown on the Discover page\n" +
 		"  and in agent cards. Helps others understand when to use your agent."
@@ -155,7 +161,7 @@ func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config,
 			}
 			name := strings.TrimSpace(line)
 			if name == "?" {
-				fmt.Println("  A unique identifier for your agent on the Blocks Network.")
+				fmt.Println("  A unique identifier for your agent on " + branding.ProductName() + ".")
 				fmt.Println("  Must contain only letters, numbers, and underscores (e.g. my_weather_agent).")
 				fmt.Println("  This becomes the agentName in your agent-card.json and is how other agents")
 				fmt.Println("  and consumers find yours.")
@@ -194,7 +200,7 @@ func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config,
 	// DisplayName and Description are provider-only; consumers have no
 	// agent identity and don't publish an agent-card.
 	if cfg.Mode == "provider" {
-		displayName, err := readLine(r, "Display name", cfg.Name, helpDisplayName)
+		displayName, err := readLine(r, "Display name", cfg.Name, helpDisplayNameText())
 		if err != nil {
 			return cfg, err
 		}

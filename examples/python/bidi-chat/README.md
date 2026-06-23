@@ -42,8 +42,9 @@ pip install -e ../../../sdks/python    # if the SDK isn't installed yet
 pip install -e .
 
 # Terminal 1 — agent
-blocks publish    # first time only
+blocks register   # first time only -- private + free (recommended first step)
 blocks run
+# Later, to make the agent public or set pricing: blocks publish
 
 # Terminal 2 — consumer
 python main.py

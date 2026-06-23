@@ -7,6 +7,7 @@ import (
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 )
 
 // Build-time defaults injected via ldflags.
@@ -21,6 +22,9 @@ const (
 func resolveBackendURL() string {
 	if v := os.Getenv("BLOCKS_BACKEND_URL"); v != "" {
 		return v
+	}
+	if _, p, err := profiles.Active(); err == nil && p.BaseURL != "" {
+		return p.BaseURL
 	}
 	if defaultBackendURL != "" {
 		return defaultBackendURL
@@ -42,6 +46,9 @@ func resolveAppBaseURL() string {
 	}
 	if v := strings.TrimSpace(os.Getenv(blocksDashboardURLEnv)); v != "" {
 		return v
+	}
+	if _, p, err := profiles.Active(); err == nil && p.DashboardBaseURL != "" {
+		return p.DashboardBaseURL
 	}
 	return ""
 }
@@ -71,9 +78,28 @@ func openBrowser(rawURL string) error {
 	return openBrowserFunc(rawURL)
 }
 
+// activeProfileAPIKey returns the active profile's default-org API key, if a
+// usable (non-empty, unexpired) one exists.
+func activeProfileAPIKey() (string, bool) {
+	_, p, err := profiles.Active()
+	if err != nil {
+		return "", false
+	}
+	if k, ok := p.DefaultOrgKey(); ok && k.ApiKey != "" && !k.IsExpired() {
+		return k.ApiKey, true
+	}
+	return "", false
+}
+
 // loadCredentials loads credentials and returns the API key or an error.
-// API keys are long-lived and do not require refresh.
+// API keys are long-lived and do not require refresh. The active profile is
+// preferred; the legacy credentials.json remains a fallback for one migration
+// cycle.
 func loadCredentials() (string, error) {
+	if key, ok := activeProfileAPIKey(); ok {
+		return key, nil
+	}
+
 	creds, err := auth.Load()
 	if err != nil {
 		return "", fmt.Errorf("not logged in — run 'blocks login' first")

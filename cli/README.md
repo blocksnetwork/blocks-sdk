@@ -10,10 +10,12 @@ Node SDK or npm.
 |---------|-------------|
 | `blocks init` | Scaffold a new agent project (Node or Python) |
 | `blocks check` | Validate `agent-card.json` and handler file |
-| `blocks login` | Authenticate and store credentials for future commands |
-| `blocks publish` | Publish agent metadata to the registry (requires prior `blocks login` or `--api-key`) |
+| `blocks login [instanceUrl]` | Authenticate and store credentials for future commands. An optional instance URL targets a specific deployment (the CLI auto-discovers whether it is enterprise) |
+| `blocks register` | Register an agent privately and free — the recommended first step (requires prior `blocks login` or `--api-key`) |
+| `blocks publish` | Publish an agent to the network, choosing public/private and free/paid (requires prior `blocks login` or `--api-key`) |
 | `blocks run` | Start an agent (delegates to `npm exec --no blocks-run` for Node, venv Python `-m blocks_network` for Python) |
-| `blocks logout` | Remove stored credentials |
+| `blocks logout` | Remove stored credentials for the selected profile |
+| `blocks profile` | Manage deployment profiles — `list`, `use <name>`, `rename <old> <new>`, `remove <name>` |
 | `blocks whoami` | Display current authenticated identity |
 | `blocks upgrade` | Upgrade the CLI to the latest release |
 
@@ -32,7 +34,8 @@ delegates to the appropriate SDK runner:
 
 - `--mode provider` (default): an agent handler project. Produces
   `handler.{ts,py}`, `trigger.{ts,py}`, and `agent-card.json`.
-  Use `blocks publish` and `blocks run` to deploy and run.
+  Use `blocks register` (private + free, the recommended first step) or
+  `blocks publish` (to choose public/paid) to deploy, and `blocks run` to run.
 - `--mode consumer`: a script that calls other agents via `TaskClient`.
   Produces `index.ts` / `main.py`. Run with `npm run start` or
   `python main.py`.
@@ -48,6 +51,45 @@ blocks init my_consumer --mode consumer      # consumer, prompt for language
 blocks init my_consumer --mode consumer --language python --yes
 blocks init my_ui --mode webapp --agent echo # webapp wired to the echo agent
 ```
+
+## Profiles & deployments
+
+A **profile** is a named deployment target (Blocks Network or an Enterprise
+instance) with its own base URL, branding, and per-org API-key cache. The
+stock `blocks-network` profile always exists and is the default.
+
+```bash
+blocks profile list                       # show profiles (active one marked)
+blocks profile use acme                    # switch the active profile
+blocks profile rename localhost:3001 dev   # rename a profile (data preserved)
+blocks profile remove acme                 # delete a profile
+```
+
+Logging in to an enterprise deployment creates/updates a profile. By default
+the profile is named after the instance host (e.g. `blocks.acme.com`); pass
+`--profile <name>` to store it under a custom name instead:
+
+```bash
+blocks login https://blocks.acme.com                   # profile "blocks.acme.com"
+blocks login https://blocks.acme.com --profile acme    # profile "acme"
+```
+
+### Selecting a profile per command
+
+Every command resolves which profile to use in this order:
+
+1. `--profile <name>` — a persistent flag accepted by any command
+   (e.g. `blocks --profile acme publish`, `blocks --profile acme logout`).
+2. `BLOCKS_PROFILE` environment variable.
+3. The saved active profile (set by `blocks profile use`).
+4. The default `blocks-network` profile.
+
+### Credential storage
+
+Profiles are stored in `~/.config/blocks/contexts.json`
+(`$XDG_CONFIG_HOME/blocks/contexts.json` when `XDG_CONFIG_HOME` is set), written
+with `0600` permissions. On first run, a legacy `credentials.json` from an older
+CLI is automatically migrated into the default profile.
 
 ## Installation
 

@@ -55,8 +55,9 @@ This installs all workspace dependencies, including each example.
 ```bash
 cd examples/node/echo
 blocks login --write-env  # first time only -- authenticate
-blocks publish         # register agent with the registry
+blocks register        # register the agent privately and free (recommended first step)
 blocks run
+# Later, to make the agent public or set pricing: blocks publish
 ```
 
 3. Press Ctrl+C for graceful shutdown.

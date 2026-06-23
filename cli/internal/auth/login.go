@@ -13,85 +13,49 @@ import (
 	"time"
 )
 
-// EnsureCredentials checks for valid stored credentials. If missing or expired,
-// runs the appropriate auth flow based on flags. Returns the API key string.
-//
-// Supports three paths:
-//   - apiKeyDirect: use this API key directly (--api-key flag)
-//   - apiKeyStdin: read API key from stdin (--api-key-stdin flag)
-//   - Browser OAuth PKCE flow (default)
-//
-// Note: BLOCKS_API_KEY env var is handled at the command level (e.g.
-// resolvePublishApiKey) rather than here, so that `blocks login` can
-// always force a fresh browser flow regardless of env state.
-func EnsureCredentials(ctx context.Context, backendURL, clientID, apiKeyDirect string, apiKeyStdin bool) (string, error) {
-	// Direct API key
+// EnsureCredentialsProfile runs the Blocks auth flow (browser PKCE, or the
+// --api-key / --api-key-stdin shortcuts) and returns the minted credential record
+// (org id/name/key id/expiry) so the caller can persist it into a profile. For the
+// --api-key / --api-key-stdin paths the record carries only the ApiKey (no org
+// metadata is known without a session). It does NOT write the legacy
+// credentials.json — the caller owns persistence (a profile in contexts.json).
+func EnsureCredentialsProfile(ctx context.Context, backendURL, clientID, apiKeyDirect string, apiKeyStdin bool) (*Credentials, string, error) {
 	if apiKeyDirect != "" {
-		creds := &Credentials{ApiKey: apiKeyDirect}
-		if err := Save(creds); err != nil {
-			return "", fmt.Errorf("failed to save credentials: %w", err)
-		}
-		return apiKeyDirect, nil
+		return &Credentials{ApiKey: apiKeyDirect}, apiKeyDirect, nil
 	}
-
-	// Stdin API key
 	if apiKeyStdin {
 		scanner := bufio.NewScanner(os.Stdin)
 		if !scanner.Scan() {
-			return "", fmt.Errorf("--api-key-stdin: no input received on stdin")
+			return nil, "", fmt.Errorf("--api-key-stdin: no input received on stdin")
 		}
 		key := scanner.Text()
 		if key == "" {
-			return "", fmt.Errorf("--api-key-stdin: empty API key received")
+			return nil, "", fmt.Errorf("--api-key-stdin: empty API key received")
 		}
-		creds := &Credentials{ApiKey: key}
-		if err := Save(creds); err != nil {
-			return "", fmt.Errorf("failed to save credentials: %w", err)
-		}
-		return key, nil
+		return &Credentials{ApiKey: key}, key, nil
 	}
-
-	// Check existing credentials
-	creds, err := Load()
-	if err == nil && !creds.IsExpired() && creds.ApiKey != "" {
-		return creds.ApiKey, nil
-	}
-
-	// Browser OAuth PKCE flow
 	if backendURL == "" {
-		return "", fmt.Errorf("BLOCKS_BACKEND_URL must be set (run from a project directory with .env, or set BLOCKS_BACKEND_URL)")
+		return nil, "", fmt.Errorf("instance URL/BLOCKS_BACKEND_URL must be set")
 	}
 	if clientID == "" {
-		return "", fmt.Errorf("BLOCKS_CLI_CLIENT_ID must be set")
+		return nil, "", fmt.Errorf("OAuth client id must be set (CLI_OAUTH_CLIENT_ID / cli-config)")
 	}
-
 	authURL := backendURL + "/api/auth/oauth2/authorize"
 	tokenURL := backendURL + "/api/auth/oauth2/token"
-
 	fmt.Println("  Opening browser for login...")
-	fmt.Println("  (If the browser doesn't open, check the URL printed below)")
-
 	result, err := RunBrowserFlow(ctx, authURL, clientID, backendURL)
 	if err != nil {
-		return "", fmt.Errorf("browser login failed: %w", err)
+		return nil, "", fmt.Errorf("browser login failed: %w", err)
 	}
-
 	exchangeResp, err := ExchangeCode(tokenURL, result.Code, result.CodeVerifier, result.RedirectURI, clientID, result.Audience)
 	if err != nil {
-		return "", fmt.Errorf("token exchange failed: %w", err)
+		return nil, "", fmt.Errorf("token exchange failed: %w", err)
 	}
-
 	newCreds, err := FetchOrCreateApiKey(backendURL, exchangeResp.AccessToken)
 	if err != nil {
-		return "", fmt.Errorf("API key creation failed: %w", err)
+		return nil, "", fmt.Errorf("API key creation failed: %w", err)
 	}
-
-	if err := Save(newCreds); err != nil {
-		return "", fmt.Errorf("failed to save credentials: %w", err)
-	}
-
-	fmt.Printf("  Logged in to %s (org: %s)\n", newCreds.OrgName, newCreds.OrgId)
-	return newCreds.ApiKey, nil
+	return newCreds, newCreds.ApiKey, nil
 }
 
 // orgMembership represents a user's membership in an organization.
@@ -100,8 +64,8 @@ type orgMembership struct {
 	OrgName string `json:"orgName"`
 }
 
-// apiKeyCreateResponse represents the response from the API key creation endpoint.
-type apiKeyCreateResponse struct {
+// ApiKeyCreateResponse is the response from POST /api/auth/api-key/create.
+type ApiKeyCreateResponse struct {
 	ApiKey    string `json:"apiKey"`
 	KeyId     string `json:"keyId"`
 	ExpiresAt string `json:"expiresAt"`
@@ -214,8 +178,15 @@ func promptOrgSelection(orgs []orgMembership) (orgMembership, error) {
 	return selected, nil
 }
 
+// CreateOrgAPIKey mints an org-scoped API key. `bearer` may be an OAuth session
+// token (login) or an existing org-scoped API key (publish-time per-org mint) —
+// the backend verifies the caller's membership of `orgId` either way.
+func CreateOrgAPIKey(backendURL, bearer, orgId, keyName string) (*ApiKeyCreateResponse, error) {
+	return createApiKey(backendURL, bearer, orgId, keyName)
+}
+
 // createApiKey calls the backend to create an API key for the given org.
-func createApiKey(backendURL, sessionToken, orgId, keyName string) (*apiKeyCreateResponse, error) {
+func createApiKey(backendURL, sessionToken, orgId, keyName string) (*ApiKeyCreateResponse, error) {
 	payload := map[string]string{
 		"name":  keyName,
 		"orgId": orgId,
@@ -243,7 +214,7 @@ func createApiKey(backendURL, sessionToken, orgId, keyName string) (*apiKeyCreat
 		return nil, fmt.Errorf("POST /api/auth/api-key/create failed (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	var result apiKeyCreateResponse
+	var result ApiKeyCreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode API key response: %w", err)
 	}

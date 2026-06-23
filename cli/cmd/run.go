@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/spf13/cobra"
 )
 
@@ -25,8 +26,9 @@ For Python projects (detected by pyproject.toml): uses venv walk-up with "python
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd := mustCwd()
 
-		// Pre-check: load credentials and verify they're still valid, then update .env
-		// so the SDK process receives a fresh BLOCKS_API_KEY.
+		// Pre-check: surface a clear warning early if the user isn't logged in.
+		// The resolved key is injected into the delegated SDK process env by
+		// buildChildEnv (see withAPIKey), so it need not be written to .env.
 		if _, err := loadCredentials(); err != nil {
 			// Non-fatal: allow run even without auth (may fail at registration)
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
@@ -215,6 +217,59 @@ func withCLIVersion(env []string) []string {
 		}
 	}
 	return append(env, entry)
+}
+
+// withEnterpriseRuntimeEnv appends BLOCKS_CDM_URL and BLOCKS_BACKEND_URL pointing at
+// the enterprise profile's deployment, so the delegated SDK process resolves the
+// customer keyset (via /api/v1/cdm) and registers against the enterprise backend.
+// No-op for a nil / non-enterprise / empty-BaseURL profile, and never overrides a
+// value already present in env (an explicitly-set env var wins).
+func withEnterpriseRuntimeEnv(env []string, p *profiles.Profile) []string {
+	if p == nil || !p.Enterprise || p.BaseURL == "" {
+		return env
+	}
+	base := strings.TrimRight(p.BaseURL, "/")
+	env = setEnvDefault(env, "BLOCKS_CDM_URL", base+"/api/v1/cdm")
+	env = setEnvDefault(env, "BLOCKS_BACKEND_URL", base)
+	return env
+}
+
+// withAPIKey injects BLOCKS_API_KEY into env so the delegated SDK process
+// authenticates with the active profile's stored key without it having to be
+// written into the project .env. A no-op for an empty key, and it never
+// overrides an explicitly-set BLOCKS_API_KEY (shell env or .env wins).
+func withAPIKey(env []string, apiKey string) []string {
+	if apiKey == "" {
+		return env
+	}
+	return setEnvDefault(env, "BLOCKS_API_KEY", apiKey)
+}
+
+// setEnvDefault appends KEY=value to env only when KEY is not already present.
+func setEnvDefault(env []string, key, value string) []string {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return env
+		}
+	}
+	return append(env, key+"="+value)
+}
+
+// buildChildEnv assembles the environment for the delegated SDK process:
+// the parent env + BLOCKS_CLI_VERSION, plus enterprise CDM/backend pointers when
+// the active profile is an enterprise deployment, plus BLOCKS_API_KEY resolved
+// from the active profile/credentials so the runner authenticates without the
+// key being written to .env. Explicitly-set env values always win.
+func buildChildEnv() []string {
+	env := withCLIVersion(os.Environ())
+	if _, p, err := profiles.Active(); err == nil {
+		env = withEnterpriseRuntimeEnv(env, p)
+	}
+	if key, err := loadCredentials(); err == nil {
+		env = withAPIKey(env, key)
+	}
+	return env
 }
 
 // sysExec is implemented per-platform:

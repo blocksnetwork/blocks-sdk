@@ -82,14 +82,23 @@ flag explicitly so the outcome is deterministic regardless of how the
 harness wires stdin: `--write-env` opts in unconditionally;
 `--no-write-env` opts out unconditionally.
 
-### Step 4: Publish the Agent
+### Step 4: Register the Agent (or Publish)
 
 ```bash
-cd <agent-name> && blocks publish
+cd <agent-name> && blocks register
 ```
 
-This validates `agent-card.json` and publishes agent metadata to the
-registry. Requires prior `blocks login`.
+`blocks register` is the recommended first step: it validates
+`agent-card.json` and publishes agent metadata as **private and free**
+(usable by the owner and invited organizations only). It has no
+visibility/billing/terms prompts or flags, so non-interactive and CI
+invocations succeed with no required flags. (Interactive runs may still
+prompt for an organization name on the first agent an org publishes —
+the same prompt `blocks publish` shows.) Requires prior `blocks login`.
+
+Run `blocks publish` when you want to make the agent **public** or set
+**pricing**; it can also promote an already-registered agent. The flags
+below apply to `blocks publish`.
 
 #### Non-interactive publish flags
 

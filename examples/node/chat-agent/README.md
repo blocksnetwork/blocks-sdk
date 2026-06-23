@@ -54,8 +54,9 @@ In one terminal -- start the agent:
 
 ```bash
 cd examples/node/chat-agent
-blocks publish   # first time only -- registers chat_agent_node
+blocks register  # first time only -- registers chat_agent_node (private + free)
 blocks run
+# Later, to make the agent public or set pricing: blocks publish
 ```
 
 In another terminal -- run the consumer. With no arguments it starts an

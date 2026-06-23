@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
 	"github.com/pubnub/blocks-sdk/cli/internal/cardfetch"
 	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
@@ -324,13 +323,19 @@ func makeAgentSuggestFn(client *blocksapi.Client) wizard.SuggestFunc {
 	}
 }
 
-// ensureOrOfferBlocksLogin returns the stored Blocks API key when logged in.
-// Otherwise, in an interactive terminal, it offers to log in (so private
-// agents appear in suggestions); declining — or any non-TTY / login failure —
-// returns an empty key, i.e. anonymous access to public agents only.
+// ensureOrOfferBlocksLogin returns the active profile's API key when logged in.
+// It reads the profile (the canonical home) first, then the legacy
+// credentials.json slot as a one-release migration fallback — mirroring
+// loadCredentials so the wizard never re-prompts a user who is already logged in
+// via a profile. Otherwise, in an interactive terminal, it offers to log in (so
+// private agents appear in suggestions); declining — or any non-TTY / login
+// failure — returns an empty key, i.e. anonymous access to public agents only.
 func ensureOrOfferBlocksLogin(ctx context.Context) string {
-	if creds, err := auth.Load(); err == nil && !creds.IsExpired() {
-		return creds.ApiKey
+	if key, ok := activeProfileAPIKey(); ok {
+		return key
+	}
+	if key := optionalCredentials(); key != "" {
+		return key
 	}
 	if !isTTY() {
 		return ""
@@ -345,7 +350,7 @@ func ensureOrOfferBlocksLogin(ctx context.Context) string {
 	if ans == "n" || ans == "no" {
 		return ""
 	}
-	apiKey, err := auth.EnsureCredentials(ctx, resolveBackendURL(), resolveClientID(), "", false)
+	apiKey, _, err := loginToProfile(ctx, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  Login failed: %v\n  Continuing with public agents only.\n", err)
 		return ""
@@ -403,8 +408,9 @@ func printNextSteps(cfg wizard.Config) {
 	}
 
 	fmt.Println("    blocks login --write-env  # authenticate (first time only)")
-	fmt.Println("    blocks publish            # publish to registry")
+	fmt.Println("    blocks register           # register the agent privately and free (recommended first step)")
 	fmt.Println("    blocks run                # start the agent")
+	fmt.Println("    blocks publish            # later: make the agent public or set pricing")
 }
 
 func printWebappNextSteps(cfg wizard.Config, dirName string) {

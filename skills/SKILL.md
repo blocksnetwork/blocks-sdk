@@ -413,12 +413,24 @@ Publishing pushes the latest IO schemas, streaming capabilities, and
 description to the registry. Republish whenever the agent card or
 handler shape changes.
 
-**Do NOT run `blocks publish` on the user's behalf.** Instruct the
-user to run it themselves:
+The recommended first step is `blocks register`, which registers the
+agent **privately and free** (usable by the owner and invited
+organizations only, no public listing, no pricing). It has no
+listing/billing/terms prompts or flags, so non-interactive and CI
+invocations succeed with no required flags. (Interactive runs may still
+prompt for an organization name on the first agent an org publishes —
+the same prompt `blocks publish` shows.) `blocks publish` is the path to
+go **public** and/or **paid**; it can also promote an already-registered
+agent — running it later on the same agent updates the listing.
+
+**Do NOT run `blocks register` or `blocks publish` on the user's
+behalf.** Instruct the user to run it themselves:
 
 > ```bash
 > cd <your-agent-name>
 > blocks login --write-env   # first time only
+> blocks register            # private + free, the recommended first step
+> # ...or, to go public / set pricing:
 > blocks publish
 > ```
 
@@ -532,9 +544,12 @@ don't assume they want to edit the handler.
      the drafted card to the user before writing the file.**
 4. **Ask the user: deploy as-is, or make changes first?**
    - **As-is:** Skip handler edits. Authenticate (`blocks login
-     --write-env` if needed), then `blocks publish` per
-     [Publishing & Republishing](#publishing--republishing).
-   - **Changes first:** Edit handler / IO schema, then publish.
+     --write-env` if needed), then `blocks register` (private + free,
+     the recommended first step) per
+     [Publishing & Republishing](#publishing--republishing). Use
+     `blocks publish` instead if the user explicitly wants public/paid.
+   - **Changes first:** Edit handler / IO schema, then register (or
+     publish).
 5. **Validate** (`blocks check`), **start** (`blocks run`), **test**
    (`npx tsx trigger.ts` / `python trigger.py`), **dashboard**
    (`blocks dashboard`).

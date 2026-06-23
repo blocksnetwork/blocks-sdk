@@ -615,7 +615,24 @@ the `Write BLOCKS_API_KEY to project .env? (Y/n):` prompt without
 writing -- it does not hang. Always pass `--write-env` or
 `--no-write-env` for deterministic behavior.
 
-### Publish
+### Register (recommended first step)
+
+```bash
+blocks register                                 # Private + free; no listing/billing/terms prompts
+blocks register --api-key "$KEY"                # Inline auth (skip blocks login)
+echo "$KEY" | blocks register --api-key-stdin   # Inline auth via stdin
+```
+
+`blocks register` publishes the agent as **private and free** (usable by
+the owner and invited organizations only). It exposes only `--api-key`,
+`--api-key-stdin`, and `--org-name` — no visibility or billing flags — and
+has no visibility / billing / terms prompts, so non-interactive and CI
+invocations succeed with no required flags. (Interactive runs may still
+prompt for an organization name on the first agent an org publishes —
+the same prompt `blocks publish` shows.) Run `blocks publish` later to go
+public or set pricing; it can also promote an already-registered agent.
+
+### Publish (go public / set pricing)
 
 ```bash
 blocks publish                                  # Interactive (prompts for billing, listing, terms)

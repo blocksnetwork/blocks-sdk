@@ -200,26 +200,38 @@ constraints, examples, defaults), see `https://config.blocks.ai/SKILL.md` → IO
 streaming agents, see `https://config.blocks.ai/SKILL.md` → Streaming Agents. For handler
 signatures and patterns, see [Node Reference] / [Python Reference].
 
-## Step 6: Publish
+## Step 6: Register (or Publish)
 
-**Do NOT run `blocks publish` on the user's behalf.** Instruct the user
-to run it themselves. `blocks publish` requires prior authentication
-via `blocks login`:
+The recommended first step is `blocks register`, which registers the
+agent **privately and free** — usable by you and any organizations you
+invite, with no public listing and no pricing. Test it privately first,
+then run `blocks publish` later to make it public or set pricing.
 
-> Run these commands to authenticate and publish your agent. Substitute
+**Do NOT run `blocks register` or `blocks publish` on the user's
+behalf.** Instruct the user to run it themselves. Both require prior
+authentication via `blocks login`:
+
+> Run these commands to authenticate and register your agent. Substitute
 > `<your-agent-name>` for the directory name:
 > ```bash
 > cd <your-agent-name>
 > blocks login --write-env   # first time only -- authenticates and writes API key to .env
-> blocks publish
+> blocks register            # private + free, the recommended first step
 > ```
+
+`blocks register` has no listing/billing/terms prompts, so non-interactive
+and CI invocations succeed with no required flags. (Interactive runs may
+still prompt for an organization name on the first agent an org
+publishes — the same prompt `blocks publish` shows.) When the user is
+ready to go public or charge for usage, they run `blocks publish`, which
+prompts for visibility (public/private) and billing (free/paid).
 
 In a non-interactive shell (CI, headless containers), bare `blocks
 publish` hangs on listing/billing/terms prompts. Two ready-made
 recipes:
 
 ```bash
-# Free public agent (recommended default for first publish)
+# Free public agent
 blocks publish --billing-mode free --listing public --accept-terms
 
 # Paid private agent
@@ -231,10 +243,11 @@ For the full non-interactive flag table, paid-pricing variants, and
 private-agent invite management, see `https://config.blocks.ai/SKILL.md` → Publishing &
 Republishing.
 
-**Name conflict.** If the user reports that `blocks publish` rejected
-the name as taken, ask for a more unique alternative (see [Asking the
-User Questions]), update `agent-card.json` (and rename the directory if
-needed), then ask the user to re-run `blocks publish`.
+**Name conflict.** If the user reports that `blocks register` or
+`blocks publish` rejected the name as taken, ask for a more unique
+alternative (see [Asking the User Questions]), update `agent-card.json`
+(and rename the directory if needed), then ask the user to re-run the
+command.
 
 ## Step 7: Validate
 

@@ -10,7 +10,7 @@ import (
 
 // sysExec replaces the current process with the given command (Unix exec).
 func sysExec(binary string, argv []string, dir string) error {
-	env := withCLIVersion(os.Environ())
+	env := buildChildEnv()
 
 	if err := os.Chdir(dir); err != nil {
 		return fmt.Errorf("chdir: %w", err)

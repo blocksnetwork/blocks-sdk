@@ -15,7 +15,10 @@ import (
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
+	"github.com/pubnub/blocks-sdk/cli/internal/branding"
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
+	"github.com/pubnub/blocks-sdk/cli/internal/cliconfig"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
@@ -52,7 +55,7 @@ func init() {
 
 var publishCmd = &cobra.Command{
 	Use:   "publish [path]",
-	Short: "Publish an agent to the Blocks Network registry",
+	Short: "Publish an agent to the registry",
 	Long:  "Publish the agent card to the registry. Requires prior authentication via 'blocks login' or --api-key.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -63,12 +66,153 @@ var publishCmd = &cobra.Command{
 }
 
 func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
-	backendURL := resolveBackendURL()
-
-	apiKey, err := resolvePublishApiKey()
+	prep, err := preparePublish(args, publishApiKey, publishApiKeyStdin)
 	if err != nil {
 		return err
 	}
+
+	interactive := isInteractive()
+	if interactive && !prep.enterprise && publishNeedsInteractivePrompt(cmd) {
+		printPublishIntro(prep.agentName)
+	}
+
+	if err := applyEnterpriseOrgPicker(prep, interactive, publishApiKey, publishApiKeyStdin); err != nil {
+		return err
+	}
+
+	org, err := resolveOrgNameInput(cmd, prep, interactive, "org-name", publishOrgName)
+	if err != nil {
+		return err
+	}
+
+	flags, err := collectPromotionFlags(cmd, interactive, prep.enterprise)
+	if err != nil {
+		return err
+	}
+
+	limits := registry.FetchPricingLimits(prep.backendURL)
+
+	promInput, err := registry.CollectPromotionInput(prep.isStreaming, prep.isRequest, flags, limits, nil)
+	if err != nil {
+		return err
+	}
+
+	return finalizePublish(ctx, prep, promInput, org, interactive, submitOptions{
+		apiKeyFlag:  publishApiKey,
+		apiKeyStdin: publishApiKeyStdin,
+		commandName: "blocks publish",
+	})
+}
+
+// applyEnterpriseOrgPicker prompts the user to choose the owning org when an
+// enterprise account belongs to more than one, then swaps prep.apiKey to the
+// chosen org's publish key so the rest of the flow targets it. No-op on
+// Blocks Network, non-interactive sessions, when an API key was supplied
+// explicitly, or for single-org users.
+func applyEnterpriseOrgPicker(prep *publishPrep, interactive bool, apiKeyFlag string, apiKeyStdin bool) error {
+	if !prep.enterprise || !interactive || apiKeyFlag != "" || apiKeyStdin {
+		return nil
+	}
+	name, _, perr := profiles.Active()
+	if perr != nil {
+		return perr
+	}
+	orgs, oerr := fetchUserOrgs(prep.backendURL, prep.apiKey)
+	if oerr != nil {
+		return oerr
+	}
+	if len(orgs) <= 1 {
+		return nil
+	}
+	chosen, cerr := promptOrgChoice(orgs)
+	if cerr != nil {
+		return cerr
+	}
+	key, kerr := resolveOrgPublishKey(prep.backendURL, prep.apiKey, name, chosen.Id, chosen.Name)
+	if kerr != nil {
+		return kerr
+	}
+	prep.apiKey = key
+	return nil
+}
+
+// collectPromotionFlags maps the `blocks publish` flag variables into
+// registry.PromotionFlags. A nil pointer means the flag was not set, so the
+// interactive prompt path handles it. Price flags are rejected when present
+// but empty, mirroring the original inline validation. In enterprise mode,
+// billing-mode is forced to "free" (billing is globally off; pricing/T&C
+// prompts are suppressed) unless --billing-mode was explicitly passed.
+func collectPromotionFlags(cmd *cobra.Command, interactive, enterprise bool) (registry.PromotionFlags, error) {
+	flags := registry.PromotionFlags{
+		AcceptTerms:    publishAcceptTerms,
+		NonInteractive: !interactive,
+	}
+	if ov := enterpriseBillingOverride(enterprise); ov != nil && !cmd.Flags().Changed("billing-mode") {
+		flags.BillingMode = ov
+	}
+	if cmd.Flags().Changed("listing") {
+		flags.Listing = &publishListing
+	}
+	if cmd.Flags().Changed("billing-mode") {
+		flags.BillingMode = &publishBillingMode
+	}
+	for _, pf := range []struct {
+		name  string
+		value string
+		dest  **string
+	}{
+		{"price", publishPrice, &flags.Price},
+		{"price-per-task", publishPricePerTask, &flags.PricePerTask},
+		{"price-per-minute", publishPricePerMinute, &flags.PricePerMinute},
+	} {
+		if !cmd.Flags().Changed(pf.name) {
+			continue
+		}
+		if pf.value == "" {
+			return registry.PromotionFlags{}, fmt.Errorf("--%s requires a non-empty decimal value", pf.name)
+		}
+		v := pf.value
+		*pf.dest = &v
+	}
+	if cmd.Flags().Changed("free-units") {
+		flags.FreeUnits = &publishFreeUnits
+	}
+	if cmd.Flags().Changed("free-tasks") {
+		flags.FreeTasks = &publishFreeTasks
+	}
+	if cmd.Flags().Changed("free-minutes") {
+		flags.FreeMinutes = &publishFreeMinutes
+	}
+	return flags, nil
+}
+
+// publishPrep holds the command-agnostic inputs shared by `blocks publish` and
+// `blocks register` before promotion params (listing/billing) are decided.
+// enterprise is sticky for the whole flow: it gates the org picker, the
+// org-name prompt, and the billing-mode override.
+type publishPrep struct {
+	backendURL  string
+	apiKey      string
+	agentName   string
+	envelope    map[string]interface{}
+	isStreaming bool
+	isRequest   bool
+	enterprise  bool
+}
+
+// preparePublish resolves the backend URL and API key, validates the agent
+// card, and assembles the base registry envelope. It is shared by `publish`
+// and `register` so the two commands cannot drift on validation or payload
+// shape; only the promotion params differ between them.
+func preparePublish(args []string, apiKeyFlag string, apiKeyStdin bool) (*publishPrep, error) {
+	backendURL := resolveBackendURL()
+
+	apiKey, err := resolvePublishApiKey(apiKeyFlag, apiKeyStdin)
+	if err != nil {
+		return nil, err
+	}
+
+	enterprise := resolvePublishEnterprise(backendURL)
 
 	cardPath := "agent-card.json"
 	if len(args) > 0 {
@@ -88,7 +232,7 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 		for _, e := range result.Errors {
 			fmt.Fprintf(os.Stderr, "  [FAIL] %s\n", e)
 		}
-		return fmt.Errorf("fix validation errors in %s before publishing", cardPath)
+		return nil, fmt.Errorf("fix validation errors in %s before publishing", cardPath)
 	}
 	for _, s := range result.Successes {
 		fmt.Printf("  [OK] %s\n", s)
@@ -99,7 +243,7 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 	identity, _ := card["identity"].(map[string]interface{})
 	agentName, _ := identity["agentName"].(string)
 	if agentName == "" {
-		return fmt.Errorf("agent-card.json must contain identity.agentName")
+		return nil, fmt.Errorf("agent-card.json must contain identity.agentName")
 	}
 
 	envelope := map[string]interface{}{
@@ -110,10 +254,25 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 		"preferredProtocolVersion": registry.ProtocolVersion,
 	}
 
+	isStreaming, isRequest := deriveTaskKinds(card)
+
+	return &publishPrep{
+		backendURL:  backendURL,
+		apiKey:      apiKey,
+		agentName:   agentName,
+		envelope:    envelope,
+		isStreaming: isStreaming,
+		isRequest:   isRequest,
+		enterprise:  enterprise,
+	}, nil
+}
+
+// deriveTaskKinds reads capabilities.taskKinds off the card and reports whether
+// the agent handles pipe (streaming) and/or request tasks. An agent with no
+// recognized taskKinds defaults to request.
+func deriveTaskKinds(card map[string]interface{}) (isStreaming, isRequest bool) {
 	capabilities, _ := card["capabilities"].(map[string]interface{})
 	taskKindsRaw, _ := capabilities["taskKinds"].([]interface{})
-	isStreaming := false
-	isRequest := false
 	for _, k := range taskKindsRaw {
 		if k == "pipe" {
 			isStreaming = true
@@ -125,68 +284,100 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if !isStreaming && !isRequest {
 		isRequest = true
 	}
+	return isStreaming, isRequest
+}
 
-	interactive := isInteractive()
-	if interactive && publishNeedsInteractivePrompt(cmd) {
-		printPublishIntro(agentName)
+// orgNameInput carries the resolved org-name prompt result through to the
+// apply step in finalizePublish. A zero value (pubCtx nil) means the prompt
+// was skipped (e.g. enterprise) and finalizePublish must not apply any update.
+type orgNameInput struct {
+	pubCtx      *registry.PublishContext
+	chosen      string
+	interactive bool // re-prompt on a name-taken conflict
+}
+
+// resolveOrgNameInput fetches publish context and runs the first-publish
+// org-name prompt. flagName/flagValue describe the command's --org-name flag
+// (its name is the same on both commands, but the bound variable differs).
+// In enterprise mode the prompt is skipped — orgs are pre-seeded by the
+// enterprise admin and publish must not rename them — and a zero-value
+// orgNameInput is returned.
+func resolveOrgNameInput(cmd *cobra.Command, prep *publishPrep, interactive bool, flagName, flagValue string) (orgNameInput, error) {
+	if prep.enterprise {
+		return orgNameInput{}, nil
 	}
-
-	// Org name prompt: on first agent publish, let the user set their org name.
-	pubCtx := registry.FetchPublishContext(backendURL, apiKey)
+	pubCtx := registry.FetchPublishContext(prep.backendURL, prep.apiKey)
 	orgNameFlags := registry.OrgNameFlags{NonInteractive: !interactive}
-	if cmd.Flags().Changed("org-name") {
-		orgNameFlags.OrgName = &publishOrgName
+	if cmd.Flags().Changed(flagName) {
+		v := flagValue
+		orgNameFlags.OrgName = &v
 	}
-	chosenOrgName, err := registry.PromptOrgName(pubCtx, orgNameFlags, nil)
+	chosen, err := registry.PromptOrgName(pubCtx, orgNameFlags, nil)
 	if err != nil {
-		return err
+		return orgNameInput{}, err
+	}
+	// If --org-name was explicitly provided, treat conflicts as hard errors (no re-prompt).
+	return orgNameInput{
+		pubCtx:      pubCtx,
+		chosen:      chosen,
+		interactive: interactive && !cmd.Flags().Changed(flagName),
+	}, nil
+}
+
+// submitOptions carries the per-command bits the shared finalize step needs:
+// how the API key was supplied (for 401 messaging), the command name (for
+// actionable error text), and whether to print the promote-to-public hint.
+type submitOptions struct {
+	apiKeyFlag  string
+	apiKeyStdin bool
+	commandName string
+	promoteHint bool
+}
+
+// finalizePublish assigns promotion fields onto the envelope, applies any
+// pending org-name update, POSTs to the registry, and renders the result.
+// Shared by `publish` and `register`.
+func finalizePublish(ctx context.Context, prep *publishPrep, promInput registry.PromotionInput, org orgNameInput, interactive bool, opts submitOptions) error {
+	applyPromotionToEnvelope(prep.envelope, promInput)
+
+	if prep.backendURL == "" {
+		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
 	}
 
-	flags := registry.PromotionFlags{
-		AcceptTerms:    publishAcceptTerms,
-		NonInteractive: !interactive,
-	}
-	if cmd.Flags().Changed("listing") {
-		flags.Listing = &publishListing
-	}
-	if cmd.Flags().Changed("billing-mode") {
-		flags.BillingMode = &publishBillingMode
-	}
-	if cmd.Flags().Changed("price") {
-		if publishPrice == "" {
-			return fmt.Errorf("--price requires a non-empty decimal value")
+	// Apply org name update right before publishing (after all prompts succeed).
+	// Skipped in enterprise (the org-name prompt never ran there, so pubCtx is nil).
+	if org.chosen != "" && org.pubCtx != nil {
+		if err := applyOrgNameUpdate(prep.backendURL, prep.apiKey, org.pubCtx, org.chosen, org.interactive); err != nil {
+			return err
 		}
-		flags.Price = &publishPrice
-	}
-	if cmd.Flags().Changed("price-per-task") {
-		if publishPricePerTask == "" {
-			return fmt.Errorf("--price-per-task requires a non-empty decimal value")
-		}
-		flags.PricePerTask = &publishPricePerTask
-	}
-	if cmd.Flags().Changed("price-per-minute") {
-		if publishPricePerMinute == "" {
-			return fmt.Errorf("--price-per-minute requires a non-empty decimal value")
-		}
-		flags.PricePerMinute = &publishPricePerMinute
-	}
-	if cmd.Flags().Changed("free-units") {
-		flags.FreeUnits = &publishFreeUnits
-	}
-	if cmd.Flags().Changed("free-tasks") {
-		flags.FreeTasks = &publishFreeTasks
-	}
-	if cmd.Flags().Changed("free-minutes") {
-		flags.FreeMinutes = &publishFreeMinutes
 	}
 
-	limits := registry.FetchPricingLimits(backendURL)
+	printPublishSummary(prep.agentName, promInput)
 
-	promInput, err := registry.CollectPromotionInput(isStreaming, isRequest, flags, limits, nil)
-	if err != nil {
-		return err
+	// Use the shared blocksapi.Client so Authorization and Blocks-Protocol-Version
+	// headers are attached automatically on every outbound Blocks-backend call.
+	client := blocksapi.NewClient(prep.backendURL, prep.apiKey)
+	var respPayload map[string]interface{}
+	if err := client.DoJSON(ctx, "POST", "/api/v1/registry/agents", prep.envelope, &respPayload); err != nil {
+		return submitPublishError(err, prep.agentName, promInput, opts)
 	}
 
+	respBody, _ := json.Marshal(respPayload)
+	agentURL := publishedAgentURL(respBody, prep.agentName, interactive)
+	printPublishSuccess(prep.agentName, promInput, agentURL)
+	if opts.promoteHint {
+		fmt.Println("To make this agent public or set pricing later, run `blocks publish`.")
+	}
+
+	if agentURL != "" && interactive {
+		_ = openBrowser(agentURL)
+	}
+	return nil
+}
+
+// applyPromotionToEnvelope copies the validated promotion params onto the
+// outgoing registry envelope, omitting optional fields that are unset.
+func applyPromotionToEnvelope(envelope map[string]interface{}, promInput registry.PromotionInput) {
 	envelope["listing"] = promInput.Listing
 	envelope["billingMode"] = promInput.BillingMode
 	if promInput.TcAcceptedAt != "" {
@@ -204,64 +395,78 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 	if promInput.FreeMinutesPerConsumer != nil {
 		envelope["freeMinutesPerConsumer"] = *promInput.FreeMinutesPerConsumer
 	}
+}
 
-	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
-	}
-
-	// Apply org name update right before publishing (after all prompts succeed).
-	// If --org-name was explicitly provided, treat conflicts as hard errors (no re-prompt).
-	orgNameInteractive := interactive && !cmd.Flags().Changed("org-name")
-	if chosenOrgName != "" && pubCtx != nil {
-		if err := applyOrgNameUpdate(backendURL, apiKey, pubCtx, chosenOrgName, orgNameInteractive); err != nil {
-			return err
-		}
-	}
-
-	printPublishSummary(agentName, promInput)
-
-	// Use the shared blocksapi.Client so Authorization and Blocks-Protocol-Version
-	// headers are attached automatically on every outbound Blocks-backend call.
-	client := blocksapi.NewClient(backendURL, apiKey)
-	var respPayload map[string]interface{}
-	if err := client.DoJSON(ctx, "POST", "/api/v1/registry/agents", envelope, &respPayload); err != nil {
-		if apiErr, ok := err.(*blocksapi.APIError); ok {
-			if apiErr.StatusCode == 401 {
-				if publishApiKey != "" {
-					return fmt.Errorf("authentication failed — the provided --api-key was rejected; replace it with a valid key and retry")
-				}
-				if publishApiKeyStdin {
-					return fmt.Errorf("authentication failed — the API key provided via --api-key-stdin was rejected; replace it with a valid key and retry")
-				}
-				return fmt.Errorf("authentication failed — run 'blocks login' to re-authenticate, then retry 'blocks publish'")
-			}
-			if apiErr.StatusCode == 403 {
-				return fmt.Errorf("permission denied (HTTP 403) — check that your API key owns this agent")
-			}
-			return publishFailedError(agentName, promInput, apiErrorToMap(apiErr))
-		}
+// submitPublishError maps a failed registry POST into an actionable error.
+// 401 messaging depends on how the API key was supplied; other statuses fall
+// through to the shared publish-failure formatter.
+func submitPublishError(err error, agentName string, promInput registry.PromotionInput, opts submitOptions) error {
+	apiErr, ok := err.(*blocksapi.APIError)
+	if !ok {
 		return fmt.Errorf("request failed: %w", err)
 	}
-
-	respBody, _ := json.Marshal(respPayload)
-	agentURL := publishedAgentURL(respBody, agentName, interactive)
-	printPublishSuccess(agentName, promInput, agentURL)
-
-	if agentURL != "" && interactive {
-		_ = openBrowser(agentURL)
+	switch apiErr.StatusCode {
+	case 401:
+		if opts.apiKeyFlag != "" {
+			return fmt.Errorf("authentication failed — the provided --api-key was rejected; replace it with a valid key and retry")
+		}
+		if opts.apiKeyStdin {
+			return fmt.Errorf("authentication failed — the API key provided via --api-key-stdin was rejected; replace it with a valid key and retry")
+		}
+		return fmt.Errorf("authentication failed — run 'blocks login' to re-authenticate, then retry '%s'", opts.commandName)
+	case 403:
+		return fmt.Errorf("permission denied (HTTP 403) — check that your API key owns this agent")
+	default:
+		return publishFailedError(agentName, promInput, apiErrorToMap(apiErr), opts.commandName)
 	}
-	return nil
+}
+
+// resolvePublishEnterprise decides whether this publish targets an enterprise
+// deployment. A profile saved by a prior `blocks login <instanceUrl>` is
+// authoritative when it already records enterprise. When no enterprise profile
+// is present but a custom backend is targeted (BLOCKS_BACKEND_URL or a profile
+// BaseURL — e.g. a scripted --api-key publish that never ran login), confirm via
+// a lenient cli-config discovery so enterprise still suppresses the Network-only
+// billing / org-name flow. A pure stock-Network target can't be enterprise, so
+// it skips the round-trip; discovery errors and older backends (404) yield false
+// and never block publish.
+func resolvePublishEnterprise(backendURL string) bool {
+	customBackend := os.Getenv("BLOCKS_BACKEND_URL") != ""
+	if _, p, err := profiles.Active(); err == nil {
+		if p.Enterprise {
+			return true
+		}
+		if p.BaseURL != "" {
+			customBackend = true
+		}
+	}
+	if !customBackend {
+		return false
+	}
+	disco, err := cliconfig.Fetch(backendURL)
+	return err == nil && disco != nil && disco.Enterprise
+}
+
+// enterpriseBillingOverride forces free billing in enterprise (billing is globally
+// off; there are no pricing/T&C prompts). Returns nil on Blocks Network.
+func enterpriseBillingOverride(enterprise bool) *string {
+	if !enterprise {
+		return nil
+	}
+	free := "free"
+	return &free
 }
 
 // resolvePublishApiKey resolves the API key from (in order): --api-key flag,
 // --api-key-stdin flag, BLOCKS_API_KEY env var, then stored credentials.
 // Does NOT trigger any browser/login flow — publish requires prior `blocks
-// login` per BLOCKS-321.
-func resolvePublishApiKey() (string, error) {
-	if publishApiKey != "" {
-		return publishApiKey, nil
+// login` per BLOCKS-321. The flag values are passed in so the same resolver
+// serves both `publish` and `register` (each binds its own flag variables).
+func resolvePublishApiKey(apiKeyFlag string, apiKeyStdin bool) (string, error) {
+	if apiKeyFlag != "" {
+		return apiKeyFlag, nil
 	}
-	if publishApiKeyStdin {
+	if apiKeyStdin {
 		scanner := bufio.NewScanner(os.Stdin)
 		if !scanner.Scan() {
 			return "", fmt.Errorf("--api-key-stdin: no input received on stdin")
@@ -275,6 +480,11 @@ func resolvePublishApiKey() (string, error) {
 	if envKey := os.Getenv("BLOCKS_API_KEY"); envKey != "" {
 		return envKey, nil
 	}
+	// Prefer the active profile's default-org key; fall back to the legacy
+	// credentials.json for one migration cycle.
+	if key, ok := activeProfileAPIKey(); ok {
+		return key, nil
+	}
 	creds, err := auth.Load()
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -286,7 +496,7 @@ func resolvePublishApiKey() (string, error) {
 		return "", fmt.Errorf("not authenticated — run 'blocks login' first, or provide --api-key")
 	}
 	if creds.IsExpired() {
-		return "", fmt.Errorf("credentials expired — run 'blocks login' to re-authenticate")
+		return "", fmt.Errorf("credentials expired — run 'blocks login' to re-authenticate, or provide --api-key")
 	}
 	return creds.ApiKey, nil
 }
@@ -304,17 +514,37 @@ func apiErrorToMap(e *blocksapi.APIError) map[string]interface{} {
 	return m
 }
 
-func publishFailedError(agentName string, input registry.PromotionInput, payload map[string]interface{}) error {
+// publishFailedError formats a registry error for the user. commandName is the
+// CLI verb the user actually ran ("blocks publish" or "blocks register") so
+// the prefix matches their invocation; an empty value falls back to a generic
+// "publish failed" prefix.
+func publishFailedError(agentName string, input registry.PromotionInput, payload map[string]interface{}, commandName string) error {
+	prefix := commandFailedPrefix(commandName)
 	if publishErrorCode(payload) == "BillingModeInvalid" && input.BillingMode == "free" {
-		return fmt.Errorf("publish failed: %s", existingPriceFreePublishMessage(agentName))
+		return fmt.Errorf("%s: %s", prefix, existingPaidAgentMessage(agentName))
 	}
 	if msg := publishErrorMessage(payload); msg != "" {
-		return fmt.Errorf("publish failed: %s", msg)
+		return fmt.Errorf("%s: %s", prefix, msg)
 	}
 	if code := publishErrorCode(payload); code != "" {
-		return fmt.Errorf("publish failed: %s", code)
+		return fmt.Errorf("%s: %s", prefix, code)
 	}
-	return fmt.Errorf("publish failed")
+	return fmt.Errorf("%s", prefix)
+}
+
+// commandFailedPrefix derives the leading error label from the invoked command
+// ("blocks publish" -> "publish failed", "blocks register" -> "register failed").
+// Unknown / empty commandName defaults to "publish failed" so legacy callers
+// keep their original wording.
+func commandFailedPrefix(commandName string) string {
+	switch commandName {
+	case "blocks register":
+		return "register failed"
+	case "blocks publish":
+		return "publish failed"
+	default:
+		return "publish failed"
+	}
 }
 
 func publishErrorMessage(payload map[string]interface{}) string {
@@ -347,12 +577,12 @@ func publishErrorCode(payload map[string]interface{}) string {
 	return ""
 }
 
-func existingPriceFreePublishMessage(agentName string) string {
+func existingPaidAgentMessage(agentName string) string {
 	agentLabel := "This agent"
 	if strings.TrimSpace(agentName) != "" {
 		agentLabel = fmt.Sprintf("Agent %s", agentName)
 	}
-	return fmt.Sprintf("%s is already configured as a Paid agent. Please delete via the Blocks portal before re-publishing as a Free agent.", agentLabel)
+	return fmt.Sprintf("%s is already configured as a Paid agent. Please delete via the Blocks portal before publishing it as a Free agent.", agentLabel)
 }
 
 const blocksWordmark = ` ____  _     ___   ____ _  __ ____
@@ -440,7 +670,7 @@ func printPublishSuccess(agentName string, input registry.PromotionInput, agentU
 	fmt.Println()
 	fmt.Println(blocksSuccessLogo(agentName))
 	fmt.Println()
-	fmt.Printf("Congratulations! %s is published to the Blocks Network.\n", boldText(agentName))
+	fmt.Printf("Congratulations! %s is published to %s.\n", boldText(agentName), branding.ProductName())
 	fmt.Printf("Visibility: %s\n", boldText(displayMode(input.Listing)))
 	fmt.Printf("Billing: %s\n", boldText(displayMode(input.BillingMode)))
 	if agentURL != "" {
@@ -651,7 +881,7 @@ func retryOrgNamePrompt(defaultName string) string {
 		}
 		text := strings.TrimSpace(scanner.Text())
 		if text == "?" {
-			fmt.Println(registry.HelpOrgName)
+			fmt.Println(registry.HelpOrgNameText())
 			continue
 		}
 		return text

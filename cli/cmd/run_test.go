@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 )
 
@@ -232,5 +233,80 @@ func TestProtocolVersionFormat(t *testing.T) {
 	}
 	if v[4] != '-' || v[7] != '-' {
 		t.Errorf("ProtocolVersion not in YYYY-MM-DD format: %q", v)
+	}
+}
+
+func hasEnv(env []string, want string) bool {
+	for _, e := range env {
+		if e == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEnterpriseRuntimeEnvInjectsCdmAndBackend(t *testing.T) {
+	p := &profiles.Profile{Enterprise: true, BaseURL: "https://blocks.acme.com/"}
+	env := withEnterpriseRuntimeEnv([]string{"HOME=/home/u"}, p)
+
+	if !hasEnv(env, "BLOCKS_CDM_URL=https://blocks.acme.com/api/v1/cdm") {
+		t.Errorf("missing BLOCKS_CDM_URL; env = %v", env)
+	}
+	if !hasEnv(env, "BLOCKS_BACKEND_URL=https://blocks.acme.com") {
+		t.Errorf("missing BLOCKS_BACKEND_URL; env = %v", env)
+	}
+}
+
+func TestEnterpriseRuntimeEnvNoopForNetworkProfile(t *testing.T) {
+	cases := []*profiles.Profile{
+		nil,
+		{Enterprise: false, BaseURL: "https://blocks.acme.com"}, // not enterprise
+		{Enterprise: true, BaseURL: ""},                         // no base url
+	}
+	for i, p := range cases {
+		env := withEnterpriseRuntimeEnv([]string{"HOME=/home/u"}, p)
+		if len(env) != 1 {
+			t.Errorf("case %d: expected no injection, got %v", i, env)
+		}
+	}
+}
+
+func TestWithAPIKeyInjectsResolvedKey(t *testing.T) {
+	env := withAPIKey([]string{"HOME=/home/u"}, "bk_resolved")
+	if !hasEnv(env, "BLOCKS_API_KEY=bk_resolved") {
+		t.Errorf("missing injected BLOCKS_API_KEY; env = %v", env)
+	}
+}
+
+func TestWithAPIKeyNoopForEmptyKey(t *testing.T) {
+	env := withAPIKey([]string{"HOME=/home/u"}, "")
+	if len(env) != 1 {
+		t.Errorf("expected no injection for empty key, got %v", env)
+	}
+}
+
+func TestWithAPIKeyDoesNotOverrideExisting(t *testing.T) {
+	env := withAPIKey([]string{"BLOCKS_API_KEY=bk_explicit"}, "bk_resolved")
+	if !hasEnv(env, "BLOCKS_API_KEY=bk_explicit") {
+		t.Errorf("explicit env should win; env = %v", env)
+	}
+	if hasEnv(env, "BLOCKS_API_KEY=bk_resolved") {
+		t.Errorf("injected over an existing value; env = %v", env)
+	}
+}
+
+func TestEnterpriseRuntimeEnvDoesNotOverrideExisting(t *testing.T) {
+	p := &profiles.Profile{Enterprise: true, BaseURL: "https://blocks.acme.com"}
+	env := withEnterpriseRuntimeEnv(
+		[]string{"BLOCKS_CDM_URL=https://override/cdm", "BLOCKS_BACKEND_URL=https://override"},
+		p,
+	)
+	if !hasEnv(env, "BLOCKS_CDM_URL=https://override/cdm") || !hasEnv(env, "BLOCKS_BACKEND_URL=https://override") {
+		t.Errorf("explicit env should win; env = %v", env)
+	}
+	for _, e := range env {
+		if e == "BLOCKS_CDM_URL=https://blocks.acme.com/api/v1/cdm" {
+			t.Errorf("injected over an existing value; env = %v", env)
+		}
 	}
 }

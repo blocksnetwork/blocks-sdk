@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/spf13/cobra"
 )
 
@@ -14,7 +15,11 @@ var logoutProvider string
 var logoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Remove stored Blocks credentials",
-	RunE:  runLogout,
+	Long: `Remove stored credentials for the active profile. Clears only the active
+profile's cached org keys; its deployment target and branding are preserved so
+'blocks login' (no URL) resolves the same instance afterward. Other profiles
+are left untouched. Does not revoke the API key on the server.`,
+	RunE: runLogout,
 }
 
 func init() {
@@ -48,9 +53,19 @@ func runPartnerLogout(provider string) error {
 	return nil
 }
 
-// runBlocksLogout is the existing Blocks logout path, unchanged.
+// runBlocksLogout clears the active profile's cached org keys (preserving its
+// deployment target and branding) and removes the "blocks" credential namespace
+// so partner credentials are preserved. Does not revoke the API key on the server.
 func runBlocksLogout() error {
+	// Clear the active profile's cached org keys first. This is the PRIMARY
+	// authenticating credential (loadCredentials reads it before the legacy
+	// credentials.json fallback), so a failure here means the user is NOT
+	// actually logged out — we must report it rather than print "Logged out.".
+	clearErr := clearActiveProfileKeys()
+
 	// Remove only the "blocks" namespace so partner credentials are preserved.
+	// Best-effort even when the profile clear failed, so the legacy fallback and
+	// .env are scrubbed where possible.
 	if path, err := auth.CredentialPathFunc(); err == nil {
 		if err := auth.DeleteProviderCredential(path, "blocks"); err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Warning: could not remove Blocks credentials: %v\n", err)
@@ -60,7 +75,44 @@ func runBlocksLogout() error {
 	// Remove BLOCKS_API_KEY from .env if it exists
 	removeEnvApiKey(".env")
 
+	if clearErr != nil {
+		return fmt.Errorf("logout incomplete — Blocks credentials remain on disk: %w", clearErr)
+	}
+
 	fmt.Println("Logged out.")
+	return nil
+}
+
+// clearActiveProfileKeys removes the cached org keys and default-org pointer from
+// the selected profile (--profile → BLOCKS_PROFILE → active), preserving its
+// deployment target and branding (base_url/enterprise/product_name/dashboard) so
+// `blocks login` (no URL) still resolves the same instance afterward. It returns
+// an error if the store cannot be read or the cleared state cannot be persisted —
+// callers MUST treat that as a failed logout, since the org key remains usable.
+func clearActiveProfileKeys() error {
+	c, err := profiles.Load()
+	if err != nil {
+		return fmt.Errorf("read credentials store: %w", err)
+	}
+	// Resolve the target the same way every other command does. Using c.Active
+	// directly would ignore an explicit --profile flag and clear the wrong profile.
+	name := profiles.SelectedName()
+	if name == "" {
+		name = c.Active
+	}
+	p, ok := c.Profiles[name]
+	if !ok {
+		return nil // no such profile — nothing cached to clear
+	}
+	if len(p.Orgs) == 0 && p.DefaultOrgID == "" {
+		return nil // already clear — no write (and no failure surface) needed
+	}
+	p.Orgs = map[string]profiles.OrgKey{}
+	p.DefaultOrgID = ""
+	c.Profiles[name] = p
+	if err := profiles.Save(c); err != nil {
+		return fmt.Errorf("write credentials store: %w", err)
+	}
 	return nil
 }
 

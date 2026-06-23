@@ -13,7 +13,7 @@ import (
 var dashboardCmd = &cobra.Command{
 	Use:   "dashboard [agent-name]",
 	Short: "Open the agent dashboard in a browser",
-	Long: `Open the Blocks Network dashboard for an agent. If no agent name is
+	Long: `Open the dashboard for an agent. If no agent name is
 provided, the name is read from agent-card.json in the current directory.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runDashboard,
