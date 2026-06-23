@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +11,62 @@ import (
 	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 )
+
+// loginTestServer returns an httptest server that makes the login discovery +
+// org-resolution calls hermetic: cli-config is a stock-Network 404, and
+// publish-context returns a fixed org so the --api-key path can seed a profile.
+func loginTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/cli-config":
+			w.WriteHeader(http.StatusNotFound) // older/stock backend → non-enterprise
+		case "/api/v1/registry/publish-context":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"orgId":"org-login","orgName":"Login Org","agentCount":0}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// loginServerOrgResolutionFails is like loginTestServer but publish-context
+// errors, so the --api-key path cannot resolve an org for the supplied key.
+func loginServerOrgResolutionFails(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/cli-config":
+			w.WriteHeader(http.StatusNotFound) // non-enterprise
+		case "/api/v1/registry/publish-context":
+			w.WriteHeader(http.StatusInternalServerError) // org lookup fails
+		default:
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// activeProfileKey reads the active profile's default-org API key for assertions.
+func activeProfileKey(t *testing.T) string {
+	t.Helper()
+	_, p, err := profiles.Active()
+	if err != nil {
+		t.Fatalf("profiles.Active: %v", err)
+	}
+	k, ok := p.DefaultOrgKey()
+	if !ok {
+		t.Fatalf("active profile has no default org key")
+	}
+	return k.ApiKey
+}
 
 // resetLoginFlags clears both the package-level flag variables and
 // cobra's per-flag `Changed` tracking. Cobra's MarkFlagsMutuallyExclusive
@@ -36,6 +93,9 @@ func TestLoginWithApiKeyFlagNoEnvPrompt(t *testing.T) {
 	origPathFunc := auth.CredentialPathFunc
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
+	srv := loginTestServer(t)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
 
 	resetLoginFlags()
 
@@ -68,6 +128,9 @@ func TestLoginWriteEnvDir(t *testing.T) {
 	origPathFunc := auth.CredentialPathFunc
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
+	srv := loginTestServer(t)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
 
 	resetLoginFlags()
 
@@ -96,6 +159,9 @@ func TestLoginWithApiKeyFlag(t *testing.T) {
 	origPathFunc := auth.CredentialPathFunc
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
+	srv := loginTestServer(t)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
 
 	// Reset flags
 	resetLoginFlags()
@@ -109,13 +175,9 @@ func TestLoginWithApiKeyFlag(t *testing.T) {
 		}
 	})
 
-	// Should save credentials
-	creds, err := auth.Load()
-	if err != nil {
-		t.Fatalf("credentials not saved: %v", err)
-	}
-	if creds.ApiKey != "bk_test_key_12345678" {
-		t.Errorf("saved key = %q, want bk_test_key_12345678", creds.ApiKey)
+	// Should save the key into the active profile (org resolved via publish-context).
+	if got := activeProfileKey(t); got != "bk_test_key_12345678" {
+		t.Errorf("saved key = %q, want bk_test_key_12345678", got)
 	}
 
 	// Should print masked key
@@ -129,6 +191,42 @@ func TestLoginWithApiKeyFlag(t *testing.T) {
 	}
 }
 
+// TestLoginApiKeyOrgResolutionFailsErrors verifies that when the --api-key path
+// cannot resolve an org for the key (publish-context errors), login fails with a
+// clear error and does NOT print success or store an unusable key.
+func TestLoginApiKeyOrgResolutionFailsErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "credentials.json")
+	origPathFunc := auth.CredentialPathFunc
+	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
+	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
+	srv := loginServerOrgResolutionFails(t)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
+
+	resetLoginFlags()
+
+	rootCmd.SetArgs([]string{"login", "--api-key", "bk_orphan_key_123", "--no-write-env"})
+	rootCmd.SetOut(&bytes.Buffer{})
+	rootCmd.SetErr(&bytes.Buffer{})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when the org cannot be resolved for the API key")
+	}
+	if !strings.Contains(err.Error(), "could not determine the organization") {
+		t.Errorf("error should explain org resolution failed, got: %v", err)
+	}
+
+	// The unusable key must NOT have been stored under any org.
+	_, p, perr := profiles.Active()
+	if perr != nil {
+		t.Fatalf("profiles.Active: %v", perr)
+	}
+	if _, ok := p.DefaultOrgKey(); ok {
+		t.Error("key should not be stored when org resolution fails")
+	}
+}
+
 // TestLoginNoWriteEnvSkipsWrite verifies that --no-write-env suppresses
 // the .env write (and the interactive prompt that would precede it).
 // This is the coding-agent path that this change unblocks.
@@ -138,6 +236,9 @@ func TestLoginNoWriteEnvSkipsWrite(t *testing.T) {
 	origPathFunc := auth.CredentialPathFunc
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
+	srv := loginTestServer(t)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
 
 	resetLoginFlags()
 
@@ -168,6 +269,7 @@ func TestLoginConflictingWriteEnvFlags(t *testing.T) {
 	origPathFunc := auth.CredentialPathFunc
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
 
 	resetLoginFlags()
 
@@ -224,5 +326,38 @@ func TestShouldWriteEnvNonTTYNoFlag(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("shouldWriteEnv() hung on non-TTY stdin (regression)")
+	}
+}
+
+func TestLoginApiKeyDoesNotWriteLegacyBlocksSlot(t *testing.T) {
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "credentials.json")
+	origPathFunc := auth.CredentialPathFunc
+	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
+	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
+	srv := loginTestServer(t)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
+
+	resetLoginFlags()
+
+	rootCmd.SetArgs([]string{"login", "--api-key", "bk_no_legacy_slot", "--no-write-env"})
+	rootCmd.SetOut(&bytes.Buffer{})
+	rootCmd.SetErr(&bytes.Buffer{})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("login --api-key failed: %v", err)
+	}
+
+	// Key must be in the profile (canonical home)...
+	if got := activeProfileKey(t); got != "bk_no_legacy_slot" {
+		t.Errorf("profile key = %q, want bk_no_legacy_slot", got)
+	}
+	// ...and the legacy credentials.json "blocks" slot must NOT have been written.
+	entry, err := auth.GetProviderCredential(credFile, "blocks")
+	if err != nil {
+		t.Fatalf("GetProviderCredential: %v", err)
+	}
+	if entry != nil {
+		t.Errorf("legacy blocks slot was written: %+v", entry)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/branding"
 	"github.com/shopspring/decimal"
 )
 
@@ -25,12 +26,16 @@ const (
 	promptAnsiReset = "\x1b[0m"
 )
 
-// Help text constants for publish prompts.
-const (
-	helpListing = "  Public: Anyone on the Blocks Network can discover and send tasks to your agent.\n" +
+// helpListingText is the visibility-prompt help. It reads the active product
+// name at call time so enterprise deployments brand it correctly.
+func helpListingText() string {
+	return "  Public: Anyone on " + branding.ProductName() + " can discover and send tasks to your agent.\n" +
 		"  Private: Only organizations you explicitly invite can see and use your agent.\n" +
 		"  You can change this later by re-publishing."
+}
 
+// Help text constants for publish prompts.
+const (
 	helpBilling = "  Free: No charge for consumers who use your agent.\n" +
 		"  Paid: You set a price per task or per minute and earn money when consumers use\n" +
 		"  your agent. Blocks Network takes a platform fee; you keep the rest. Paid agents\n" +
@@ -254,7 +259,7 @@ func promptListingSelection(scanner *bufio.Scanner) (string, error) {
 	for {
 		fmt.Println("\nWho should be able to discover and use this agent?")
 		fmt.Println()
-		fmt.Println("  1. " + boldPrompt("Public Agent") + "   Visible and usable by everyone on the Blocks Network.")
+		fmt.Println("  1. " + boldPrompt("Public Agent") + "   Visible and usable by everyone on " + branding.ProductName() + ".")
 		fmt.Println("  2. " + boldPrompt("Private Agent") + "  Visible and usable only by organizations you invite.")
 		fmt.Println()
 		fmt.Print("Select visibility [1/2] (? for help): ")
@@ -264,7 +269,7 @@ func promptListingSelection(scanner *bufio.Scanner) (string, error) {
 		}
 		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
 		if choice == "?" {
-			fmt.Println(helpListing)
+			fmt.Println(helpListingText())
 			fmt.Println()
 			continue
 		}

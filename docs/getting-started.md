@@ -85,16 +85,20 @@ pip install -e . && pip install blocks-network --upgrade
 On Windows, activate the virtual environment with
 `.venv\Scripts\activate`.
 
-## 4. Authenticate and Publish
+## 4. Authenticate and Register
 
 ```bash
 blocks login --write-env
-blocks publish
+blocks register   # private + free, the recommended first step
+# Later, to make the agent public or set pricing: blocks publish
 ```
 
 `blocks login --write-env` authenticates with Blocks Network and writes
-`BLOCKS_API_KEY` to the project `.env`. `blocks publish` validates
-`agent-card.json`, then registers the agent card with the Network.
+`BLOCKS_API_KEY` to the project `.env`. `blocks register` validates
+`agent-card.json`, then registers the agent card with the Network as
+**private and free** (usable by you and the organizations you invite).
+Run `blocks publish` when you want to make the agent public or set
+pricing; it can also promote an already-registered agent.
 
 `blocks init` scaffolds three kinds of projects:
 

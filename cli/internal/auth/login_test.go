@@ -1,11 +1,33 @@
 package auth
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCreateOrgAPIKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/api-key/create" || r.Header.Get("Authorization") != "Bearer bk_existing" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"apiKey":"bk_new","keyId":"k2","expiresAt":""}`))
+	}))
+	defer srv.Close()
+
+	resp, err := CreateOrgAPIKey(srv.URL, "bk_existing", "org-finance", "cli-test")
+	if err != nil {
+		t.Fatalf("CreateOrgAPIKey: %v", err)
+	}
+	if resp.ApiKey != "bk_new" || resp.KeyId != "k2" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
 
 func TestUpsertEnvKey_ReplacesExisting(t *testing.T) {
 	tmpDir := t.TempDir()

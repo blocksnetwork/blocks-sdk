@@ -155,11 +155,14 @@ validation.
 ### [Unreleased]
 
 #### Added
+- `blocks register` command — register an agent privately and free in one step, with no visibility or pricing prompts. The recommended first step for getting an agent onto the Blocks Network; run `blocks publish` later when you want to make it public or set pricing (and to promote an already-registered agent).
 - Private agent invitations and grants — invite collaborators to private agents
 - `blocks delete` command for removing agent registrations
 - `blocks login --no-write-env` flag to opt out of writing `BLOCKS_API_KEY` to `.env` without seeing the interactive prompt. Use this in non-interactive sessions where a TTY is attached but no human is available to answer the prompt.
 
 #### Fixed
+- `blocks publish` now applies enterprise publishing behavior when you target an enterprise instance with `--api-key` before running `blocks login` for that instance, instead of falling back to Blocks Network prompts.
+- Publishing under a non-default organization now makes that organization the active one, so later `blocks run` and `blocks whoami` use it instead of the previously selected organization.
 - Windows TLS timeouts when fetching CDM config
 - PowerShell 5.1 install script parse errors
 - Dashboard URL updated from `/playground/agents/` to `/agents/`
@@ -167,6 +170,7 @@ validation.
 - `blocks login` no longer hangs on the `Write BLOCKS_API_KEY to project .env? (Y/n):` prompt in non-interactive sessions where a TTY is attached. Pass `--write-env` to opt in or `--no-write-env` to opt out non-interactively.
 
 #### Changed
+- `blocks login --api-key` now fails with a clear error instead of silently reporting success when the organization for the key can't be determined — for example an invalid key or an unreachable instance URL. The key is not saved in that case, so verify the key and instance URL, then retry.
 - `blocks init` flag `--type`/`-t` renamed to `--mode`/`-m`, which also accepts the new `webapp` value. `--type` continues to work as a deprecated alias for `provider` and `consumer` and prints a deprecation notice; it will be removed in a future release. Migrate `--type provider|consumer` to `--mode`.
 - Scaffolded projects no longer include Artifactory/.npmrc/pip.conf configuration — simplified for public registry use
 - Default CDM config URL updated to `https://config.blocks.ai/config.json`

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestSaveLoadDeleteRoundTrip(t *testing.T) {
+func TestLoadDeleteRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	origFunc := CredentialPathFunc
 	CredentialPathFunc = func() (string, error) {
@@ -23,9 +23,18 @@ func TestSaveLoadDeleteRoundTrip(t *testing.T) {
 		ExpiresAt: time.Now().Add(90 * 24 * time.Hour).Truncate(time.Second),
 	}
 
-	// Save
-	if err := Save(creds); err != nil {
-		t.Fatalf("Save failed: %v", err)
+	// Seed a legacy "blocks" entry directly (the v3 shape a migrated file holds).
+	credPath, _ := CredentialPathFunc()
+	exp := creds.ExpiresAt
+	if err := SetProviderCredential(credPath, "blocks", &ProviderEntry{
+		MintMethod: "api_token_via_browser",
+		ApiKey:     creds.ApiKey,
+		OrgId:      creds.OrgId,
+		OrgName:    creds.OrgName,
+		KeyId:      creds.KeyId,
+		ExpiresAt:  &exp,
+	}); err != nil {
+		t.Fatalf("seed legacy blocks slot: %v", err)
 	}
 
 	// Verify file permissions
@@ -159,25 +168,5 @@ func TestIsExpired(t *testing.T) {
 				t.Errorf("IsExpired() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestSaveDefaultsToCurrentSchemaVersion(t *testing.T) {
-	tmpDir := t.TempDir()
-	origFunc := CredentialPathFunc
-	CredentialPathFunc = func() (string, error) {
-		return filepath.Join(tmpDir, "blocks", "credentials.json"), nil
-	}
-	defer func() { CredentialPathFunc = origFunc }()
-
-	creds := &Credentials{
-		ApiKey: "bk_test_key",
-		OrgId:  "org-1",
-	}
-	if err := Save(creds); err != nil {
-		t.Fatalf("Save failed: %v", err)
-	}
-	if creds.SchemaVersion != currentSchemaVersion {
-		t.Errorf("expected SchemaVersion to default to %d, got %d", currentSchemaVersion, creds.SchemaVersion)
 	}
 }

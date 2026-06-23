@@ -54,8 +54,9 @@ make setup
 ```bash
 cd examples/python/echo
 blocks login --write-env  # first time only -- authenticate
-blocks publish         # register agent with the registry
+blocks register        # register the agent privately and free (recommended first step)
 blocks run
+# Later, to make the agent public or set pricing: blocks publish
 ```
 
 3. Press Ctrl+C to stop. The agent's `stop()` runs best-effort cleanup

@@ -9,12 +9,19 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/pubnub/blocks-sdk/cli/internal/branding"
 )
 
-// HelpOrgName is the help text shown when the user types '?' at the org name prompt.
-const HelpOrgName = "  Your organization name appears on the Blocks Network alongside your agents.\n" +
-	"  It must be globally unique (like agent names). Leave blank to keep the current\n" +
-	"  name. You can change it later from the dashboard."
+// HelpOrgNameText is the help text shown when the user types '?' at the org
+// name prompt. It reads the active product name at call time so enterprise
+// deployments brand it correctly (the org-name prompt is skipped in enterprise,
+// so this only renders on Network — branding it keeps it consistent if shown).
+func HelpOrgNameText() string {
+	return "  Your organization name appears on " + branding.ProductName() + " alongside your agents.\n" +
+		"  It must be globally unique (like agent names). Leave blank to keep the current\n" +
+		"  name. You can change it later from the dashboard."
+}
 
 // PublishContext is the response from GET /api/v1/registry/publish-context.
 type PublishContext struct {
@@ -160,7 +167,7 @@ func readOrgName(scanner *bufio.Scanner, defaultName string) (string, error) {
 		}
 		text := strings.TrimSpace(scanner.Text())
 		if text == "?" {
-			fmt.Println(HelpOrgName)
+			fmt.Println(HelpOrgNameText())
 			continue
 		}
 		return text, nil

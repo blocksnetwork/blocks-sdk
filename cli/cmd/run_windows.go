@@ -16,7 +16,7 @@ func sysExec(binary string, argv []string, dir string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = withCLIVersion(os.Environ())
+	cmd.Env = buildChildEnv()
 
 	// Forward interrupt signals to the child process
 	sigCh := make(chan os.Signal, 1)

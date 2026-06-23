@@ -14,9 +14,23 @@ import (
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 	"github.com/spf13/pflag"
 )
+
+// isolateProfiles points the profile store (contexts.json) at a fresh temp file
+// so the active-profile API-key resolution is hermetic and never reads the
+// developer's real ~/.config/blocks/contexts.json. Returns a cleanup func.
+func isolateProfiles(t *testing.T) func() {
+	t.Helper()
+	dir := t.TempDir()
+	orig := profiles.ContextsPathFunc
+	profiles.ContextsPathFunc = func() (string, error) {
+		return filepath.Join(dir, "contexts.json"), nil
+	}
+	return func() { profiles.ContextsPathFunc = orig }
+}
 
 // resetPublishFlags resets all publish command flag variables to defaults.
 // Cobra does not re-apply defaults when Execute() is called again with different args.
@@ -132,17 +146,102 @@ func setupFakeCredentials(t *testing.T) func() {
 	auth.CredentialPathFunc = func() (string, error) {
 		return credPath, nil
 	}
+	restoreProfiles := isolateProfiles(t)
 
-	creds := &auth.Credentials{
-		ApiKey:    "bk_test_key",
-		OrgId:     "org-test",
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	}
-	if err := auth.Save(creds); err != nil {
+	// Seed the legacy "blocks" slot so loadCredentials' migration fallback resolves
+	// it (the profile store is isolated/empty via isolateProfiles).
+	expiry := time.Now().Add(24 * time.Hour)
+	if err := auth.SetProviderCredential(credPath, "blocks", &auth.ProviderEntry{
+		MintMethod: "api_token_via_browser",
+		ApiKey:     "bk_test_key",
+		OrgId:      "org-test",
+		ExpiresAt:  &expiry,
+	}); err != nil {
 		t.Fatalf("saving fake credentials: %v", err)
 	}
 
-	return func() { auth.CredentialPathFunc = origFunc }
+	return func() {
+		auth.CredentialPathFunc = origFunc
+		restoreProfiles()
+	}
+}
+
+// TestEnterpriseForcesFreeBillingMode asserts enterprise forces billing-mode=free
+// (so the paid-only pricing/T&C prompts are skipped) while Blocks Network keeps
+// its existing prompting behavior (no override).
+func TestEnterpriseForcesFreeBillingMode(t *testing.T) {
+	if got := enterpriseBillingOverride(true); got == nil || *got != "free" {
+		t.Fatalf("enterprise should force billing-mode=free, got %v", got)
+	}
+	if got := enterpriseBillingOverride(false); got != nil {
+		t.Fatalf("non-enterprise should not override billing-mode, got %v", got)
+	}
+}
+
+// TestResolvePublishEnterprise covers enterprise classification for publish:
+// a saved enterprise profile is authoritative, a pure stock target skips
+// discovery, and a custom backend without an enterprise profile is resolved via
+// a lenient cli-config discovery (errors default to Network).
+func TestResolvePublishEnterprise(t *testing.T) {
+	t.Run("enterprise profile is authoritative without discovery", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		if err := profiles.Upsert("acme", profiles.Profile{Enterprise: true, Orgs: map[string]profiles.OrgKey{}}, true); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		// A dead backend would error if discovery ran — the profile short-circuits it.
+		if !resolvePublishEnterprise("http://127.0.0.1:1/dead") {
+			t.Fatal("enterprise profile should classify as enterprise")
+		}
+	})
+
+	t.Run("stock target skips discovery and is non-enterprise", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		// Default profile has no BaseURL and no enterprise flag; with no custom
+		// backend, discovery is skipped (the dead URL is never contacted).
+		if resolvePublishEnterprise("http://127.0.0.1:1/dead") {
+			t.Fatal("stock target must not be classified as enterprise")
+		}
+	})
+
+	t.Run("custom backend discovers enterprise when no profile says so", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/cli-config" {
+				w.WriteHeader(200)
+				w.Write([]byte(`{"enterprise":true}`))
+				return
+			}
+			w.WriteHeader(404)
+		}))
+		defer srv.Close()
+		t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
+		if !resolvePublishEnterprise(srv.URL) {
+			t.Fatal("custom backend with enterprise cli-config should classify as enterprise")
+		}
+	})
+
+	t.Run("custom backend stays Network when discovery says so", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"enterprise":false}`))
+		}))
+		defer srv.Close()
+		t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
+		if resolvePublishEnterprise(srv.URL) {
+			t.Fatal("non-enterprise cli-config should classify as Network")
+		}
+	})
+
+	t.Run("unreachable discovery is lenient and non-enterprise", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "http://127.0.0.1:1/dead")
+		if resolvePublishEnterprise("http://127.0.0.1:1/dead") {
+			t.Fatal("unreachable discovery must not block publish (defaults to Network)")
+		}
+	})
 }
 
 // TestPublishPayloadShape verifies that the publish envelope sent to the
@@ -158,6 +257,11 @@ func TestPublishPayloadShape(t *testing.T) {
 
 	var received map[string]interface{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/cli-config" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"enterprise":false}`))
+			return
+		}
 		if r.URL.Path == "/api/v1/pricing/limits" {
 			w.WriteHeader(404)
 			return
@@ -847,6 +951,7 @@ func TestPublishNoCredentialsFails(t *testing.T) {
 	origPathFunc := auth.CredentialPathFunc
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
 
 	dir := writeValidProject(t)
 	t.Setenv("BLOCKS_BACKEND_URL", "http://unused")
@@ -871,22 +976,28 @@ func TestPublishNoCredentialsFails(t *testing.T) {
 	}
 }
 
-// TestPublishExpiredCredentialsFails verifies that publish with expired stored
-// credentials fails fast with an actionable error.
+// TestPublishExpiredCredentialsFails verifies that publish with an expired
+// active-profile org key fails fast with an actionable error. The expired key
+// is filtered out by activeProfileAPIKey() (IsExpired), and the legacy
+// fallback's expiry check yields the same "not authenticated — run blocks
+// login" guidance, so the command never reaches the registry.
 func TestPublishExpiredCredentialsFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	credFile := filepath.Join(tmpDir, "blocks", "credentials.json")
 	origPathFunc := auth.CredentialPathFunc
 	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
 	defer func() { auth.CredentialPathFunc = origPathFunc }()
+	defer isolateProfiles(t)()
 
-	creds := &auth.Credentials{
-		ApiKey:    "bk_expired_key",
-		OrgId:     "org-test",
-		ExpiresAt: time.Now().Add(-1 * time.Hour),
+	// Seed the active profile's default org with an expired key.
+	expired := profiles.Profile{
+		DefaultOrgID: "org-test",
+		Orgs: map[string]profiles.OrgKey{
+			"org-test": {OrgName: "Test Org", ApiKey: "bk_expired_key", ExpiresAt: time.Now().Add(-1 * time.Hour)},
+		},
 	}
-	if err := auth.Save(creds); err != nil {
-		t.Fatalf("saving expired credentials: %v", err)
+	if err := profiles.Upsert(profiles.DefaultProfile, expired, true); err != nil {
+		t.Fatalf("seeding expired profile: %v", err)
 	}
 
 	dir := writeValidProject(t)
@@ -904,8 +1015,8 @@ func TestPublishExpiredCredentialsFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when credentials are expired")
 	}
-	if !strings.Contains(err.Error(), "expired") {
-		t.Errorf("error should mention 'expired', got: %s", err.Error())
+	if !strings.Contains(err.Error(), "not authenticated") {
+		t.Errorf("error should mention 'not authenticated', got: %s", err.Error())
 	}
 	if !strings.Contains(err.Error(), "blocks login") {
 		t.Errorf("error should mention 'blocks login', got: %s", err.Error())

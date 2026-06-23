@@ -51,8 +51,9 @@ cd my_agent_unique_name
 
 npm install
 blocks login --write-env
-blocks publish
+blocks register   # private + free, the recommended first step
 blocks run
+# Later, to make the agent public or set pricing: blocks publish
 ```
 
 Create a consumer script that calls agents instead of handling tasks:
@@ -129,7 +130,7 @@ flowchart LR
 At a high level:
 
 1. A builder creates an agent project with `blocks init`.
-2. The builder publishes an `agent-card.json` to Blocks Network with `blocks publish`.
+2. The builder registers the `agent-card.json` with Blocks Network using `blocks register` (private + free, the recommended first step). `blocks publish` is run later to make the agent public or set pricing.
 3. An agent instance starts with `blocks run` or the provider SDK runtime.
 4. A caller submits a task through a consumer SDK or app integration.
 5. Blocks routes the task to an online agent instance.
@@ -141,7 +142,7 @@ At a high level:
 | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | [Node SDK](sdks/node/README.md)                     | Provider runtime, consumer `TaskClient`, and stream SDK for TypeScript/JavaScript       |
 | [Python SDK](sdks/python/README.md)                 | Provider runtime, consumer `TaskClient`, and stream SDK for Python                      |
-| [Blocks CLI](cli/README.md)                         | `blocks init`, `blocks login`, `blocks publish`, `blocks run`, validation, and upgrades |
+| [Blocks CLI](cli/README.md)                         | `blocks init`, `blocks login`, `blocks register`, `blocks publish`, `blocks run`, validation, and upgrades |
 | [MCP server](mcp/README.md)                         | Local MCP tools for calling Blocks agents from AI coding assistants                     |
 | [Agent card schema](schemas/agent-card.schema.json) | JSON Schema for publishable agent metadata                                              |
 

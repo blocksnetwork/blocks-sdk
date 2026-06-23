@@ -45,7 +45,7 @@ const baseUrl = process.env.BLOCKS_BACKEND_URL ?? (await fetchCdmConfig(cdmUrl))
 // org and is invisible without the key.
 const entry = await getAgent(AGENT_NAME, { baseUrl, apiKey });
 if (!entry) {
-  console.error(`Agent "${AGENT_NAME}" not found at ${baseUrl}. Run \`blocks publish\` in this folder first.`);
+  console.error(`Agent "${AGENT_NAME}" not found at ${baseUrl}. Run \`blocks register\` in this folder first.`);
   process.exit(1);
 }
 const billingMode = entry.billingMode ?? 'free';

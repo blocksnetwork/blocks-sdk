@@ -1,3 +1,11 @@
+// Package auth owns credentials.json: account-global provider secrets, namespaced
+// by provider (cloudflare/vercel/netlify partner API tokens).
+//
+// Store boundary: credentials.json holds account-global partner tokens; per-(profile,
+// org) Blocks keys live in the profile store (internal/profiles, contexts.json). The
+// "blocks" namespace here is a transitional, read-only migration fallback drained by
+// internal/profiles on first profile load — no code writes a fresh Blocks key into it.
+// See dev_docs/initiative/06-10_blocks_enterprise/CLI_CREDENTIAL_STORE_PLAN.md.
 package auth
 
 import (
@@ -10,18 +18,20 @@ import (
 
 // currentSchemaVersion is the credentials file format version.
 // v3 is a namespaced multi-provider shape; v2 was a flat single-key shape.
+// Note: this version line is independent of internal/profiles' schema_version; the
+// two files version separately and the shared value 3 is coincidental.
 const currentSchemaVersion = 3
 
 // ProviderEntry holds the credential fields for one provider namespace.
 // Not all fields apply to every provider; omitempty keeps the file tidy.
 type ProviderEntry struct {
-	MintMethod   string     `json:"mint_method"`
-	AccessToken  string     `json:"access_token,omitempty"`
-	ApiKey       string     `json:"api_key,omitempty"`
-	OrgId        string     `json:"org_id,omitempty"`
-	OrgName      string     `json:"org_name,omitempty"`
-	KeyId        string     `json:"key_id,omitempty"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	MintMethod  string     `json:"mint_method"`
+	AccessToken string     `json:"access_token,omitempty"`
+	ApiKey      string     `json:"api_key,omitempty"`
+	OrgId       string     `json:"org_id,omitempty"`
+	OrgName     string     `json:"org_name,omitempty"`
+	KeyId       string     `json:"key_id,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
 // AllCredentials is the full v3 on-disk shape.
@@ -281,44 +291,6 @@ func Load() (*Credentials, error) {
 		KeyId:         entry.KeyId,
 		ExpiresAt:     expiresAt,
 	}, nil
-}
-
-// Save persists a *Credentials into the "blocks" namespace of the v3 file.
-// Other provider namespaces are preserved.
-// It sets creds.SchemaVersion to currentSchemaVersion as a side effect,
-// matching the behaviour expected by existing callers.
-func Save(creds *Credentials) error {
-	path, err := credentialsPath()
-	if err != nil {
-		return err
-	}
-	// Load existing file (or start fresh) to preserve other providers.
-	all, err := LoadAll(path)
-	if err != nil {
-		return err
-	}
-	if all.Providers == nil {
-		all.Providers = make(map[string]*ProviderEntry)
-	}
-
-	var expiresAt *time.Time
-	if !creds.ExpiresAt.IsZero() {
-		t := creds.ExpiresAt
-		expiresAt = &t
-	}
-	all.Providers["blocks"] = &ProviderEntry{
-		MintMethod: "api_token_via_browser",
-		ApiKey:     creds.ApiKey,
-		OrgId:      creds.OrgId,
-		OrgName:    creds.OrgName,
-		KeyId:      creds.KeyId,
-		ExpiresAt:  expiresAt,
-	}
-	if err := SaveAll(path, all); err != nil {
-		return err
-	}
-	creds.SchemaVersion = currentSchemaVersion
-	return nil
 }
 
 // Delete removes the credentials file entirely.

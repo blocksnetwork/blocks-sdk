@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/spf13/cobra"
 )
 
@@ -24,22 +24,27 @@ func init() {
 func runWhoami(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 
-	creds, err := auth.Load()
+	name, p, err := profiles.Active()
 	if err != nil {
+		return fmt.Errorf("not logged in — run 'blocks login' first")
+	}
+	k, ok := p.DefaultOrgKey()
+	if !ok {
 		return fmt.Errorf("not logged in — run 'blocks login' first")
 	}
 
 	if jsonOutput {
 		output := map[string]interface{}{
-			"org_name": creds.OrgName,
-			"org_id":   creds.OrgId,
-			"key_id":   creds.KeyId,
+			"profile":  name,
+			"org_name": k.OrgName,
+			"org_id":   p.DefaultOrgID,
+			"key_id":   k.KeyId,
 		}
-		if !creds.ExpiresAt.IsZero() {
-			output["expires_at"] = creds.ExpiresAt.UTC().Format(time.RFC3339)
-			daysRemaining := int(time.Until(creds.ExpiresAt).Hours() / 24)
+		if !k.ExpiresAt.IsZero() {
+			output["expires_at"] = k.ExpiresAt.UTC().Format(time.RFC3339)
+			daysRemaining := int(time.Until(k.ExpiresAt).Hours() / 24)
 			output["days_remaining"] = daysRemaining
-			output["expired"] = creds.IsExpired()
+			output["expired"] = k.IsExpired()
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -47,16 +52,17 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 	}
 
 	// Human-readable output
-	fmt.Printf("  Org:      %s\n", creds.OrgName)
-	fmt.Printf("  Org ID:   %s\n", creds.OrgId)
-	if creds.KeyId != "" {
-		fmt.Printf("  Key ID:   %s\n", creds.KeyId)
+	fmt.Printf("  Profile:  %s\n", name)
+	fmt.Printf("  Org:      %s\n", k.OrgName)
+	fmt.Printf("  Org ID:   %s\n", p.DefaultOrgID)
+	if k.KeyId != "" {
+		fmt.Printf("  Key ID:   %s\n", k.KeyId)
 	}
 
-	if !creds.ExpiresAt.IsZero() {
-		expiresAt := creds.ExpiresAt.UTC()
+	if !k.ExpiresAt.IsZero() {
+		expiresAt := k.ExpiresAt.UTC()
 		expiryStr := expiresAt.Format(time.RFC3339)
-		if creds.IsExpired() {
+		if k.IsExpired() {
 			expiryStr += " (expired)"
 		} else {
 			daysRemaining := int(time.Until(expiresAt).Hours() / 24)

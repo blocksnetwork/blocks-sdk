@@ -38,8 +38,9 @@ In one terminal — start the agent:
 
 ```bash
 cd blocks-sdk/examples/node/bidi-chat
-blocks publish    # first time only
+blocks register   # first time only -- private + free (recommended first step)
 blocks run
+# Later, to make the agent public or set pricing: blocks publish
 ```
 
 In another terminal — run the consumer:

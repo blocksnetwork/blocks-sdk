@@ -51,7 +51,7 @@ def main() -> None:
     if entry is None:
         print(
             f"Agent '{AGENT_NAME}' not found at {base_url}. "
-            "Run 'blocks publish' in this folder first.",
+            "Run 'blocks register' in this folder first.",
             file=sys.stderr,
         )
         sys.exit(1)

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 )
 
 // resetInitFlags zeros the package-level flag vars between tests.
@@ -22,6 +24,30 @@ func resetInitFlags() {
 	initType = ""
 	initAgents = nil
 	initBlocksBaseURL = ""
+}
+
+func TestEnsureOrOfferBlocksLoginUsesProfileKey(t *testing.T) {
+	defer isolateProfiles(t)()
+	// Point the legacy credentials path at an empty dir so ONLY the profile is present.
+	tmpDir := t.TempDir()
+	origCred := auth.CredentialPathFunc
+	auth.CredentialPathFunc = func() (string, error) {
+		return filepath.Join(tmpDir, "credentials.json"), nil
+	}
+	defer func() { auth.CredentialPathFunc = origCred }()
+
+	// Seed a profile with a usable key (the canonical home).
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		DefaultOrgID: "o1",
+		Orgs:         map[string]profiles.OrgKey{"o1": {OrgName: "Eng", ApiKey: "bk_profile_key"}},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	got := ensureOrOfferBlocksLogin(context.Background())
+	if got != "bk_profile_key" {
+		t.Errorf("ensureOrOfferBlocksLogin = %q, want bk_profile_key (must read profile, not re-prompt)", got)
+	}
 }
 
 // fixtureDir resolves the absolute path of internal/cardfetch/testdata/.
