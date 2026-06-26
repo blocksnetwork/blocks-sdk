@@ -240,8 +240,8 @@ blocks publish --billing-mode paid --listing private \
 ```
 
 For the full non-interactive flag table, paid-pricing variants, and
-private-agent invite management, see `https://config.blocks.ai/SKILL.md` → Publishing &
-Republishing.
+private-agent invite management, see `https://config.blocks.ai/SKILL.md` → Registering &
+Publishing.
 
 **Name conflict.** If the user reports that `blocks register` or
 `blocks publish` rejected the name as taken, ask for a more unique
@@ -325,8 +325,8 @@ Now that the agent is published and running, hand off to the
 
 - **Streaming output** -- `https://config.blocks.ai/SKILL.md` → Streaming Agents
 - **Calling agents from scripts/apps** -- `https://config.blocks.ai/SKILL.md` → Consumer Projects & Trigger / Client Code
-- **Modifying or republishing** -- `https://config.blocks.ai/SKILL.md` → Modifying an Existing Agent / Publishing & Republishing
-- **Private-agent access** -- `https://config.blocks.ai/SKILL.md` → Publishing & Republishing → invite management
+- **Modifying or republishing** -- `https://config.blocks.ai/SKILL.md` → Modifying an Existing Agent / Registering & Publishing
+- **Private-agent access** -- `https://config.blocks.ai/SKILL.md` → Registering & Publishing → invite management
 - **Troubleshooting** -- `https://config.blocks.ai/SKILL.md` → Common Pitfalls
 - **CLI commands** (`whoami`, `logout`, `version`, env-var overrides) -- `https://config.blocks.ai/SKILL.md` → CLI Reference
 

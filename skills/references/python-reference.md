@@ -105,7 +105,7 @@ Add this to `agent-card.json` (peer of `identity`, `capabilities`, `io`):
 - For request-only agents (`taskKinds: ["request"]`), streams must contain only `_default`.
 - Both `direction` and `format` are required on each stream.
 - A stream declared with `affinity: "shared"` is a cross-task broadcast and is **pipe-only** — `create_stream()` raises on request tasks, and per-task `stream.end()` does not publish a `stream_end` marker. See `dev_docs/SDK_CONTRACT.md` §4.4.2, §8.4.1a, §8.7.3a, §8.7.4 for the lifecycle contract.
-- Re-publish (`blocks publish`) after adding `streams`.
+- Re-register or re-publish (`blocks register` / `blocks publish`) after adding `streams`. Use `blocks publish` here if the agent has already been promoted to public or paid — `blocks register` would reset the listing back to private+free.
 
 `create_stream` accepts keyword-only options: `direction` (`"outbound"`|`"inbound"`|`"bidirectional"`, default `"outbound"`), `on_activate`, `metadata`, `external` (bool), `format` (`"bytes"`|`"events"`), `bundle_size_bytes`, `max_latency_ms`, `declared_stream` (omit when the card declares a single stream -- the SDK resolves it automatically; **required** when the card declares multiple streams), `subscribe_grace_ms`. The SDK derives the channel from `declared_stream` plus the card's affinity; handler code cannot specify the channel suffix directly.
 

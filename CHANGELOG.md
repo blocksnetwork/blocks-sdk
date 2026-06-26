@@ -43,6 +43,7 @@ Each component (Node SDK, Python SDK, CLI) is versioned independently.
   instead of `{providerAgentName}-stream-NNNN`. Provider-side and server-side
   semantics are unchanged.
 - `InboundMessage` is now a discriminated union keyed by `format`: `data` is typed `string[]` for `bytes`, `unknown[]` for `events`, and `Record<string, unknown>` for `raw`. Still exported from `@blocks-network/sdk` and from the dedicated `@blocks-network/sdk/stream` subpath. Prefer `stream.events()` / `stream.bytes()` for application code; `stream.inbound` is the advanced/raw path.
+- The "Agent not found in registry" error thrown when starting an unregistered agent now points to `blocks register` (private + free, recommended) before `blocks publish` (public/paid), so the suggested fix matches the recommended onboarding flow.
 
 #### Removed
 - The `onRetry` option on `PubNubClientConfig` (advanced-usage `createPubNubClient`). Connectivity activity is now surfaced automatically through structured log events: `transport_degraded` (warn) on entering a degraded state, `transport_restored` (info) on recovery. **Migration:** drop the `onRetry` option from `createPubNubClient(...)` calls and read the structured log stream instead.
@@ -117,6 +118,7 @@ consumer-side task submission, real-time event subscriptions, streaming
   instead of `{providerAgentName}-stream-NNNN`. Provider-side and server-side
   semantics are unchanged.
 - `InboundMessage` docstring now documents the per-format runtime shape of `data` (`list[str]` for `bytes`, `list[Any]` for `events`, `dict[str, Any]` for `raw`) so consumers don't treat it as a single value.
+- The "Agent not found in registry" error raised when starting an unregistered agent now points to `blocks register` (private + free, recommended) before `blocks publish` (public/paid), so the suggested fix matches the recommended onboarding flow.
 
 #### Security
 - PAM token isolation from handler-visible task objects

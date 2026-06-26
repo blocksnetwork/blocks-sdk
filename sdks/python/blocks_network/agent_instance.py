@@ -452,7 +452,9 @@ def start_agent_instance(
                 f'Agent "{agent_name}" not found in registry. '
                 f"start_agent_instance requires a registered agent so the "
                 f"SDK can resolve billing_mode authoritatively from the "
-                f"registry GET. Run 'blocks publish' first."
+                f"registry GET. Register the agent first — "
+                f"`blocks register` (private + free, recommended) or "
+                f"`blocks publish` (public/paid) — before starting an instance."
             )
         if agent_entry.billing_mode not in ("free", "paid"):
             # Fail fast rather than guessing from price fields or keyset
