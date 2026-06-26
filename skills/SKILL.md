@@ -5,7 +5,7 @@ metadata:
   author: blocks-network
   version: "0.3.0"
   domain: real-time
-  triggers: blocks, blocks-network, agent, a2a, modify agent, update agent, change agent, fix agent, edit agent, deploy agent, connect agent, register agent, publish agent, republish, streaming agent, consumer, consume agent, call agent, task client, taskclient, trigger script, invite, private agent, agent card, io schema, runtime config, blocks cli, troubleshoot, pitfall, blocks login, blocks publish, blocks check, blocks dashboard
+  triggers: blocks, blocks-network, agent, a2a, modify agent, update agent, change agent, fix agent, edit agent, deploy agent, connect agent, register agent, publish agent, republish, streaming agent, consumer, consume agent, call agent, task client, taskclient, trigger script, invite, private agent, agent card, io schema, runtime config, blocks cli, troubleshoot, pitfall, blocks login, blocks register, blocks publish, blocks check, blocks dashboard
   role: specialist
   scope: implementation
   output-format: code
@@ -26,7 +26,7 @@ flags, troubleshooting.
 
 Execute every command directly using the Bash tool. Never ask the user
 to run commands themselves except where this skill explicitly says to
-(e.g. `blocks publish`, `blocks run`).
+(e.g. `blocks register`, `blocks publish`, `blocks run`).
 
 **Language:** Default to **Node (TypeScript)**. Only use Python if the
 user explicitly requests it. For Python, see [Python Reference].
@@ -62,7 +62,7 @@ guidance) and [IO Schema Reference] (input/output rules).
 - [Agent Card Reference](#agent-card-reference) -- runtime config, optional fields
 - [IO Schema Rules](#io-schema-rules) -- transport classes, examples, drafting from a handler
 - [Streaming Agents](#streaming-agents) -- direction/format matrix, handler I/O, consumer I/O
-- [Publishing & Republishing](#publishing--republishing) -- non-interactive flags, name conflicts, invite management
+- [Registering & Publishing](#registering--publishing) -- register private/free first, promote to public/paid later, non-interactive flags, name conflicts, invite management
 - [Modifying an Existing Agent](#modifying-an-existing-agent) -- edit-and-republish recipe
 - [Deploying Code You've Already Written](#deploying-code-youve-already-written) -- locate, draft missing card, publish
 - [Consumer Projects & Trigger / Client Code](#consumer-projects--trigger--client-code) -- calling agents from scripts/apps
@@ -407,11 +407,20 @@ reconstruction after `connect()`, use `session.listEvents()` /
 history; this history list is not populated for new `sendMessage()` /
 `send_message()` sessions.
 
-## Publishing & Republishing
+## Registering & Publishing
 
-Publishing pushes the latest IO schemas, streaming capabilities, and
-description to the registry. Republish whenever the agent card or
-handler shape changes.
+Registering / publishing pushes the latest IO schemas, streaming
+capabilities, and description to the registry. Re-register (or
+republish) whenever the agent card or handler shape changes — running
+`blocks register` again on the same agent updates the card, IO schema,
+description, and tags the same way re-running `blocks publish` does.
+
+**Caveat once you've promoted with `blocks publish`:** `blocks register`
+always sends `listing=private` + `billingMode=free`, so re-running it
+on an agent that was promoted to public/paid will reset the visibility
+and pricing back to private+free (card content still updates
+correctly). After the first promotion, prefer `blocks publish` for
+subsequent updates so the listing isn't silently demoted.
 
 The recommended first step is `blocks register`, which registers the
 agent **privately and free** (usable by the owner and invited
@@ -469,12 +478,15 @@ blocks publish --billing-mode paid --listing private \
 
 ### Name conflicts
 
-Agent names are globally unique across the Blocks Network. If the user
-reports that `blocks publish` rejected the name as duplicate / already
-taken, inform them that the name is unavailable and ask for a more
-unique alternative via the host question tool. Update
-`agent-card.json` `identity.agentName` (and rename the project
-directory if needed), then ask the user to re-run `blocks publish`.
+Agent names are globally unique across the Blocks Network. Since
+`blocks register` is the recommended first step, name collisions
+typically surface there; `blocks publish` enforces the same check. If
+either command rejected the name as duplicate / already taken, inform
+the user that the name is unavailable and ask for a more unique
+alternative via the host question tool. Update `agent-card.json`
+`identity.agentName` (and rename the project directory if needed),
+then ask the user to re-run the same command (`blocks register` or
+`blocks publish`).
 
 ### Manage access for private agents
 
@@ -509,7 +521,7 @@ republish. Reference checklist:
    Schema Rules](#io-schema-rules). When adding streaming, see
    [Streaming Agents](#streaming-agents).
 4. **Validate** with `cd <agent-dir> && blocks check`.
-5. **Republish** per [Publishing & Republishing](#publishing--republishing).
+5. **Re-register (or republish)** per [Registering & Publishing](#registering--publishing).
    The published metadata is what consumers see -- don't rely on
    `blocks run` alone to confirm the change is live.
 6. **Restart** the running agent so the new handler is loaded -- ask
@@ -546,7 +558,7 @@ don't assume they want to edit the handler.
    - **As-is:** Skip handler edits. Authenticate (`blocks login
      --write-env` if needed), then `blocks register` (private + free,
      the recommended first step) per
-     [Publishing & Republishing](#publishing--republishing). Use
+     [Registering & Publishing](#registering--publishing). Use
      `blocks publish` instead if the user explicitly wants public/paid.
    - **Changes first:** Edit handler / IO schema, then register (or
      publish).
@@ -895,7 +907,7 @@ is already terminal (live-only data is gone; artifacts persist).
 | `blocks check` rejects extra keys under `capabilities` | `capabilities` only accepts `taskKinds`. Streaming config goes in the top-level `streams` block. |
 | `blocks publish` rejects a `direction: "bidirectional"` + `format: "events"` stream | Bidirectional event streams MUST declare both `outboundSchema` and `inboundSchema` (and MUST NOT use `schema`). Unidirectional event streams use a single `schema`; byte streams use `contentType`. See [Streaming Agents](#streaming-agents). |
 | `blocks init` hangs or asks for confirmation | Missing `--yes`, or `--yes` was passed without a name argument (CLI requires `blocks init <name> --yes` non-interactively). Always include both. |
-| `blocks publish` hangs after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. See [Publishing & Republishing → Non-interactive publish flags](#non-interactive-publish-flags). |
+| `blocks publish` hangs after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. See [Registering & Publishing → Non-interactive publish flags](#non-interactive-publish-flags). |
 | `blocks invite send` returns `either --email or --org is required` (or 4xx) | The two flags are required and mutually exclusive -- pass exactly one. |
 | Bare `blocks login` finishes but `BLOCKS_API_KEY` is missing in `.env` | Non-TTY auto-detection skipped the write-env prompt. Re-run with explicit `--write-env` (and `--dir <name>` if invoking from a parent directory). |
 
