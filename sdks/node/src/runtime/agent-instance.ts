@@ -579,7 +579,8 @@ export const startAgentInstance = async (
     if (!agentEntry) {
       throw new Error(
         `[AgentInstance] Agent "${agentName}" not found in registry. ` +
-          'Register the agent (e.g. via `blocks publish`) before starting an instance.',
+          'Register the agent first — `blocks register` (private + free, recommended) ' +
+          'or `blocks publish` (public/paid) — before starting an instance.',
       );
     }
     if (!agentEntry.billingMode) {
