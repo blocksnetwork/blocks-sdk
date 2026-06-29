@@ -318,6 +318,49 @@ func TestGenerator_BlocksErrorMessage_Helper(t *testing.T) {
 	}
 }
 
+// TestEmbed_NoDocumentWrite asserts the scaffold never injects the widget via
+// document.write (Chrome blocks parser-blocking cross-site document.write
+// scripts, which left window.BlocksAuth undefined on deployed static hosts).
+func TestEmbed_NoDocumentWrite(t *testing.T) {
+	card := loadFixtureCard(t, "stest1", "stest1", 200)
+	files, err := GenerateApp([]*cardfetch.AgentCard{card}, defaultVars())
+	if err != nil {
+		t.Fatalf("GenerateApp: %v", err)
+	}
+	if strings.Contains(files.IndexHTML, "document.write") {
+		t.Error("index.html must not use document.write to inject the widget")
+	}
+	if !strings.Contains(files.IndexHTML, "document.createElement('script')") {
+		t.Error("index.html should inject the widget via a created <script> element")
+	}
+	if !strings.Contains(files.AppJS, "typeof BlocksAuth === 'undefined'") {
+		t.Error("blocksErrorMessage should guard against a missing BlocksAuth widget")
+	}
+}
+
+// TestGenerator_AppJS_WaitsForWidgetReady verifies app.js does not assume the
+// widget is already loaded. The deferred app.js can run before the dynamically
+// injected cross-origin widget defines window.BlocksAuth, so both sign-in and
+// auto-resume must wait for readiness (otherwise auto-resume silently never
+// fires and an early click shows a false "widget failed to load").
+func TestGenerator_AppJS_WaitsForWidgetReady(t *testing.T) {
+	card := loadFixtureCard(t, "stest1", "stest1", 200)
+	out, err := GenerateApp([]*cardfetch.AgentCard{card}, defaultVars())
+	if err != nil {
+		t.Fatalf("GenerateApp: %v", err)
+	}
+	mustContain(t, out.AppJS, `function whenBlocksAuthReady(`, `readiness helper defined`)
+	// attemptSignIn awaits readiness before deciding the widget failed.
+	mustContain(t, out.AppJS, `await whenBlocksAuthReady(`, `attemptSignIn awaits widget readiness`)
+	// Auto-resume runs only after the widget is ready, so it is not a one-shot
+	// false-negative when app.js wins the race.
+	mustContain(t, out.AppJS, `whenBlocksAuthReady(WIDGET_READY_TIMEOUT_MS).then(`, `auto-resume gated on readiness`)
+	// The timeout path still surfaces a user-visible message.
+	if strings.Count(out.AppJS, `The Blocks auth widget failed to load`) < 1 {
+		t.Error("expected a 'widget failed to load' message on the timeout path")
+	}
+}
+
 // TestGenerator_RenderedRefs_Tracking verifies the post-terminal sweep
 // uses a Set to track rendered refs (skipping live-rendered ones) rather
 // than the brittle artifactsRendered === 0 gate. This catches the

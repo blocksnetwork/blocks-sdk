@@ -350,3 +350,87 @@ func TestNetlifyUpload_DeployErrorState(t *testing.T) {
 		t.Errorf("error %q should mention 'deployment dep-fail failed'", err.Error())
 	}
 }
+
+// TestNetlifyUpload_PrefersSSLURL verifies the deploy returns the https
+// ssl_url even when the site's plain url field is http://, so the deployed
+// URL passes the webApp validator and the card update is not skipped.
+func TestNetlifyUpload_PrefersSSLURL(t *testing.T) {
+	fastNetlifyPoll(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/sites", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case http.MethodPost:
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "site-ssl", "name": "web", "url": "http://web.netlify.app"})
+		}
+	})
+	mux.HandleFunc("/api/v1/sites/site-ssl/deploys", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "deploy-ssl", "state": "uploading"})
+	})
+	mux.HandleFunc("/api/v1/deploys/deploy-ssl", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state": "ready", "site_id": "site-ssl",
+			"deploy_url": "http://deploy-ssl--web.netlify.app", "deploy_ssl_url": "https://deploy-ssl--web.netlify.app",
+		})
+	})
+	mux.HandleFunc("/api/v1/sites/site-ssl", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "site-ssl", "url": "http://web.netlify.app", "ssl_url": "https://web.netlify.app",
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	assetsDir := writeAssetsDir(t, map[string]string{"index.html": "<html></html>"})
+	got, err := netlifyUploadAt(context.Background(), newNetlifyCreds("tok"), assetsDir, ts.URL)
+	if err != nil {
+		t.Fatalf("netlifyUploadAt: %v", err)
+	}
+	if got != "https://web.netlify.app" {
+		t.Errorf("URL = %q, want https://web.netlify.app (ssl_url)", got)
+	}
+	if err := ValidateWebAppURL(got); err != nil {
+		t.Errorf("deployed URL must pass the webApp validator: %v", err)
+	}
+}
+
+// TestNetlifyUpload_DeploySSLFallbackWhenSiteLookupFails verifies that when
+// the site lookup fails, the poll falls back to deploy_ssl_url (https), not
+// the http deploy_url.
+func TestNetlifyUpload_DeploySSLFallbackWhenSiteLookupFails(t *testing.T) {
+	fastNetlifyPoll(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/sites", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case http.MethodPost:
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "site-f", "name": "web", "url": "http://web.netlify.app"})
+		}
+	})
+	mux.HandleFunc("/api/v1/sites/site-f/deploys", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "deploy-f", "state": "uploading"})
+	})
+	mux.HandleFunc("/api/v1/deploys/deploy-f", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state": "ready", "site_id": "site-f",
+			"deploy_url": "http://deploy-f--web.netlify.app", "deploy_ssl_url": "https://deploy-f--web.netlify.app",
+		})
+	})
+	// Site lookup 500s → poll returns its deploy fallback.
+	mux.HandleFunc("/api/v1/sites/site-f", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	assetsDir := writeAssetsDir(t, map[string]string{"index.html": "<html></html>"})
+	got, err := netlifyUploadAt(context.Background(), newNetlifyCreds("tok"), assetsDir, ts.URL)
+	if err != nil {
+		t.Fatalf("netlifyUploadAt: %v", err)
+	}
+	if got != "https://deploy-f--web.netlify.app" {
+		t.Errorf("URL = %q, want https://deploy-f--web.netlify.app (deploy_ssl_url fallback)", got)
+	}
+}

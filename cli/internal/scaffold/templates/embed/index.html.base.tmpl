@@ -11,12 +11,22 @@
        deploys (Cloudflare / Vercel / Netlify), and the widget gates on
        window.__BLOCKS_EMBED_DEV__ so the 404 is harmless. -->
   <script src="/__blocks_embed_dev.js"></script>
-  <!-- Embed-auth widget bundle, pinned at scaffold time. -->
+  <!-- Embed-auth widget bundle, pinned at scaffold time. Loaded via a
+       dynamically-created <script> rather than document.write: Chrome refuses
+       to execute a parser-blocking, cross-site script injected via
+       document.write, which would leave window.BlocksAuth undefined on a
+       deployed (cross-origin) static host. NOTE: a dynamically-inserted
+       async=false script is NOT ordered against the deferred app.js below, so
+       app.js does not assume the widget is loaded — it awaits
+       whenBlocksAuthReady() before sign-in and auto-resume. -->
   <script>
   (function () {
     var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
     var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : '{{.BlocksAssetBaseUrl}}';
-    document.write('<script src="' + base + '/embed/auth.{{.WidgetVersion}}.min.js"><\/script>');
+    var s = document.createElement('script');
+    s.src = base + '/embed/auth.{{.WidgetVersion}}.min.js';
+    s.async = false;
+    document.head.appendChild(s);
   })();
   </script>
   <script src="app.js" defer></script>

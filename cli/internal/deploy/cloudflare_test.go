@@ -459,6 +459,110 @@ func TestCloudflareUpload_DeploymentFailure(t *testing.T) {
 	}
 }
 
+// TestCFGetAccountID_EmptyResultIsActionable verifies that a scoped token
+// whose /accounts returns success:true with an empty result yields an
+// actionable error pointing at CLOUDFLARE_ACCOUNT_ID — not the misleading
+// "no Cloudflare account found".
+func TestCFGetAccountID_EmptyResultIsActionable(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"success": true, "result": []map[string]string{}})
+	}))
+	defer ts.Close()
+
+	_, err := cfGetAccountIDAt(context.Background(), "tok", ts.URL+"/client/v4")
+	if err == nil {
+		t.Fatal("expected an error for empty accounts result")
+	}
+	if !strings.Contains(err.Error(), "CLOUDFLARE_ACCOUNT_ID") {
+		t.Errorf("error %q should tell the user to set CLOUDFLARE_ACCOUNT_ID", err.Error())
+	}
+}
+
+// TestCFGetAccountID_EnvOverrideSkipsDiscovery verifies that when
+// CLOUDFLARE_ACCOUNT_ID is set, the /accounts endpoint is never called.
+func TestCFGetAccountID_EnvOverrideSkipsDiscovery(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "acct-from-env")
+	called := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	got, err := cfGetAccountIDAt(context.Background(), "tok", ts.URL+"/client/v4")
+	if err != nil {
+		t.Fatalf("cfGetAccountIDAt: %v", err)
+	}
+	if got != "acct-from-env" {
+		t.Errorf("account ID = %q, want acct-from-env", got)
+	}
+	if called {
+		t.Error("/accounts should not be called when CLOUDFLARE_ACCOUNT_ID is set")
+	}
+}
+
+// TestCFGetAccountID_SingleAccount uses the discovered account when exactly
+// one is returned.
+func TestCFGetAccountID_SingleAccount(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"success": true, "result": []map[string]string{{"id": "acct-001"}}})
+	}))
+	defer ts.Close()
+
+	got, err := cfGetAccountIDAt(context.Background(), "tok", ts.URL+"/client/v4")
+	if err != nil {
+		t.Fatalf("cfGetAccountIDAt: %v", err)
+	}
+	if got != "acct-001" {
+		t.Errorf("account ID = %q, want acct-001", got)
+	}
+}
+
+// TestCFGetAccountID_ErrorsSurfaced surfaces Cloudflare errors[] on a
+// success:false body instead of the generic message.
+func TestCFGetAccountID_ErrorsSurfaced(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"success": false,
+			"result":  []map[string]string{},
+			"errors":  []map[string]any{{"message": "insufficient permissions"}},
+		})
+	}))
+	defer ts.Close()
+
+	_, err := cfGetAccountIDAt(context.Background(), "tok", ts.URL+"/client/v4")
+	if err == nil || !strings.Contains(err.Error(), "insufficient permissions") {
+		t.Errorf("error = %v, want it to surface 'insufficient permissions'", err)
+	}
+}
+
+// TestCFGetAccountID_MultipleAccountsIsActionable verifies that a token able to
+// list more than one account refuses to guess and points the user at
+// CLOUDFLARE_ACCOUNT_ID, rather than silently deploying to an arbitrary one.
+// This pins the per_page=2 + multi-account branch: collapsing it to
+// "len==0 else Result[0]" would regress to picking an arbitrary account.
+func TestCFGetAccountID_MultipleAccountsIsActionable(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"success": true,
+			"result":  []map[string]string{{"id": "acct-a"}, {"id": "acct-b"}},
+		})
+	}))
+	defer ts.Close()
+
+	_, err := cfGetAccountIDAt(context.Background(), "tok", ts.URL+"/client/v4")
+	if err == nil {
+		t.Fatal("expected an error when the token can access multiple accounts")
+	}
+	if !strings.Contains(err.Error(), "CLOUDFLARE_ACCOUNT_ID") {
+		t.Errorf("error %q should tell the user to set CLOUDFLARE_ACCOUNT_ID", err.Error())
+	}
+}
+
 // TestCfClassifyStage verifies the polling-decision logic.
 func TestCfClassifyStage(t *testing.T) {
 	tests := []struct {

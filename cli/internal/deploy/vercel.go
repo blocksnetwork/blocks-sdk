@@ -86,10 +86,23 @@ func vercelUploadAt(ctx context.Context, creds *auth.ProviderCredentials, assets
 	}
 
 	// Step 2: create deployment.
+	//
+	// projectSettings is REQUIRED for the first deployment of a project (Vercel
+	// then saves it for subsequent deploys). A prebuilt static web/ has no
+	// detectable framework, so without this Vercel returns HTTP 400
+	// missing_project_settings. All-null selects "no framework / no build",
+	// which is correct for static assets we upload verbatim.
 	deployBody, err := json.Marshal(map[string]interface{}{
 		"name":   projectName,
 		"files":  refs,
 		"target": "production",
+		"projectSettings": map[string]interface{}{
+			"framework":       nil,
+			"buildCommand":    nil,
+			"installCommand":  nil,
+			"outputDirectory": nil,
+			"devCommand":      nil,
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("vercel: marshal deploy body: %w", err)

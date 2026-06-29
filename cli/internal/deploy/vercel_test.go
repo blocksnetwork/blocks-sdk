@@ -314,3 +314,52 @@ func TestVercelUpload_TeamScoped(t *testing.T) {
 		t.Errorf("url = %q, want https://...", got)
 	}
 }
+
+// TestVercelUpload_SendsProjectSettings verifies the deploy body includes a
+// projectSettings object so Vercel does not reject the first-ever deploy with
+// missing_project_settings.
+func TestVercelUpload_SendsProjectSettings(t *testing.T) {
+	fastVercelPoll(t)
+	t.Setenv("VERCEL_TEAM_ID", "")
+	var sawProjectSettings bool
+	var projectSettings map[string]json.RawMessage
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v9/projects", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"projects":[]}`))
+	})
+	mux.HandleFunc("/v9/projects/", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prj_existing", "name": "my-project"})
+	})
+	mux.HandleFunc("/v2/files", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/v13/deployments", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		var raw json.RawMessage
+		raw, sawProjectSettings = body["projectSettings"]
+		if sawProjectSettings {
+			_ = json.Unmarshal(raw, &projectSettings)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "vdep-ps", "url": "vdep-ps.vercel.app", "readyState": "BUILDING"})
+	})
+	mux.HandleFunc("/v13/deployments/vdep-ps", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"readyState": "READY", "alias": []string{"my-project.vercel.app"}})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	assetsDir := writeAssetsDir(t, map[string]string{"index.html": "<html></html>"})
+	if _, err := vercelUploadAt(context.Background(), newVercelCreds("tok"), assetsDir, ts.URL); err != nil {
+		t.Fatalf("vercelUploadAt: %v", err)
+	}
+	if !sawProjectSettings {
+		t.Fatal("deploy body did not include projectSettings — first deploy would 400 missing_project_settings")
+	}
+	// The "no framework / no build" selection hinges on framework being JSON
+	// null specifically — {} or a populated value would silently break the fix.
+	if got, ok := projectSettings["framework"]; !ok || string(got) != "null" {
+		t.Errorf("projectSettings.framework = %q (present=%v), want JSON null", string(got), ok)
+	}
+}

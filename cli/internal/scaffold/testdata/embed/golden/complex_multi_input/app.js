@@ -21,6 +21,9 @@
   // the backend RPC for paid agents the caller can't afford). One source
   // of truth so the two catches stay in sync.
   function blocksErrorMessage(err) {
+    if (typeof BlocksAuth === 'undefined') {
+      return 'The Blocks auth widget failed to load. Check your network connection and reload.';
+    }
     if (err instanceof BlocksAuth.BlocksAuthError) {
       return 'Sign-in error: ' + err.message;
     }
@@ -78,11 +81,42 @@
     return v;
   }
 
+  // Maximum time to wait for the embed-auth widget script (injected in
+  // index.html) to define window.BlocksAuth.
+  const WIDGET_READY_TIMEOUT_MS = 10000;
+
+  // Resolve once the widget has defined window.BlocksAuth, or to false after
+  // WIDGET_READY_TIMEOUT_MS if it never loads. The widget is a large
+  // cross-origin bundle injected via a dynamically-created <script>; a
+  // dynamically-inserted async=false script is NOT ordered against this
+  // deferred app.js, so app.js can run first. Reading window.BlocksAuth
+  // synchronously would then see it undefined. Wait instead of assuming.
+  function whenBlocksAuthReady(timeoutMs) {
+    return new Promise(function (resolve) {
+      if (typeof BlocksAuth !== 'undefined') { resolve(true); return; }
+      let waited = 0;
+      const step = 50;
+      const timer = setInterval(function () {
+        if (typeof BlocksAuth !== 'undefined') {
+          clearInterval(timer);
+          resolve(true);
+        } else if ((waited += step) >= timeoutMs) {
+          clearInterval(timer);
+          resolve(false);
+        }
+      }, step);
+    });
+  }
+
   // Single-agent scaffold: signInAndGetClient returns one TaskClient.
   let clients = null;
 
   async function attemptSignIn() {
     authError.textContent = '';
+    if (!(await whenBlocksAuthReady(WIDGET_READY_TIMEOUT_MS))) {
+      authError.textContent = 'The Blocks auth widget failed to load. Check your network connection and reload.';
+      return false;
+    }
     try {
       const client = await BlocksAuth.signInAndGetClient({ agent: "complex_multi_input" });
       clients = { ["complex_multi_input"]: client };
@@ -116,8 +150,10 @@
       return false;
     }
   }
-  hasExactStoredEmbedSession().then(function (yes) {
-    if (yes) attemptSignIn();
+  whenBlocksAuthReady(WIDGET_READY_TIMEOUT_MS).then(function () {
+    hasExactStoredEmbedSession().then(function (yes) {
+      if (yes) attemptSignIn();
+    });
   });
 
   signOutBtn.addEventListener('click', async () => {
