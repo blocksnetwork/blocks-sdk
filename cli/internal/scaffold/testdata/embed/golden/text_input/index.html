@@ -14,7 +14,10 @@
   (function () {
     var dev = typeof window !== 'undefined' ? window.__BLOCKS_EMBED_DEV__ : null;
     var base = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : 'https:\/\/blocks.ai';
-    document.write('\x3Cscript src="' + base + '/embed/auth.0.1.0.min.js"><\/script>');
+    var s = document.createElement('script');
+    s.src = base + '/embed/auth.0.1.0.min.js';
+    s.async = false;
+    document.head.appendChild(s);
   })();
   </script>
   <script src="app.js" defer></script>

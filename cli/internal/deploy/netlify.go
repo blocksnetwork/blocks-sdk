@@ -39,6 +39,7 @@ type netlifySiteResponse struct {
 	ID            string                 `json:"id"`
 	Name          string                 `json:"name"`
 	URL           string                 `json:"url"`
+	SSLURL        string                 `json:"ssl_url"`
 	CustomDomain  string                 `json:"custom_domain"`
 	CurrentDeploy *netlifyDeployResponse `json:"current_deploy"`
 }
@@ -84,7 +85,10 @@ func netlifyUploadAt(ctx context.Context, creds *auth.ProviderCredentials, asset
 		return "", err
 	}
 	if siteURL == "" {
-		siteURL = site.URL
+		siteURL = site.SSLURL
+		if siteURL == "" {
+			siteURL = site.URL
+		}
 	}
 	return siteURL, nil
 }
@@ -257,9 +261,10 @@ func netlifyPollDeployAt(ctx context.Context, token, deployID, apiBase string) (
 		}
 
 		var pollResp struct {
-			State     string `json:"state"`
-			SiteID    string `json:"site_id"`
-			DeployURL string `json:"deploy_url"`
+			State        string `json:"state"`
+			SiteID       string `json:"site_id"`
+			DeployURL    string `json:"deploy_url"`
+			DeploySSLURL string `json:"deploy_ssl_url"`
 		}
 		json.NewDecoder(resp.Body).Decode(&pollResp)
 		resp.Body.Close()
@@ -268,6 +273,9 @@ func netlifyPollDeployAt(ctx context.Context, token, deployID, apiBase string) (
 		case "ready":
 			siteURL, err := netlifyGetSiteURLAt(ctx, token, pollResp.SiteID, apiBase)
 			if err != nil {
+				if pollResp.DeploySSLURL != "" {
+					return pollResp.DeploySSLURL, nil
+				}
 				return pollResp.DeployURL, nil
 			}
 			return siteURL, nil
@@ -277,7 +285,9 @@ func netlifyPollDeployAt(ctx context.Context, token, deployID, apiBase string) (
 	}
 }
 
-// netlifyGetSiteURLAt fetches the canonical URL for a site.
+// netlifyGetSiteURLAt fetches the canonical https URL for a site, preferring
+// ssl_url (the SSL-terminated host) over the plain url, which can carry an
+// http:// scheme depending on the site's SSL provisioning state.
 func netlifyGetSiteURLAt(ctx context.Context, token, siteID, apiBase string) (string, error) {
 	url := fmt.Sprintf("%s/api/v1/sites/%s", apiBase, siteID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -292,11 +302,19 @@ func netlifyGetSiteURLAt(ctx context.Context, token, siteID, apiBase string) (st
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("site lookup returned HTTP %d", resp.StatusCode)
+	}
+
 	var site struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		SSLURL string `json:"ssl_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&site); err != nil {
 		return "", err
+	}
+	if site.SSLURL != "" {
+		return site.SSLURL, nil
 	}
 	return site.URL, nil
 }

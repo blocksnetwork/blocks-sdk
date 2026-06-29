@@ -211,6 +211,10 @@ func renderSignIn(cards []*cardfetch.AgentCard, vars EmbedVars, multi bool) (str
 	// without a popup.
 	b.WriteString("  async function attemptSignIn() {\n")
 	b.WriteString("    authError.textContent = '';\n")
+	b.WriteString("    if (!(await whenBlocksAuthReady(WIDGET_READY_TIMEOUT_MS))) {\n")
+	b.WriteString("      authError.textContent = 'The Blocks auth widget failed to load. Check your network connection and reload.';\n")
+	b.WriteString("      return false;\n")
+	b.WriteString("    }\n")
 	b.WriteString("    try {\n")
 	if multi {
 		comment = "Multi-agent scaffold: signInAndGetClients returns one TaskClient per agent."
@@ -300,8 +304,14 @@ func renderSignIn(cards []*cardfetch.AgentCard, vars EmbedVars, multi bool) (str
 	b.WriteString("      return false;\n")
 	b.WriteString("    }\n")
 	b.WriteString("  }\n")
-	b.WriteString("  hasExactStoredEmbedSession().then(function (yes) {\n")
-	b.WriteString("    if (yes) attemptSignIn();\n")
+	// Wait for the widget before probing for a stored session — otherwise a
+	// race where app.js runs before the widget loads makes
+	// hasExactStoredEmbedSession() return false and never retries, leaving a
+	// returning user signed out despite a valid stored session.
+	b.WriteString("  whenBlocksAuthReady(WIDGET_READY_TIMEOUT_MS).then(function () {\n")
+	b.WriteString("    hasExactStoredEmbedSession().then(function (yes) {\n")
+	b.WriteString("      if (yes) attemptSignIn();\n")
+	b.WriteString("    });\n")
 	b.WriteString("  });")
 
 	return comment, b.String()

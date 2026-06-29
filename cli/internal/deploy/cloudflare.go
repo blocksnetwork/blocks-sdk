@@ -189,8 +189,22 @@ func cloudflareUploadAt(ctx context.Context, creds *auth.ProviderCredentials, as
 	return "https://" + host, nil
 }
 
+// cfGetAccountIDAt resolves the Cloudflare account ID. Resolution order:
+//  1. CLOUDFLARE_ACCOUNT_ID env var — used directly, no API call (mirrors
+//     Wrangler, which requires it for the same reason).
+//  2. Best-effort discovery via GET /accounts: exactly one account → use it.
+//
+// A token minted from the "Cloudflare Pages: Edit" template is scoped to a
+// specific account, so /accounts returns 200 success:true with an EMPTY
+// result — the token works but cannot enumerate accounts. In that case (and
+// when many accounts are returned) we fail with an actionable error pointing
+// the user at CLOUDFLARE_ACCOUNT_ID rather than the misleading "no account".
 func cfGetAccountIDAt(ctx context.Context, token, apiBase string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/accounts?per_page=1", nil)
+	if id := strings.TrimSpace(os.Getenv("CLOUDFLARE_ACCOUNT_ID")); id != "" {
+		return id, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/accounts?per_page=2", nil)
 	if err != nil {
 		return "", err
 	}
@@ -206,19 +220,40 @@ func cfGetAccountIDAt(ctx context.Context, token, apiBase string) (string, error
 		return "", fmt.Errorf("authentication denied (HTTP %d)", resp.StatusCode)
 	}
 
+	body, _ := io.ReadAll(resp.Body)
 	var result struct {
 		Result []struct {
 			ID string `json:"id"`
 		} `json:"result"`
 		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parse accounts response (HTTP %d): %w", resp.StatusCode, err)
 	}
-	if !result.Success || len(result.Result) == 0 {
-		return "", fmt.Errorf("no Cloudflare account found for this token")
+
+	if !result.Success {
+		if len(result.Errors) > 0 {
+			return "", fmt.Errorf("listing accounts failed: %s", result.Errors[0].Message)
+		}
+		return "", fmt.Errorf("listing accounts failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return result.Result[0].ID, nil
+
+	switch len(result.Result) {
+	case 1:
+		return result.Result[0].ID, nil
+	case 0:
+		return "", fmt.Errorf(
+			"could not auto-discover a Cloudflare account for this token " +
+				"(the token may be scoped to a specific account and cannot list accounts) — " +
+				"set CLOUDFLARE_ACCOUNT_ID to your account ID (find it at https://dash.cloudflare.com or via `wrangler whoami`)")
+	default:
+		return "", fmt.Errorf(
+			"this token can access multiple Cloudflare accounts — " +
+				"set CLOUDFLARE_ACCOUNT_ID to the one to deploy to (find it at https://dash.cloudflare.com or via `wrangler whoami`)")
+	}
 }
 
 // cfEnsureProjectAt looks up the Pages project (creating it if absent) and
