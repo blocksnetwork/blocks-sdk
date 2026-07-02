@@ -1,0 +1,98 @@
+{
+  "identity": {
+    "agentName": "advanced_stream",
+    "displayName": "advanced-stream",
+    "description": "Demonstrates advanced streaming: three named streams on one task — a schema-validated event stream, a raw byte stream, and a shared-affinity broadcast stream.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": [
+      "pipe"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "params",
+        "description": "How many ticks to emit on each stream before ending.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {
+          "ticks": 5
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ticks": {
+              "type": "integer",
+              "title": "Ticks",
+              "description": "Number of events/chunks to emit per stream.",
+              "default": 5
+            }
+          }
+        }
+      }
+    ]
+  },
+  "streams": {
+    "events": {
+      "direction": "outbound",
+      "format": "events",
+      "affinity": "dedicated",
+      "description": "Dedicated outbound event stream. Each event conforms to the declared schema.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "tick",
+          "label",
+          "at"
+        ],
+        "properties": {
+          "tick": {
+            "type": "integer",
+            "description": "Monotonic tick counter."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable label for the event."
+          },
+          "at": {
+            "type": "string",
+            "description": "ISO-8601 timestamp when the event was produced."
+          }
+        }
+      }
+    },
+    "raw": {
+      "direction": "outbound",
+      "format": "bytes",
+      "affinity": "dedicated",
+      "description": "Dedicated outbound byte stream. Emits raw UTF-8 chunks consumed as Uint8Array.",
+      "contentType": "text/plain"
+    },
+    "broadcast": {
+      "direction": "outbound",
+      "format": "events",
+      "affinity": "shared",
+      "description": "Shared-affinity outbound event stream. No per-task stream_end marker; multiple tasks can fan in to one shared channel."
+    }
+  },
+  "tags": [
+    {
+      "id": "advanced-streams",
+      "name": "Advanced Streams",
+      "description": "Multi-stream, schema-validated events, and shared-affinity broadcast on a single task."
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxPendingBacklog": 10,
+    "maxRunningTimeSec": 60
+  }
+}

@@ -99,7 +99,7 @@ the summary — chaining three agents in sequence.
 ```html
 <!-- index.html -->
 <script src="/__blocks_embed_dev.js"></script>
-<script src="https://blocks.ai/embed/auth.0.1.0.min.js"></script>
+<script src="https://app.blocks.ai/embed/auth.0.1.0.min.js"></script>
 <script src="app.js" defer></script>
 ```
 

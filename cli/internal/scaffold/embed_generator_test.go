@@ -52,7 +52,7 @@ func loadFixtureCard(t *testing.T, fixtureName, agentName string, status int) *c
 func defaultVars() EmbedVars {
 	return EmbedVars{
 		WidgetVersion:      "0.1.0",
-		BlocksAssetBaseUrl: "https://blocks.ai",
+		BlocksAssetBaseUrl: "https://app.blocks.ai",
 		CardSnapshotDate:   "2026-05-09",
 	}
 }

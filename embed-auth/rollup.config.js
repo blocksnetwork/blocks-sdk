@@ -9,7 +9,7 @@ import dts from 'rollup-plugin-dts';
 // Build-time injection of the default Blocks backend base URL.
 // Override with `BLOCKS_BACKEND_BASE_URL=...` for on-prem / staging builds.
 const BACKEND_BASE_URL_DEFAULT =
-  process.env.BLOCKS_BACKEND_BASE_URL || 'https://blocks.ai';
+  process.env.BLOCKS_BACKEND_BASE_URL || 'https://app.blocks.ai';
 
 const replacePlugin = () =>
   replace({

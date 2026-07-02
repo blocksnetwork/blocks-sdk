@@ -234,7 +234,7 @@ Three browser/runtime patterns are supported (see SDK Contract
    API key. The browser calls `tokenEndpoint` to refresh. Used by
    the in-tree dashboard and any partner with their own server.
 3. **Embedded auth** (Mode 3 / partner-hosted static page) — drop-in
-   `BlocksAuth` widget served at `blocks.ai/embed/auth.<version>.min.js`
+   `BlocksAuth` widget served at `app.blocks.ai/embed/auth.<version>.min.js`
    (or `npm i @blocks-network/embed-auth`). Call
    `BlocksAuth.signInAndGetClient({ agent })` (one agent) or
    `BlocksAuth.signInAndGetClients({ agents })` (several); the widget runs a

@@ -93,7 +93,7 @@ type Config struct {
 
 	// Webapp-scaffold fields (only used when Mode == "webapp").
 	Agents        []string // one or more bare agent names (each ^[a-zA-Z0-9_]+$)
-	BlocksBaseURL string   // defaults to "https://blocks.ai" when empty
+	BlocksBaseURL string   // defaults to "https://app.blocks.ai" when empty
 }
 
 // ValidateAgentName checks that name matches /^[a-zA-Z0-9_]+$/.
