@@ -39,7 +39,7 @@ func init() {
 	initCmd.Flags().StringVarP(&initType, "type", "t", "", "Deprecated: use --mode")
 	_ = initCmd.Flags().MarkDeprecated("type", "use --mode instead")
 	initCmd.Flags().StringSliceVar(&initAgents, "agent", nil, "Bare agent name the page calls (repeatable; required with --mode webapp)")
-	initCmd.Flags().StringVar(&initBlocksBaseURL, "blocks-base-url", "", "Override the Blocks asset base URL (default: https://blocks.ai)")
+	initCmd.Flags().StringVar(&initBlocksBaseURL, "blocks-base-url", "", "Override the Blocks asset base URL (default: https://app.blocks.ai)")
 
 	rootCmd.AddCommand(initCmd)
 }

@@ -140,7 +140,7 @@
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr) || arr.length === 0) return false;
       const dev = (typeof window !== 'undefined' && window.__BLOCKS_EMBED_DEV__) || null;
-      const backendBaseUrl = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : "https://blocks.ai";
+      const backendBaseUrl = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : "https://app.blocks.ai";
       const pageOrigin = window.location.origin;
       const agentNames = ["request_pipe"];
       const expected = await BlocksAuth.computePartitionKey({ backendBaseUrl, pageOrigin, agentNames });

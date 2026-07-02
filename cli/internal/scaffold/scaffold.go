@@ -385,7 +385,7 @@ func scaffoldWebapp(dir string, cfg wizard.Config, cards []*cardfetch.AgentCard)
 
 	baseURL := cfg.BlocksBaseURL
 	if baseURL == "" {
-		baseURL = "https://blocks.ai"
+		baseURL = "https://app.blocks.ai"
 	}
 
 	vars := EmbedVars{

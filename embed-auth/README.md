@@ -28,7 +28,7 @@ the security model is in
 ### IIFE (`<script>` tag)
 
 ```html
-<script src="https://blocks.ai/embed/auth.0.1.0.min.js"></script>
+<script src="https://app.blocks.ai/embed/auth.0.1.0.min.js"></script>
 <script>
   (async () => {
     const client = await window.BlocksAuth.signInAndGetClient({

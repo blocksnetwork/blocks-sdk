@@ -54,4 +54,4 @@ declare const __BACKEND_BASE_URL_DEFAULT__: string | undefined;
 export const BACKEND_BASE_URL_DEFAULT: string =
   typeof __BACKEND_BASE_URL_DEFAULT__ !== 'undefined'
     ? __BACKEND_BASE_URL_DEFAULT__
-    : 'https://blocks.ai';
+    : 'https://app.blocks.ai';
