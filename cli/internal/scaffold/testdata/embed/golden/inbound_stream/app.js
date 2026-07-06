@@ -111,6 +111,11 @@
   // Single-agent scaffold: signInAndGetClient returns one TaskClient.
   let clients = null;
 
+  function embedBackendBaseUrl() {
+    const dev = (typeof window !== 'undefined' && window.__BLOCKS_EMBED_DEV__) || null;
+    return (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : "https://app.blocks.ai";
+  }
+
   async function attemptSignIn() {
     authError.textContent = '';
     if (!(await whenBlocksAuthReady(WIDGET_READY_TIMEOUT_MS))) {
@@ -118,7 +123,7 @@
       return false;
     }
     try {
-      const client = await BlocksAuth.signInAndGetClient({ agent: "inbound_stream" });
+      const client = await BlocksAuth.signInAndGetClient({ agent: "inbound_stream", backendBaseUrl: embedBackendBaseUrl() });
       clients = { ["inbound_stream"]: client };
       signInBtn.hidden = true;
       signOutBtn.hidden = false;
@@ -140,8 +145,7 @@
       if (!raw) return false;
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr) || arr.length === 0) return false;
-      const dev = (typeof window !== 'undefined' && window.__BLOCKS_EMBED_DEV__) || null;
-      const backendBaseUrl = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : "https://app.blocks.ai";
+      const backendBaseUrl = embedBackendBaseUrl();
       const pageOrigin = window.location.origin;
       const agentNames = ["inbound_stream"];
       const expected = await BlocksAuth.computePartitionKey({ backendBaseUrl, pageOrigin, agentNames });

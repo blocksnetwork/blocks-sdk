@@ -22,6 +22,9 @@ func writeBlocksConfig(t *testing.T, dir string, agents []string) string {
 	cfg := map[string]interface{}{
 		"templateVersion": "1.0.0",
 		"agents":          agents,
+		// Required since 1.2.0; a loopback http origin passes ValidateBackendBaseURL
+		// so config.Validate no longer short-circuits before the dev-specific logic.
+		"backendBaseUrl": "http://localhost:3001",
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {

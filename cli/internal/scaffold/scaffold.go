@@ -22,6 +22,11 @@ var templateFS embed.FS
 // Update this when releasing a new SDK version.
 const SDKVersion = "latest"
 
+// DefaultAssetBaseURL is the Blocks asset host used when --blocks-base-url is
+// unset. It is also the last-resort fallback for the webapp backend origin
+// when no profile / flag / env provides one.
+const DefaultAssetBaseURL = "https://app.blocks.ai"
+
 // agentNameRe enforces the bare agent-name pattern (matches registry column).
 var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
@@ -385,13 +390,19 @@ func scaffoldWebapp(dir string, cfg wizard.Config, cards []*cardfetch.AgentCard)
 
 	baseURL := cfg.BlocksBaseURL
 	if baseURL == "" {
-		baseURL = "https://app.blocks.ai"
+		baseURL = DefaultAssetBaseURL
+	}
+
+	backendURL := cfg.BackendBaseURL
+	if backendURL == "" {
+		backendURL = baseURL
 	}
 
 	vars := EmbedVars{
 		ProjectName:        cfg.Name,
 		WidgetVersion:      WidgetVersion(),
 		BlocksAssetBaseUrl: baseURL,
+		BackendBaseUrl:     backendURL,
 		CardSnapshotDate:   time.Now().UTC().Format("2006-01-02"),
 	}
 
@@ -421,6 +432,7 @@ func scaffoldWebapp(dir string, cfg wizard.Config, cards []*cardfetch.AgentCard)
 	cfg2 := &config.BlocksConfig{
 		TemplateVersion: "1.0.0",
 		Agents:          append([]string(nil), cfg.Agents...),
+		BackendBaseUrl:  backendURL,
 	}
 	if err := config.Save(filepath.Join(dir, "blocks.config.json"), cfg2); err != nil {
 		return fmt.Errorf("write blocks.config.json: %w", err)

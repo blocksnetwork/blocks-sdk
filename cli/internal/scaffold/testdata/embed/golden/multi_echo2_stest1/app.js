@@ -114,6 +114,11 @@
   // Multi-agent scaffold: signInAndGetClients returns one TaskClient per agent.
   let clients = null;
 
+  function embedBackendBaseUrl() {
+    const dev = (typeof window !== 'undefined' && window.__BLOCKS_EMBED_DEV__) || null;
+    return (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : "https://app.blocks.ai";
+  }
+
   async function attemptSignIn() {
     authError.textContent = '';
     if (!(await whenBlocksAuthReady(WIDGET_READY_TIMEOUT_MS))) {
@@ -121,7 +126,7 @@
       return false;
     }
     try {
-      clients = await BlocksAuth.signInAndGetClients({ agents: ["echo2", "stest1"] });
+      clients = await BlocksAuth.signInAndGetClients({ agents: ["echo2", "stest1"], backendBaseUrl: embedBackendBaseUrl() });
       window.__blocksClients = clients; // exposed for debugging
       signInBtn.hidden = true;
       signOutBtn.hidden = false;
@@ -144,8 +149,7 @@
       if (!raw) return false;
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr) || arr.length === 0) return false;
-      const dev = (typeof window !== 'undefined' && window.__BLOCKS_EMBED_DEV__) || null;
-      const backendBaseUrl = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : "https://app.blocks.ai";
+      const backendBaseUrl = embedBackendBaseUrl();
       const pageOrigin = window.location.origin;
       const agentNames = ["echo2", "stest1"];
       const expected = await BlocksAuth.computePartitionKey({ backendBaseUrl, pageOrigin, agentNames });

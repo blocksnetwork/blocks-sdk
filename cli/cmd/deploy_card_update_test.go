@@ -324,6 +324,7 @@ func TestCardUpdate_NoCardUpdateFlagSkipsEntirely(t *testing.T) {
 	cfgJSON := map[string]any{
 		"templateVersion": "1.0.0",
 		"agents":          []string{"echo"},
+		"backendBaseUrl":  "https://app.blocks.ai",
 	}
 	cfgData, _ := json.Marshal(cfgJSON)
 	os.WriteFile(filepath.Join(project, "blocks.config.json"), cfgData, 0644)

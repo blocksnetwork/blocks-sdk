@@ -41,7 +41,13 @@ delegates to the appropriate SDK runner:
   `python main.py`.
 - `--mode webapp`: a static page pre-wired with the Blocks embed-auth
   widget for one or more named agents. Pass `--agent <name>` (repeatable)
-  to select which agents the page talks to.
+  to select which agents the page talks to. Scaffolded projects carry a
+  required `backendBaseUrl` in `blocks.config.json` — the backend API
+  origin the deployed page calls at runtime. It is resolved (highest
+  precedence first) from `--backend-url`, the `BLOCKS_BACKEND_URL` env
+  var, your active profile's backend (`blocks profile use <name>`), the
+  build-time default baked into packaged/enterprise builds, and finally
+  the asset host (`--blocks-base-url`, default `https://app.blocks.ai`).
 
 Examples:
 
