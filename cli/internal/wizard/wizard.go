@@ -92,8 +92,9 @@ type Config struct {
 	Docker            bool
 
 	// Webapp-scaffold fields (only used when Mode == "webapp").
-	Agents        []string // one or more bare agent names (each ^[a-zA-Z0-9_]+$)
-	BlocksBaseURL string   // defaults to "https://app.blocks.ai" when empty
+	Agents         []string // one or more bare agent names (each ^[a-zA-Z0-9_]+$)
+	BlocksBaseURL  string   // defaults to "https://app.blocks.ai" when empty
+	BackendBaseURL string   // backend API origin baked into web/app.js; empty → resolved to the asset base URL at scaffold time
 }
 
 // ValidateAgentName checks that name matches /^[a-zA-Z0-9_]+$/.

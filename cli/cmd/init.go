@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
 	"github.com/pubnub/blocks-sdk/cli/internal/cardfetch"
+	"github.com/pubnub/blocks-sdk/cli/internal/config"
 	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
 	"github.com/pubnub/blocks-sdk/cli/internal/suggest"
 	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
@@ -27,6 +27,7 @@ var (
 	initType          string
 	initAgents        []string
 	initBlocksBaseURL string
+	initBackendURL    string
 )
 
 // initAgentNameRe enforces the bare agent-name pattern (matches registry column).
@@ -39,7 +40,9 @@ func init() {
 	initCmd.Flags().StringVarP(&initType, "type", "t", "", "Deprecated: use --mode")
 	_ = initCmd.Flags().MarkDeprecated("type", "use --mode instead")
 	initCmd.Flags().StringSliceVar(&initAgents, "agent", nil, "Bare agent name the page calls (repeatable; required with --mode webapp)")
-	initCmd.Flags().StringVar(&initBlocksBaseURL, "blocks-base-url", "", "Override the Blocks asset base URL (default: https://app.blocks.ai)")
+	initCmd.Flags().StringVar(&initBlocksBaseURL, "blocks-base-url", "",
+		fmt.Sprintf("Override the Blocks asset base URL; must be https (or http for loopback) (default: %s)", scaffold.DefaultAssetBaseURL))
+	initCmd.Flags().StringVar(&initBackendURL, "backend-url", "", "Backend API origin the deployed page calls at runtime (default: BLOCKS_BACKEND_URL, else active profile URL, else the build-time default, else the asset base URL)")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -160,13 +163,8 @@ will call). Pass a name and/or flags to skip the wizard.
 
 		if !nonInteractive {
 			fmt.Printf("\n  This will create ./%s/ with your %s project files.\n", cfg.Name, cfg.Language)
-			fmt.Print("  Continue? (Y/n): ")
-			scanner := bufio.NewScanner(os.Stdin)
-			if scanner.Scan() {
-				ans := strings.TrimSpace(strings.ToLower(scanner.Text()))
-				if ans == "n" || ans == "no" {
-					return fmt.Errorf("canceled")
-				}
+			if !confirmYesNo(os.Stdin, "  Continue? (Y/n): ") {
+				return fmt.Errorf("canceled")
 			}
 		}
 
@@ -183,6 +181,26 @@ will call). Pass a name and/or flags to skip the wizard.
 // Mirrors internal/config.Validate and wizard.maxAgentsPerWebapp.
 const maxAgentsPerWebapp = 25
 
+// validateWebappURLFlags validates the two user-supplied webapp URL flags with
+// the same scheme/host rule the embed-auth widget enforces at runtime. It is
+// the single source of truth for flag validation so the flag-driven
+// (runWebapp) and interactive (runWebappWizard) paths cannot drift — a gap
+// that previously let the wizard bake an unvalidated cleartext asset host into
+// index.html. Empty flags are valid (they resolve to defaults downstream).
+func validateWebappURLFlags() error {
+	if initBlocksBaseURL != "" {
+		if err := config.ValidateBackendBaseURL(initBlocksBaseURL); err != nil {
+			return fmt.Errorf("--blocks-base-url %q %s", initBlocksBaseURL, err.Error())
+		}
+	}
+	if initBackendURL != "" {
+		if err := config.ValidateBackendBaseURL(initBackendURL); err != nil {
+			return fmt.Errorf("--backend-url %q %s", initBackendURL, err.Error())
+		}
+	}
+	return nil
+}
+
 // runWebapp handles the --mode webapp path. With one or more --agent flags it
 // runs the flag-driven scaffold; without them it runs the interactive webapp
 // wizard (TTY) or errors (non-interactive).
@@ -190,10 +208,8 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 	if initLanguage != "" {
 		return fmt.Errorf("--language is not valid with --mode webapp (the webapp scaffold has no language axis)")
 	}
-	if initBlocksBaseURL != "" {
-		if _, err := url.ParseRequestURI(initBlocksBaseURL); err != nil {
-			return fmt.Errorf("--blocks-base-url %q is not a valid URL: %w", initBlocksBaseURL, err)
-		}
+	if err := validateWebappURLFlags(); err != nil {
+		return err
 	}
 
 	if len(initAgents) == 0 {
@@ -229,8 +245,32 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 		return fmt.Errorf("webapp scaffolds require a project name. Try: blocks init <name> --mode webapp --agent <agent>")
 	}
 
-	backendURL := resolveBackendURL()
-	if backendURL == "" {
+	assetBase := initBlocksBaseURL
+	if assetBase == "" {
+		assetBase = scaffold.DefaultAssetBaseURL
+	}
+	backendURL, err := resolveWebappBackendURL(initBackendURL, assetBase)
+	if err != nil {
+		return err
+	}
+
+	// Fetch cards from the SAME origin the page is wired to whenever the page
+	// backend came from an explicit source (--backend-url / env / profile /
+	// ldflag). Otherwise the page could sign into backend A while its wiring was
+	// snapshotted from cards on backend B — wrong I/O wiring when agent names
+	// collide or cards differ across deployments. When the backend only fell
+	// back to the asset base, keep the CLI's own resolution (which may consult
+	// CDM) for card lookup and warn if the two diverge.
+	cardFetchBackendURL := backendURL
+	if !backendResolvedFromExplicitSource(initBackendURL) {
+		cardFetchBackendURL = resolveBackendURL()
+		if cardFetchBackendURL != "" && cardFetchBackendURL != backendURL {
+			fmt.Fprintf(os.Stderr,
+				"  Note: agent cards will be fetched from %s but the page is wired to %s.\n",
+				cardFetchBackendURL, backendURL)
+		}
+	}
+	if cardFetchBackendURL == "" {
 		return fmt.Errorf("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
 	}
 	// Login is optional here: the registry fetch path supports anonymous public
@@ -242,31 +282,59 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 	apiKey := optionalCredentials()
 
 	cfg := wizard.Config{
-		Name:          nameFromArgs,
-		Mode:          "webapp",
-		Agents:        append([]string(nil), initAgents...),
-		BlocksBaseURL: initBlocksBaseURL,
+		Name:           nameFromArgs,
+		Mode:           "webapp",
+		Agents:         append([]string(nil), initAgents...),
+		BlocksBaseURL:  initBlocksBaseURL,
+		BackendBaseURL: backendURL,
 	}
-	return scaffoldWebappProject(ctx, cfg, blocksapi.NewClient(backendURL, apiKey))
+	printWebappResolvedURLs(assetBase, backendURL, backendResolvedFromExplicitSource(initBackendURL))
+	return scaffoldWebappProject(ctx, cfg, blocksapi.NewClient(cardFetchBackendURL, apiKey))
 }
 
 // runWebappWizard runs the interactive webapp wizard: it offers login (so
 // private agents appear in suggestions), collects a project name + agent list
 // via the type-ahead autocomplete, then scaffolds.
 func runWebappWizard(ctx context.Context) error {
+	if err := validateWebappURLFlags(); err != nil {
+		return err
+	}
+
 	apiKey := ensureOrOfferBlocksLogin(ctx)
 
-	backendURL := resolveBackendURL()
-	if backendURL == "" {
+	assetBase := initBlocksBaseURL
+	if assetBase == "" {
+		assetBase = scaffold.DefaultAssetBaseURL
+	}
+	resolvedBackend, err := resolveWebappBackendURL(initBackendURL, assetBase)
+	if err != nil {
+		return err
+	}
+
+	// Suggest + card fetch use the SAME origin the page is wired to when the
+	// backend came from an explicit source; otherwise fall back to the CLI's own
+	// resolution (which may consult CDM) and warn on divergence. Mirrors runWebapp.
+	cardFetchBackendURL := resolvedBackend
+	if !backendResolvedFromExplicitSource(initBackendURL) {
+		cardFetchBackendURL = resolveBackendURL()
+		if cardFetchBackendURL != "" && cardFetchBackendURL != resolvedBackend {
+			fmt.Fprintf(os.Stderr,
+				"  Note: agent cards will be fetched from %s but the page is wired to %s.\n",
+				cardFetchBackendURL, resolvedBackend)
+		}
+	}
+	if cardFetchBackendURL == "" {
 		return fmt.Errorf("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
 	}
-	client := blocksapi.NewClient(backendURL, apiKey)
+	client := blocksapi.NewClient(cardFetchBackendURL, apiKey)
 
 	cfg, err := wizard.RunWebapp(ctx, makeAgentSuggestFn(client))
 	if err != nil {
 		return err
 	}
 	cfg.BlocksBaseURL = initBlocksBaseURL
+	cfg.BackendBaseURL = resolvedBackend
+	printWebappResolvedURLs(assetBase, cfg.BackendBaseURL, backendResolvedFromExplicitSource(initBackendURL))
 	return scaffoldWebappProject(ctx, cfg, client)
 }
 
@@ -275,6 +343,26 @@ func runWebappWizard(ctx context.Context) error {
 // directory is removed so no partial scaffold remains. Shared by both the
 // flag-driven and interactive webapp paths.
 func scaffoldWebappProject(ctx context.Context, cfg wizard.Config, client *blocksapi.Client) error {
+	// Validate the fully-resolved backend origin before writing anything. The
+	// flags are checked earlier in runWebapp, but the resolved value can also
+	// come from BLOCKS_BACKEND_URL, the active profile, or the ldflag default —
+	// none of which the flag checks cover. Failing here keeps an origin the
+	// embed-auth widget would reject at sign-in from ever being baked in.
+	if err := config.ValidateBackendBaseURL(cfg.BackendBaseURL); err != nil {
+		return fmt.Errorf("resolved backend URL %q %s — set --backend-url, or fix BLOCKS_BACKEND_URL / your active profile", cfg.BackendBaseURL, err.Error())
+	}
+
+	// Defense in depth: the asset host is baked into index.html as the
+	// widget-bundle <script src> origin. Today it has a single source (the
+	// validated --blocks-base-url flag), but validate it here too so the
+	// guarantee does not silently rest on that call-graph invariant if a future
+	// change ever resolves it from profile/env. Empty means "use the default".
+	if cfg.BlocksBaseURL != "" {
+		if err := config.ValidateBackendBaseURL(cfg.BlocksBaseURL); err != nil {
+			return fmt.Errorf("resolved asset host %q %s — fix --blocks-base-url", cfg.BlocksBaseURL, err.Error())
+		}
+	}
+
 	dir := filepath.Join(mustCwd(), cfg.Name)
 	if _, err := os.Stat(dir); err == nil {
 		return fmt.Errorf("directory %q already exists", cfg.Name)
@@ -411,6 +499,23 @@ func printNextSteps(cfg wizard.Config) {
 	fmt.Println("    blocks register           # register the agent privately and free (recommended first step)")
 	fmt.Println("    blocks run                # start the agent")
 	fmt.Println("    blocks publish            # later: make the agent public or set pricing")
+}
+
+// printWebappResolvedURLs surfaces the two URLs the scaffold froze in, so a
+// user who scaffolded under the wrong profile sees it immediately rather than
+// discovering a bundle pointed at the wrong backend after deploy. The fallback
+// hint fires only when no backend was explicitly resolved (flag/env/profile/
+// ldflag all empty) so it is not shown to a user who deliberately targeted the
+// asset host.
+func printWebappResolvedURLs(assetBase, backendURL string, resolvedFromExplicitSource bool) {
+	fmt.Printf("\n  Resolved URLs (frozen into the scaffold):\n")
+	fmt.Printf("    Backend API: %s\n", backendURL)
+	fmt.Printf("    Asset host:  %s\n", assetBase)
+	if !resolvedFromExplicitSource {
+		fmt.Printf("    (No backend was specified, so the asset host above will be used. To\n")
+		fmt.Printf("     target another backend, pass --backend-url, set BLOCKS_BACKEND_URL,\n")
+		fmt.Printf("     or switch profiles with 'blocks profile use'.)\n")
+	}
 }
 
 func printWebappNextSteps(cfg wizard.Config, dirName string) {

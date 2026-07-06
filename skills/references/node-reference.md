@@ -242,8 +242,11 @@ Three browser/runtime patterns are supported (see SDK Contract
    per-agent JWTs back via `postMessage`, and returns ready-to-use
    `TaskClient` instances. No backend required on the partner side.
    Authoring flow: `blocks init my-ui --mode webapp --agent <name>` (writes
-   `blocks.config.json` + a generated `web/`; pipe-capable agents get a
-   duration control, minutes 1..43200), then `blocks dev` /
+   `blocks.config.json` with a required `backendBaseUrl` — the runtime backend
+   API origin, resolved from `--backend-url`/`BLOCKS_BACKEND_URL`/active profile
+   and distinct from the `--blocks-base-url` asset host — plus a generated
+   `web/`; pipe-capable agents get a duration control, minutes 1..43200), then
+   `blocks dev` /
    `blocks deploy <partner>` (positional target — cloudflare, vercel,
    netlify, or a user-defined plugin; for non-interactive deploys set
    `CLOUDFLARE_API_TOKEN` / `VERCEL_TOKEN` / `NETLIFY_AUTH_TOKEN`). See

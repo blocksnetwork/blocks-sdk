@@ -110,6 +110,18 @@ pricing; it can also promote an already-registered agent.
 - **Webapp** (`--mode webapp --agent <name>`): a static page pre-wired
   with the Blocks embed-auth widget for one or more agents.
 
+  A webapp scaffold freezes two URLs at `blocks init` time:
+
+  - **Backend API** — where the deployed page sends sign-in and task calls.
+    Resolved (highest precedence first) from `--backend-url`, the
+    `BLOCKS_BACKEND_URL` env var, your active profile's backend
+    (`blocks profile use <name>`), and finally the asset host. `blocks init`
+    prints the resolved value; deploying against a different active profile
+    prints a warning because the bundle keeps talking to the baked backend.
+  - **Asset host** (`--blocks-base-url`, default `https://app.blocks.ai`) —
+    where the embed-auth widget bundle is served from. For stock Blocks and
+    most on-prem deployments the two are the same origin.
+
 For scripted or non-TTY environments, pass publish flags explicitly:
 
 ```bash

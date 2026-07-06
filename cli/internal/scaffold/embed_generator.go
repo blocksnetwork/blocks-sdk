@@ -42,6 +42,14 @@ type EmbedVars struct {
 	// widget itself wrote (the widget's compile-time
 	// `__BACKEND_BASE_URL_DEFAULT__` is set from the same flag).
 	BlocksAssetBaseUrl string
+	// BackendBaseUrl is the backend API origin the deployed bundle calls at
+	// runtime (sign-in / refresh / task RPC). Resolved profile-aware at
+	// `blocks init` time (see cmd.resolveWebappBackendURL). Baked into app.js
+	// as the explicit `backendBaseUrl` argument to signInAndGetClient(s) and
+	// used for the auto-resume partition-key check. Distinct from
+	// BlocksAssetBaseUrl (the widget-bundle host); the two are equal for stock
+	// Blocks but may differ for on-prem / split asset+API deployments.
+	BackendBaseUrl string
 	// CardSnapshotDate is stamped into the per-agent header comment.
 	CardSnapshotDate string
 }
@@ -203,6 +211,17 @@ func renderSignIn(cards []*cardfetch.AgentCard, vars EmbedVars, multi bool) (str
 	var b strings.Builder
 	b.WriteString("  let clients = null;\n\n")
 
+	// Shared backend resolver: honor the `blocks dev` override
+	// (window.__BLOCKS_EMBED_DEV__.backendBaseUrl) locally, else the
+	// scaffold-time baked backend URL. Sign-in and the auto-resume
+	// partition-key check MUST use the same value or silent refresh breaks.
+	b.WriteString("  function embedBackendBaseUrl() {\n")
+	b.WriteString("    const dev = (typeof window !== 'undefined' && window.__BLOCKS_EMBED_DEV__) || null;\n")
+	b.WriteString("    return (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : ")
+	b.WriteString(jsString(vars.BackendBaseUrl))
+	b.WriteString(";\n")
+	b.WriteString("  }\n\n")
+
 	// Emit the sign-in flow as a named function so the click handler and
 	// the page-load auto-resume both share the same code path. The
 	// auto-resume call below uses the widget's built-in silent-refresh
@@ -224,11 +243,11 @@ func renderSignIn(cards []*cardfetch.AgentCard, vars EmbedVars, multi bool) (str
 			names = append(names, jsString(c.AgentName))
 		}
 		b.WriteString(strings.Join(names, ", "))
-		b.WriteString("] });\n")
+		b.WriteString("], backendBaseUrl: embedBackendBaseUrl() });\n")
 		b.WriteString("      window.__blocksClients = clients; // exposed for debugging\n")
 	} else {
 		comment = "Single-agent scaffold: signInAndGetClient returns one TaskClient."
-		fmt.Fprintf(&b, "      const client = await BlocksAuth.signInAndGetClient({ agent: %s });\n", jsString(cards[0].AgentName))
+		fmt.Fprintf(&b, "      const client = await BlocksAuth.signInAndGetClient({ agent: %s, backendBaseUrl: embedBackendBaseUrl() });\n", jsString(cards[0].AgentName))
 		fmt.Fprintf(&b, "      clients = { [%s]: client };\n", jsString(cards[0].AgentName))
 	}
 	b.WriteString("      signInBtn.hidden = true;\n")
@@ -273,22 +292,12 @@ func renderSignIn(cards []*cardfetch.AgentCard, vars EmbedVars, multi bool) (str
 	b.WriteString("      if (!raw) return false;\n")
 	b.WriteString("      const arr = JSON.parse(raw);\n")
 	b.WriteString("      if (!Array.isArray(arr) || arr.length === 0) return false;\n")
-	// Compute the expected partition key for this page. backendBaseUrl
-	// mirrors the same dev-override / default resolution the widget does
-	// internally; agentNames is the canonical list from blocks.config.json
+	// backendBaseUrl comes from embedBackendBaseUrl() — the same resolver the
+	// sign-in call uses — so the recomputed partition key matches the one the
+	// widget wrote. agentNames is the canonical list from blocks.config.json
 	// (this scaffold is one-shot, so it's the exact set we'll pass to
 	// signInAndGetClient*).
-	b.WriteString("      const dev = (typeof window !== 'undefined' && window.__BLOCKS_EMBED_DEV__) || null;\n")
-	// The default MUST match the widget bundle's compile-time
-	// `__BACKEND_BASE_URL_DEFAULT__` — both are derived from
-	// `--blocks-base-url`. Hardcoding `https://blocks.ai` here breaks
-	// auto-resume when the developer scaffolds against staging: the
-	// widget stores partitions under the staging host while the scaffold
-	// would compute the expected key under prod, so the keys never match
-	// and the silent-refresh path is dead.
-	b.WriteString("      const backendBaseUrl = (dev && dev.backendBaseUrl) ? dev.backendBaseUrl : ")
-	b.WriteString(jsString(vars.BlocksAssetBaseUrl))
-	b.WriteString(";\n")
+	b.WriteString("      const backendBaseUrl = embedBackendBaseUrl();\n")
 	b.WriteString("      const pageOrigin = window.location.origin;\n")
 	b.WriteString("      const agentNames = [")
 	for i, c := range cards {

@@ -53,7 +53,8 @@ pattern):
 ```json
 {
   "templateVersion": "1.0.0",
-  "agents": ["transcribe", "summarize", "translate"]
+  "agents": ["transcribe", "summarize", "translate"],
+  "backendBaseUrl": "https://app.blocks.ai"
 }
 ```
 
@@ -102,6 +103,15 @@ the summary — chaining three agents in sequence.
 <script src="https://app.blocks.ai/embed/auth.0.1.0.min.js"></script>
 <script src="app.js" defer></script>
 ```
+
+The `<script src>` host above (`--blocks-base-url`, default
+`https://app.blocks.ai`) is the **asset host** — only where the widget bundle
+is served from. It is distinct from the **backend API** the widget actually
+calls for sign-in and task RPC, which the scaffolder bakes into `app.js`. For a
+non-stock backend (on-prem, or a profile other than the default), set it with
+`--backend-url` / `BLOCKS_BACKEND_URL` or your active profile rather than
+`--blocks-base-url`. See [getting-started.md](./getting-started.md) §4 for the
+full resolution order.
 
 ```js
 // app.js
@@ -164,7 +174,8 @@ the summary — chaining three agents in sequence.
 ```json
 {
   "templateVersion": "1.0.0",
-  "agents": ["transcribe", "summarize", "translate"]
+  "agents": ["transcribe", "summarize", "translate"],
+  "backendBaseUrl": "https://app.blocks.ai"
 }
 ```
 

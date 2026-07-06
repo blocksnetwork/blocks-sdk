@@ -253,7 +253,9 @@ in the Node/JS bundle, not Python:
   by Blocks runs a popup handshake; no partner backend needed. The page
   calls `BlocksAuth.signInAndGetClient(s)`. Authoring flow:
   `blocks init my-ui --mode webapp --agent <name>` (writes
-  `blocks.config.json` + a generated `web/`; pipe-capable agents get a
+  `blocks.config.json` with a required `backendBaseUrl` — the runtime backend
+  API origin, distinct from the `--blocks-base-url` asset host — plus a
+  generated `web/`; pipe-capable agents get a
   duration control), then `blocks dev` / `blocks deploy <partner>`
   (positional target; set `CLOUDFLARE_API_TOKEN` / `VERCEL_TOKEN` /
   `NETLIFY_AUTH_TOKEN` for non-interactive deploys). The widget is

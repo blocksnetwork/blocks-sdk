@@ -53,6 +53,7 @@ func defaultVars() EmbedVars {
 	return EmbedVars{
 		WidgetVersion:      "0.1.0",
 		BlocksAssetBaseUrl: "https://app.blocks.ai",
+		BackendBaseUrl:     "https://app.blocks.ai",
 		CardSnapshotDate:   "2026-05-09",
 	}
 }
@@ -254,6 +255,55 @@ func TestGenerator_RequestPipe_Mixed(t *testing.T) {
 	mustContain(t, out.AppJS, `document.getElementById("pipe-toggle-request_pipe").checked`, `mode is read from the checkbox`)
 	mustContain(t, out.AppJS, `taskKind: asPipe ? "pipe" : "request"`, `taskKind switches on the checkbox`)
 	mustContain(t, out.AppJS, `if (asPipe) message.duration = readPipeDuration(`, `duration sent only in pipe mode`)
+}
+
+// ----------------------------------------------------------------------
+// Backend URL injection
+// ----------------------------------------------------------------------
+
+func TestGenerator_AppJS_BackendBaseUrlInjected(t *testing.T) {
+	card := loadFixtureCard(t, "echo2", "echo2", 200)
+	vars := defaultVars()
+	vars.ProjectName = "demo_backend"
+	vars.BlocksAssetBaseUrl = "https://assets.example.test"
+	vars.BackendBaseUrl = "https://blocks.acme.com"
+
+	out, err := GenerateApp([]*cardfetch.AgentCard{card}, vars)
+	if err != nil {
+		t.Fatalf("GenerateApp: %v", err)
+	}
+
+	// A shared resolver honors the dev override, else the baked backend.
+	mustContain(t, out.AppJS, `function embedBackendBaseUrl()`,
+		"scaffold must emit a shared backend resolver")
+	mustContain(t, out.AppJS, `(dev && dev.backendBaseUrl) ? dev.backendBaseUrl : "https://blocks.acme.com"`,
+		"resolver must honor the dev override, else bake the resolved backend")
+
+	// Sign-in passes the backend explicitly.
+	mustContain(t, out.AppJS, `signInAndGetClient({ agent: "echo2", backendBaseUrl: embedBackendBaseUrl() })`,
+		"single-agent sign-in must pass backendBaseUrl")
+
+	// Auto-resume uses the same resolver (partition key must match sign-in).
+	mustContain(t, out.AppJS, `const backendBaseUrl = embedBackendBaseUrl();`,
+		"auto-resume must use the shared resolver, not the asset host")
+
+	// The asset host must NOT be used as the backend default anywhere.
+	mustNotContain(t, out.AppJS, `dev.backendBaseUrl : "https://assets.example.test"`,
+		"asset host must never be the backend default")
+}
+
+func TestGenerator_AppJS_MultiAgentBackendInjected(t *testing.T) {
+	c1 := loadFixtureCard(t, "echo2", "echo2", 200)
+	c2 := loadFixtureCard(t, "stest1", "stest1", 200)
+	vars := defaultVars()
+	vars.BackendBaseUrl = "https://blocks.acme.com"
+
+	out, err := GenerateApp([]*cardfetch.AgentCard{c1, c2}, vars)
+	if err != nil {
+		t.Fatalf("GenerateApp: %v", err)
+	}
+	mustContain(t, out.AppJS, `signInAndGetClients({ agents: ["echo2", "stest1"], backendBaseUrl: embedBackendBaseUrl() })`,
+		"multi-agent sign-in must pass backendBaseUrl")
 }
 
 // ----------------------------------------------------------------------
@@ -532,50 +582,56 @@ func TestGenerator_IndexHTML_AutoEscape(t *testing.T) {
 }
 
 // TestGenerator_AppJS_AutoResumeUsesBlocksBaseUrl verifies the auto-
-// resume partition-key check in app.js uses `vars.BlocksAssetBaseUrl`
-// (the value passed via `--blocks-base-url`) as the default
-// `backendBaseUrl`, NOT a hardcoded `https://blocks.ai`. The widget
-// bundle bakes the same flag in as `__BACKEND_BASE_URL_DEFAULT__`, so
-// the two MUST agree for the silent-refresh path to ever match — a
-// scaffold built against staging would otherwise compute the expected
-// partition under prod and never resume.
+// resume partition-key check in app.js resolves its `backendBaseUrl` via
+// the shared embedBackendBaseUrl() resolver, which bakes in
+// `vars.BackendBaseUrl` (the resolved backend origin) — NOT a hardcoded
+// `https://blocks.ai`. Sign-in and auto-resume MUST use the same value or
+// the recomputed partition key won't match the one the widget wrote and
+// the silent-refresh path is dead.
 func TestGenerator_AppJS_AutoResumeUsesBlocksBaseUrl(t *testing.T) {
 	card := loadFixtureCard(t, "echo2", "echo2", 200)
 
 	vars := defaultVars()
-	vars.BlocksAssetBaseUrl = "https://staging.blocks.ai"
+	vars.BackendBaseUrl = "https://staging.blocks.ai"
 	out, err := GenerateApp([]*cardfetch.AgentCard{card}, vars)
 	if err != nil {
 		t.Fatalf("GenerateApp: %v", err)
 	}
 
-	// The auto-resume default MUST be the staging override (jsString-
-	// quoted so the emitted JS is `'https://staging.blocks.ai'`).
+	// The shared resolver bakes in the staging backend (jsString-quoted so
+	// the emitted JS is `"https://staging.blocks.ai"`).
 	mustContain(
 		t,
 		out.AppJS,
 		`: "https://staging.blocks.ai";`,
-		`auto-resume backendBaseUrl default must be the --blocks-base-url override`,
+		`resolver backendBaseUrl default must be the resolved backend URL`,
 	)
-	// And the hardcoded prod fallback MUST NOT appear in that line.
+	// Auto-resume delegates to the shared resolver.
+	mustContain(
+		t,
+		out.AppJS,
+		`const backendBaseUrl = embedBackendBaseUrl();`,
+		`auto-resume must use the shared resolver`,
+	)
+	// And the hardcoded prod fallback MUST NOT appear in the resolver line.
 	for _, line := range strings.Split(out.AppJS, "\n") {
-		if strings.Contains(line, "const backendBaseUrl =") &&
+		if strings.Contains(line, "dev.backendBaseUrl :") &&
 			strings.Contains(line, `'https://blocks.ai'`) {
-			t.Errorf("auto-resume line still hardcodes 'https://blocks.ai': %q", line)
+			t.Errorf("resolver line still hardcodes 'https://blocks.ai': %q", line)
 		}
 	}
 }
 
 // TestGenerator_AppJS_AutoResumeBlocksBaseUrlEscaped verifies the
 // emitted default backendBaseUrl is JS-string-escaped via jsString, so
-// a `--blocks-base-url` containing the literal's own delimiter (the
+// a resolved backend URL containing the literal's own delimiter (the
 // JSON double quote) cannot break out of the string into the
 // surrounding script.
 func TestGenerator_AppJS_AutoResumeBlocksBaseUrlEscaped(t *testing.T) {
 	card := loadFixtureCard(t, "echo2", "echo2", 200)
 
 	vars := defaultVars()
-	vars.BlocksAssetBaseUrl = `https://x.com/"; alert(1); //`
+	vars.BackendBaseUrl = `https://x.com/"; alert(1); //`
 	out, err := GenerateApp([]*cardfetch.AgentCard{card}, vars)
 	if err != nil {
 		t.Fatalf("GenerateApp: %v", err)
@@ -592,7 +648,7 @@ func TestGenerator_AppJS_AutoResumeBlocksBaseUrlEscaped(t *testing.T) {
 		`embedded " must be backslash-escaped inside the emitted JS string`,
 	)
 	if strings.Contains(out.AppJS, `/"; alert(1); //`) {
-		t.Errorf("emitted JS contains an unescaped `\"` from --blocks-base-url, breaking out of the string literal")
+		t.Errorf("emitted JS contains an unescaped `\"` from the backend URL, breaking out of the string literal")
 	}
 }
 

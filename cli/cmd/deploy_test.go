@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/deploy"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 )
 
 // setupDeployTest configures credentials, writes blocks.config.json and web/
@@ -32,6 +34,7 @@ func setupDeployTest(t *testing.T, agents []string, deployTarget string) (string
 	cfg := map[string]interface{}{
 		"templateVersion": "1.0.0",
 		"agents":          agents,
+		"backendBaseUrl":  "https://app.blocks.ai",
 	}
 	if deployTarget != "" {
 		cfg["deployTarget"] = deployTarget
@@ -165,6 +168,7 @@ func TestRunDeploy_MissingWebDir(t *testing.T) {
 	cfg := map[string]interface{}{
 		"templateVersion": "1.0.0",
 		"agents":          []string{"my_agent"},
+		"backendBaseUrl":  "https://app.blocks.ai",
 	}
 	cfgData, _ := json.Marshal(cfg)
 	os.WriteFile(filepath.Join(dir, "blocks.config.json"), cfgData, 0644)
@@ -241,6 +245,132 @@ func TestRunDeploy_FallsBackToConfigDefault(t *testing.T) {
 	}
 }
 
+func TestRunDeploy_WarnsOnBackendMismatch(t *testing.T) {
+	dir, cleanup := setupDeployTest(t, []string{"echo2"}, "")
+	defer cleanup()
+
+	// Bake a backend into the project config.
+	writeConfigBackend(t, dir, "https://blocks.acme.com")
+
+	// Active profile now points elsewhere (the profile-switch scenario).
+	restore := isolateProfiles(t)
+	defer restore()
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL: "https://blocks.other.com", Orgs: map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_BACKEND_URL", "") // force profile-based resolution
+
+	stubAdapter(t, "cloudflare", "https://my-app.pages.dev")
+
+	out := captureStdoutStderr(func() {
+		if err := runDeploy(context.Background(), "cloudflare"); err != nil {
+			t.Fatalf("runDeploy: %v", err)
+		}
+	})
+	if !strings.Contains(out, "blocks.acme.com") || !strings.Contains(strings.ToLower(out), "warning") {
+		t.Errorf("expected a divergence warning naming the baked backend; got:\n%s", out)
+	}
+}
+
+func TestRunDeploy_NoWarnWhenBackendMatches(t *testing.T) {
+	dir, cleanup := setupDeployTest(t, []string{"echo2"}, "")
+	defer cleanup()
+	writeConfigBackend(t, dir, "https://blocks.acme.com")
+
+	restore := isolateProfiles(t)
+	defer restore()
+	t.Setenv("BLOCKS_BACKEND_URL", "https://blocks.acme.com")
+
+	stubAdapter(t, "cloudflare", "https://my-app.pages.dev")
+	out := captureStdoutStderr(func() {
+		if err := runDeploy(context.Background(), "cloudflare"); err != nil {
+			t.Fatalf("runDeploy: %v", err)
+		}
+	})
+	if strings.Contains(strings.ToLower(out), "warning") {
+		t.Errorf("did not expect a warning when backend matches; got:\n%s", out)
+	}
+}
+
+// captureStdoutStderr redirects both os.Stdout and os.Stderr and returns the
+// combined output. The divergence warning is written to stderr (it is a
+// warning), so the mismatch assertions must observe both streams.
+//
+// WARNING: mutates process-wide os.Stdout/os.Stderr; callers must NOT use
+// t.Parallel().
+func captureStdoutStderr(fn func()) string {
+	oldOut, oldErr := os.Stdout, os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	os.Stdout = w
+	os.Stderr = w
+
+	fn()
+
+	w.Close()
+	os.Stdout = oldOut
+	os.Stderr = oldErr
+
+	var buf strings.Builder
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestRunDeploy_RejectsConfigMissingBackend(t *testing.T) {
+	// A config scaffolded before this change (no backendBaseUrl) must fail
+	// validation loudly rather than silently deploying to a default backend.
+	dir, cleanup := setupDeployTest(t, []string{"echo2"}, "")
+	defer cleanup()
+	// Overwrite the helper's (now valid) config with a legacy one lacking the field.
+	writeLegacyConfig(t, dir)
+
+	stubAdapter(t, "cloudflare", "https://my-app.pages.dev")
+	err := runDeploy(context.Background(), "cloudflare")
+	if err == nil || !strings.Contains(err.Error(), "backendBaseUrl") {
+		t.Fatalf("expected a backendBaseUrl validation error, got: %v", err)
+	}
+}
+
+// writeConfigBackend rewrites only the backendBaseUrl of the blocks.config.json
+// in dir, preserving whatever agents/templateVersion/deployTarget the caller's
+// setup already wrote (rather than hardcoding an agent list that could drift).
+func writeConfigBackend(t *testing.T, dir, backend string) {
+	t.Helper()
+	path := filepath.Join(dir, "blocks.config.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["backendBaseUrl"] = backend
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeLegacyConfig writes a blocks.config.json WITHOUT backendBaseUrl,
+// simulating a project scaffolded before this change.
+func writeLegacyConfig(t *testing.T, dir string) {
+	t.Helper()
+	cfg := map[string]interface{}{
+		"templateVersion": "1.0.0",
+		"agents":          []string{"echo2"},
+	}
+	data, _ := json.Marshal(cfg)
+	if err := os.WriteFile(filepath.Join(dir, "blocks.config.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestEnsureDeployCredentials_SourceAware verifies the source-aware dispatch:
 // a disk-source adapter named "cloudflare" must use the generic plugin
 // credential path, NOT the built-in CloudflareFlow. The previous name-only
@@ -268,5 +398,34 @@ func TestEnsureDeployCredentials_SourceAware(t *testing.T) {
 	}
 	if creds.AccessToken != "" {
 		t.Errorf("creds.AccessToken = %q; generic-none path should leave it empty", creds.AccessToken)
+	}
+}
+
+// TestConfirmYesNo verifies the shared Y/n prompt: only an explicit "n"/"no"
+// declines; empty input (Enter), EOF, and unrecognized answers default to yes.
+func TestConfirmYesNo(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", true},          // EOF → continue (default-yes)
+		{"\n", true},        // blank line → continue
+		{"y\n", true},
+		{"yes\n", true},
+		{"n\n", false},
+		{"no\n", false},
+		{"N\n", false},
+		{"No\n", false},
+		{"garbage\n", true}, // unrecognized → continue
+	}
+	for _, tc := range cases {
+		var got bool
+		// captureStdout swallows the printed prompt; we assert the return.
+		captureStdout(func() {
+			got = confirmYesNo(strings.NewReader(tc.in), "Continue? (Y/n): ")
+		})
+		if got != tc.want {
+			t.Errorf("confirmYesNo(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }

@@ -226,6 +226,7 @@ func TestValidate_ValidSingleAgent(t *testing.T) {
 	mustValidate(t, &BlocksConfig{
 		TemplateVersion: "1.0.0",
 		Agents:          []string{"translator"},
+		BackendBaseUrl:  "https://app.blocks.ai",
 	})
 }
 
@@ -233,6 +234,7 @@ func TestValidate_ValidMultiAgent(t *testing.T) {
 	mustValidate(t, &BlocksConfig{
 		TemplateVersion: "0.2.1",
 		Agents:          []string{"alpha", "beta", "gamma"},
+		BackendBaseUrl:  "https://app.blocks.ai",
 	})
 }
 
@@ -246,6 +248,7 @@ func TestValidate_ValidWithDeployTarget(t *testing.T) {
 				TemplateVersion: "1.0.0",
 				Agents:          []string{"myagent"},
 				DeployTarget:    target,
+				BackendBaseUrl:  "https://app.blocks.ai",
 			})
 		})
 	}
@@ -256,6 +259,7 @@ func TestValidate_ValidEmptyDeployTarget(t *testing.T) {
 		TemplateVersion: "1.0.0",
 		Agents:          []string{"myagent"},
 		DeployTarget:    "",
+		BackendBaseUrl:  "https://app.blocks.ai",
 	})
 }
 
@@ -309,6 +313,7 @@ func TestValidate_AcceptsValidAgentNames(t *testing.T) {
 			mustValidate(t, &BlocksConfig{
 				TemplateVersion: "1.0.0",
 				Agents:          []string{good},
+				BackendBaseUrl:  "https://app.blocks.ai",
 			})
 		})
 	}
@@ -339,6 +344,7 @@ func TestValidate_PluginDeployTargetPersists(t *testing.T) {
 		TemplateVersion: "1.0.0",
 		Agents:          []string{"agent"},
 		DeployTarget:    "railway",
+		BackendBaseUrl:  "https://app.blocks.ai",
 	}
 	if err := Save(path, original); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -380,6 +386,45 @@ func TestValidate_RejectsDuplicateAgents(t *testing.T) {
 	}, "unique")
 }
 
+func TestValidate_ValidWithBackendBaseUrl(t *testing.T) {
+	cfg := &BlocksConfig{
+		TemplateVersion: "1.0.0",
+		Agents:          []string{"echo2"},
+		BackendBaseUrl:  "https://blocks.acme.com",
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected valid, got: %v", err)
+	}
+}
+
+func TestValidate_RejectsBadBackendBaseUrl(t *testing.T) {
+	cfg := &BlocksConfig{
+		TemplateVersion: "1.0.0",
+		Agents:          []string{"echo2"},
+		BackendBaseUrl:  "not a url",
+	}
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected error for non-URL backendBaseUrl")
+	}
+}
+
+func TestValidate_RejectsMissingBackendBaseUrl(t *testing.T) {
+	// backendBaseUrl is REQUIRED. A config scaffolded before this change (no
+	// field) must fail loudly rather than silently default the backend.
+	cfg := &BlocksConfig{
+		TemplateVersion: "1.0.0",
+		Agents:          []string{"echo2"},
+		// BackendBaseUrl intentionally empty
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for missing backendBaseUrl")
+	}
+	if !strings.Contains(err.Error(), "backendBaseUrl") {
+		t.Errorf("error should name backendBaseUrl; got: %v", err)
+	}
+}
+
 func TestValidate_CollectsMultipleErrors(t *testing.T) {
 	// Multiple violations should all appear in the single returned error.
 	err := Validate(&BlocksConfig{
@@ -398,3 +443,122 @@ func TestValidate_CollectsMultipleErrors(t *testing.T) {
 	}
 }
 
+func TestValidateBackendBaseURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{"https ok", "https://app.blocks.ai", false},
+		{"https with port ok", "https://blocks.acme.com:8443", false},
+		{"https with trailing slash ok", "https://blocks.ai/", false},
+		{"http loopback localhost ok", "http://localhost:3001", false},
+		{"http loopback 127.0.0.1 ok", "http://127.0.0.1:3001", false},
+		{"http loopback ipv6 ok", "http://[::1]:3001", false},
+		{"http loopback with multiple trailing slashes ok", "http://localhost:3001///", false},
+		{"http loopback uppercase host ok", "http://LOCALHOST:3001", false},
+		{"https with surrounding whitespace ok", "  https://blocks.ai  ", false},
+		{"http non-loopback rejected", "http://staging.example.com", true},
+		{"ftp rejected", "ftp://host.example.com", true},
+		{"mailto rejected", "mailto:ops@example.com", true},
+		{"garbage rejected", "not a url", true},
+		{"empty rejected", "", true},
+		{"scheme-relative rejected", "//example.com/path", true},
+		{"https hostless port-only authority rejected", "https://:8080", true},
+		{"https empty authority rejected", "https://", true},
+		{"http loopback with userinfo ok", "http://user:pass@localhost:3001", false},
+		{"scheme-relative-ish opaque URL rejected (CLI stricter than widget)", "https:example.com", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateBackendBaseURL(tc.in)
+			if tc.wantErr && err == nil {
+				t.Fatalf("ValidateBackendBaseURL(%q) = nil, want error", tc.in)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("ValidateBackendBaseURL(%q) = %v, want nil", tc.in, err)
+			}
+		})
+	}
+}
+
+func TestValidate_RejectsNonHTTPSBackendBaseUrl(t *testing.T) {
+	// A parseable-but-cleartext non-loopback backend must be rejected: the
+	// widget would throw on it at browser sign-in, so init/dev/deploy must not
+	// let it be baked in. Webapps have no backward-compat obligation here.
+	cfg := &BlocksConfig{
+		TemplateVersion: "1.0.0",
+		Agents:          []string{"echo2"},
+		BackendBaseUrl:  "http://staging.example.com",
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for http:// non-loopback backendBaseUrl")
+	}
+	if !strings.Contains(err.Error(), "backendBaseUrl") {
+		t.Errorf("error should name backendBaseUrl; got: %v", err)
+	}
+}
+
+func TestValidate_AcceptsLoopbackHTTPBackendBaseUrl(t *testing.T) {
+	cfg := &BlocksConfig{
+		TemplateVersion: "1.0.0",
+		Agents:          []string{"echo2"},
+		BackendBaseUrl:  "http://localhost:3001",
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected loopback http backendBaseUrl to be valid, got: %v", err)
+	}
+}
+
+func TestTrimURL(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"no trailing slash unchanged", "https://blocks.ai", "https://blocks.ai"},
+		{"single trailing slash stripped", "https://blocks.ai/", "https://blocks.ai"},
+		{"multiple trailing slashes stripped", "https://blocks.ai///", "https://blocks.ai"},
+		{"surrounding whitespace trimmed", "  https://blocks.ai/  ", "https://blocks.ai"},
+		{"empty stays empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TrimURL(tc.in); got != tc.want {
+				t.Fatalf("TrimURL(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateBackendBaseURL_ParityWithWidget pins the inputs where CLI parity
+// with the embed-auth widget (blocks-sdk/embed-auth/src/config.ts) is subtle,
+// so a future change to either validator that reintroduces divergence trips a
+// test. wantErr reflects what `new URL(...)` + the https/loopback rule decide
+// in the browser (confirmed against Node's WHATWG URL implementation).
+func TestValidateBackendBaseURL_ParityWithWidget(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		wantErr bool // what the widget's new URL()+scheme rule yields
+	}{
+		{"hostless port-only authority: browser throws", "https://:8080", true},
+		{"empty authority: browser throws", "https://", true},
+		{"userinfo is allowed by both", "https://user:pass@example.com", false},
+		{"uppercase host allowed by both (widget lowercases)", "http://LOCALHOST:3001", false},
+		{"ipv6 loopback allowed by both", "http://[::1]:3001", false},
+		{"non-loopback http rejected by both", "http://staging.example.com", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateBackendBaseURL(tc.in)
+			if tc.wantErr && err == nil {
+				t.Fatalf("ValidateBackendBaseURL(%q) = nil, want error (widget rejects it)", tc.in)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("ValidateBackendBaseURL(%q) = %v, want nil (widget accepts it)", tc.in, err)
+			}
+		})
+	}
+}

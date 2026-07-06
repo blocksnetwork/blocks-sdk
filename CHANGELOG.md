@@ -161,6 +161,7 @@ validation.
 - Private agent invitations and grants — invite collaborators to private agents
 - `blocks delete` command for removing agent registrations
 - `blocks login --no-write-env` flag to opt out of writing `BLOCKS_API_KEY` to `.env` without seeing the interactive prompt. Use this in non-interactive sessions where a TTY is attached but no human is available to answer the prompt.
+- `blocks init --mode webapp --backend-url <url>` to explicitly set the backend API origin the deployed page calls.
 
 #### Fixed
 - `blocks publish` now applies enterprise publishing behavior when you target an enterprise instance with `--api-key` before running `blocks login` for that instance, instead of falling back to Blocks Network prompts.
@@ -172,6 +173,8 @@ validation.
 - `blocks login` no longer hangs on the `Write BLOCKS_API_KEY to project .env? (Y/n):` prompt in non-interactive sessions where a TTY is attached. Pass `--write-env` to opt in or `--no-write-env` to opt out non-interactively.
 
 #### Changed
+- **Breaking:** `blocks init --mode webapp` now bakes the backend API origin your active profile (or `--backend-url` / `BLOCKS_BACKEND_URL`) points at into the generated page, instead of always defaulting to `https://app.blocks.ai`. The resolved backend and asset host are printed at scaffold time and recorded as a now-**required** `backendBaseUrl` field in `blocks.config.json`. Projects scaffolded with an earlier CLI (no `backendBaseUrl`) will fail `blocks dev` / `blocks deploy` with a validation error and must be re-scaffolded. `blocks deploy` also warns when you deploy against a profile whose backend differs from the one baked in.
+- **Breaking:** `blocks init --mode webapp --blocks-base-url <url>` (the asset host that serves the widget bundle) is now validated with the same rule as the backend origin: it must be `https`, or `http` only for a loopback host (`localhost`, `127.0.0.1`, `::1`). A cleartext non-loopback asset host — accepted by earlier CLIs — is now rejected at init, because loading the widget bundle over http exposes the sign-in flow (and its refresh tokens) to on-path tampering. Use an https asset host, or a loopback host for local testing.
 - `blocks login --api-key` now fails with a clear error instead of silently reporting success when the organization for the key can't be determined — for example an invalid key or an unreachable instance URL. The key is not saved in that case, so verify the key and instance URL, then retry.
 - `blocks init` flag `--type`/`-t` renamed to `--mode`/`-m`, which also accepts the new `webapp` value. `--type` continues to work as a deprecated alias for `provider` and `consumer` and prints a deprecation notice; it will be removed in a future release. Migrate `--type provider|consumer` to `--mode`.
 - Scaffolded projects no longer include Artifactory/.npmrc/pip.conf configuration — simplified for public registry use

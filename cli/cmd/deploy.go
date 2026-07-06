@@ -136,6 +136,28 @@ func runDeploy(ctx context.Context, target string) error {
 		return fmt.Errorf("blocks.config.json: %w", err)
 	}
 
+	// Surface what backend the bundle will talk to, and loudly warn if the
+	// current environment intends a different backend than what was baked in
+	// at `blocks init` time (the profile-switch footgun). We never rewrite —
+	// the URL and derived partition keys are frozen in web/app.js.
+	fmt.Printf("Backend API (baked at init): %s\n", cfg.BackendBaseUrl)
+	intended, err := currentIntendedBackendURL()
+	if err != nil {
+		return fmt.Errorf("cannot determine the intended backend for the divergence check: %w", err)
+	}
+	if intended != "" && trimURL(intended) != trimURL(cfg.BackendBaseUrl) {
+		fmt.Fprintf(os.Stderr,
+			"\nWarning: this bundle was built to call %s, but your active backend is %s.\n"+
+				"  The deployed page will keep talking to %s. To retarget, re-run\n"+
+				"  'blocks init --mode webapp --agent ... --backend-url %s' (or switch profiles) and redeploy.\n\n",
+			cfg.BackendBaseUrl, intended, cfg.BackendBaseUrl, intended)
+		if isTTY() {
+			if !confirmYesNo(os.Stdin, "  Continue deploying anyway? (Y/n): ") {
+				return fmt.Errorf("canceled")
+			}
+		}
+	}
+
 	// Target resolution:
 	//   1. Explicit positional arg wins (scripted / intentional).
 	//   2. Interactive terminal: always prompt, defaulting the picker to the
@@ -256,6 +278,10 @@ func ensureGenericPluginCredentials(a deploy.Adapter) (*auth.ProviderCredentials
 	}
 	return nil, fmt.Errorf("plugin %s: unknown credentialFlow %q", a.Name, a.Credential)
 }
+
+// trimURL normalizes a URL for comparison by stripping trailing slashes. It
+// delegates to config.TrimURL so the normalization rule lives in one place.
+func trimURL(s string) string { return config.TrimURL(s) }
 
 func readLineFromStdin(prompt string) (string, error) {
 	fmt.Print(prompt)

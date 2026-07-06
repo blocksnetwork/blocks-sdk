@@ -632,7 +632,9 @@ Blocks; paid agent usage is billed to those end users, not the page
 author.
 
 The scaffolder writes **`blocks.config.json`** (`templateVersion`, `agents`,
-optional `deployTarget` / `lastDeployedUrl`) plus a generated `web/`
+required `backendBaseUrl` — the backend API origin the deployed page calls at
+runtime, distinct from the `--blocks-base-url` asset host — plus optional
+`deployTarget` / `lastDeployedUrl`) plus a generated `web/`
 (`index.html`, `app.js`, `styles.css`) wired from each agent's card. For any
 agent that declares the **pipe** task kind, the page includes a duration
 control (minutes, range 1..43200): pipe-only agents always send it; mixed

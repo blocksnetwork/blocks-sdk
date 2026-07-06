@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,6 +28,14 @@ type BlocksConfig struct {
 	DeployTarget    string            `json:"deployTarget,omitempty"`
 	LastDeployedUrl string            `json:"lastDeployedUrl,omitempty"`
 	AgentCardPaths  map[string]string `json:"agentCardPaths,omitempty"`
+
+	// BackendBaseUrl is the backend API origin baked into web/app.js at
+	// `blocks init` time. Persisted so `blocks deploy` can warn when the
+	// active profile's backend no longer matches what was baked in. REQUIRED:
+	// a config without it (e.g. scaffolded before this change) fails Validate
+	// so the user re-scaffolds rather than silently deploying to the wrong
+	// backend. No omitempty — it is always written.
+	BackendBaseUrl string `json:"backendBaseUrl"`
 }
 
 // Load reads and JSON-decodes a blocks.config.json file at path.
@@ -140,11 +149,76 @@ func Validate(cfg *BlocksConfig) error {
 		}
 	}
 
+	// backendBaseUrl: REQUIRED; must satisfy the widget's scheme/host rule so a
+	// value that would fail at browser sign-in can never be baked into a bundle.
+	if cfg.BackendBaseUrl == "" {
+		errs = append(errs, "backendBaseUrl is required")
+	} else if err := ValidateBackendBaseURL(cfg.BackendBaseUrl); err != nil {
+		errs = append(errs, fmt.Sprintf("backendBaseUrl %q %s", cfg.BackendBaseUrl, err.Error()))
+	}
 
 	if len(errs) == 0 {
 		return nil
 	}
 	return errors.New(strings.Join(errs, "; "))
+}
+
+// TrimURL normalizes a URL by stripping surrounding whitespace and trailing
+// slashes. It is the single source of truth for URL trimming across the CLI so
+// baked values, profile values, and comparison values normalize identically.
+func TrimURL(s string) string {
+	return strings.TrimRight(strings.TrimSpace(s), "/")
+}
+
+// ValidateBackendBaseURL enforces the scheme/host rules the embed-auth widget
+// applies at runtime (blocks-sdk/embed-auth/src/config.ts resolveBackendBaseUrl):
+// the URL must parse to an absolute URL with a non-empty hostname, and use
+// https:, or http: only when the host is loopback (localhost, 127.0.0.1, ::1).
+// Mirroring the rule at the CLI boundary fails init/dev/deploy fast instead of
+// baking a value that the browser sign-in later rejects with
+// BlocksAuthError('INVALID_INPUT').
+//
+// Parity boundary (verified): Go's url.Parse already rejects the inputs the
+// WHATWG URL parser rejects for our purposes (backslashes, spaces, control
+// chars in the host) EXCEPT a hostless authority like "https://:8080" — Host
+// is ":8080" but Hostname() is "". The Hostname() check below closes that one
+// divergence. TestValidateBackendBaseURL_ParityWithWidget pins these inputs so
+// the two validators cannot drift silently.
+func ValidateBackendBaseURL(raw string) error {
+	u, err := url.Parse(TrimURL(raw))
+	if err != nil {
+		return errors.New("is not a valid URL")
+	}
+	// url.Parse accepts a hostless authority such as "https://:8080" (Host is
+	// non-empty but the hostname is ""), which the widget's new URL() rejects.
+	// Check Hostname(), which strips port and IPv6 brackets, to keep parity.
+	if u.Hostname() == "" {
+		return errors.New("must be an absolute URL with a host")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		// The widget compares against a WHATWG-lowercased hostname; url.Hostname()
+		// does not lowercase, so normalize here to keep the two validators in parity.
+		if isLoopbackHost(strings.ToLower(u.Hostname())) {
+			return nil
+		}
+		return errors.New("must use https: (http: is only allowed for loopback hosts)")
+	default:
+		return fmt.Errorf("must use https:, or http: with a loopback host; got scheme %q", u.Scheme)
+	}
+}
+
+// isLoopbackHost matches the loopback hostnames the widget allows over http:.
+// Callers pass url.Hostname(), which strips IPv6 brackets, so "::1" (not
+// "[::1]") is the form seen here.
+func isLoopbackHost(hostname string) bool {
+	switch hostname {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 // isSemver reports whether s matches the pattern \d+\.\d+\.\d+.
