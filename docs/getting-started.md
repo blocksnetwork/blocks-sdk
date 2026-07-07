@@ -118,9 +118,11 @@ pricing; it can also promote an already-registered agent.
     (`blocks profile use <name>`), and finally the asset host. `blocks init`
     prints the resolved value; deploying against a different active profile
     prints a warning because the bundle keeps talking to the baked backend.
-  - **Asset host** (`--blocks-base-url`, default `https://app.blocks.ai`) —
-    where the embed-auth widget bundle is served from. For stock Blocks and
-    most on-prem deployments the two are the same origin.
+  - **Asset host** (`--blocks-base-url`) — where the embed-auth widget
+    bundle is served from. When `--blocks-base-url` is unset it mirrors the
+    resolved backend origin above (so for stock Blocks and most on-prem
+    deployments the two are the same origin); pass `--blocks-base-url` only
+    when the widget bundle is genuinely served from a different host.
 
 For scripted or non-TTY environments, pass publish flags explicitly:
 

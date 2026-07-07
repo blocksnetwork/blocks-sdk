@@ -991,3 +991,66 @@ func TestScaffoldWebappProject_RejectsCleartextAssetHost(t *testing.T) {
 		t.Fatalf("expected asset-host validation error at scaffold layer, got: %v", err)
 	}
 }
+
+// TestInitWebapp_BakesProfileAssetHost proves the flag-driven path now bakes the
+// active profile's origin as the widget-bundle asset host in index.html — not the
+// hardcoded https://app.blocks.ai. Before the fix, index.html loaded the widget
+// from app.blocks.ai even though the backend was correctly profile-aware, which
+// is fatal on a network-restricted enterprise instance. Both init paths share
+// resolveWebappURLs (unit-tested in helpers_test.go); this guards the wiring.
+func TestInitWebapp_BakesProfileAssetHost(t *testing.T) {
+	dir := t.TempDir()
+	oldDir, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	// The profile origin doubles as the card-fetch backend (explicit source), so
+	// it must serve the card. httptest gives an http loopback URL, which
+	// ValidateBackendBaseURL accepts (loopback is exempt from the https rule).
+	srv := fakeRegistryServer(t, map[string]string{"echo2": "echo2.json"})
+
+	defer isolateProfiles(t)()
+	t.Setenv("BLOCKS_BACKEND_URL", "")
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL: srv.URL,
+		Orgs:    map[string]profiles.OrgKey{},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	credDir := t.TempDir()
+	origCred := auth.CredentialPathFunc
+	auth.CredentialPathFunc = func() (string, error) {
+		return filepath.Join(credDir, "credentials.json"), nil
+	}
+	defer func() { auth.CredentialPathFunc = origCred }()
+
+	resetInitFlags()
+	initAgents = []string{"echo2"}
+	var err error
+	captureStdout(func() {
+		err = runWebapp(context.Background(), "my_webapp")
+	})
+	resetInitFlags()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	indexBytes, rerr := os.ReadFile(filepath.Join(dir, "my_webapp", "web", "index.html"))
+	if rerr != nil {
+		t.Fatalf("read index.html: %v", rerr)
+	}
+	indexHTML := string(indexBytes)
+
+	// index.html JS-escapes the asset host (forward slashes → \/). Assert the
+	// profile origin is present as the widget host and app.blocks.ai is absent.
+	escapedProfile := strings.ReplaceAll(srv.URL, "/", `\/`)
+	if !strings.Contains(indexHTML, escapedProfile) {
+		t.Errorf("index.html must load the widget from the profile origin %q; got:\n%s", srv.URL, indexHTML)
+	}
+	if strings.Contains(indexHTML, "app.blocks.ai") {
+		t.Errorf("index.html must NOT fall back to app.blocks.ai when a profile origin is active; got:\n%s", indexHTML)
+	}
+}

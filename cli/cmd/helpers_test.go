@@ -295,3 +295,132 @@ func TestResolveWebappBackend_NoErrorOnStockProfile(t *testing.T) {
 		t.Fatalf("got %q, want asset-base fallback", got)
 	}
 }
+
+// TestResolveWebappAssetBase covers the asset-host mirror: an explicit
+// --blocks-base-url flag always wins (trailing-slash normalized); otherwise the
+// asset host follows the already-resolved backend origin so the two cannot drift.
+func TestResolveWebappAssetBase(t *testing.T) {
+	cases := []struct {
+		name               string
+		assetFlag          string
+		resolvedBackendURL string
+		want               string
+	}{
+		{"flag wins over backend", "https://cdn.acme.com", "https://api.acme.com", "https://cdn.acme.com"},
+		{"flag trailing slash stripped", "https://cdn.acme.com/", "https://api.acme.com", "https://cdn.acme.com"},
+		{"no flag mirrors backend", "", "https://api.acme.com", "https://api.acme.com"},
+		{"no flag mirrors stock backend", "", "https://app.blocks.ai", "https://app.blocks.ai"},
+		{"whitespace flag treated as unset", "   ", "https://api.acme.com", "https://api.acme.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveWebappAssetBase(tc.assetFlag, tc.resolvedBackendURL)
+			if got != tc.want {
+				t.Fatalf("resolveWebappAssetBase(%q, %q) = %q, want %q", tc.assetFlag, tc.resolvedBackendURL, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveWebappURLs proves the single seam both init paths use: the asset
+// host and backend URL are resolved from one precedence source. Stock users
+// (empty profile, no flag/env) must still get https://app.blocks.ai for BOTH,
+// enterprise profiles must get the profile origin for BOTH, and --blocks-base-url
+// must override only the asset host while the backend still resolves normally.
+func TestResolveWebappURLs(t *testing.T) {
+	const stock = "https://app.blocks.ai"
+
+	t.Run("stock user gets app.blocks.ai for both", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+			Orgs: map[string]profiles.OrgKey{},
+		}, true)
+		asset, backend, err := resolveWebappURLs("", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if asset != stock || backend != stock {
+			t.Fatalf("asset=%q backend=%q, want both %q", asset, backend, stock)
+		}
+	})
+
+	t.Run("enterprise profile drives asset AND backend", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+			BaseURL: "https://blocks.pubnub.example", Orgs: map[string]profiles.OrgKey{},
+		}, true)
+		asset, backend, err := resolveWebappURLs("", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if asset != "https://blocks.pubnub.example" {
+			t.Fatalf("asset = %q, want the enterprise profile origin", asset)
+		}
+		if backend != "https://blocks.pubnub.example" {
+			t.Fatalf("backend = %q, want the enterprise profile origin", backend)
+		}
+	})
+
+	t.Run("--blocks-base-url overrides asset only", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+			BaseURL: "https://blocks.pubnub.example", Orgs: map[string]profiles.OrgKey{},
+		}, true)
+		asset, backend, err := resolveWebappURLs("", "https://cdn.pubnub.example")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if asset != "https://cdn.pubnub.example" {
+			t.Fatalf("asset = %q, want the --blocks-base-url override", asset)
+		}
+		if backend != "https://blocks.pubnub.example" {
+			t.Fatalf("backend = %q, want the profile origin (unaffected by --blocks-base-url)", backend)
+		}
+	})
+
+	t.Run("--backend-url drives asset via mirror", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+			Orgs: map[string]profiles.OrgKey{},
+		}, true)
+		asset, backend, err := resolveWebappURLs("https://api.split.example", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if asset != "https://api.split.example" || backend != "https://api.split.example" {
+			t.Fatalf("asset=%q backend=%q, want both the --backend-url origin", asset, backend)
+		}
+	})
+
+	t.Run("trailing-slash --blocks-base-url yields equal trimmed origins", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+			Orgs: map[string]profiles.OrgKey{},
+		}, true)
+		asset, backend, err := resolveWebappURLs("", "https://cdn.acme.com/")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if asset != "https://cdn.acme.com" {
+			t.Fatalf("asset = %q, want trailing slash stripped", asset)
+		}
+		if backend != "https://cdn.acme.com" {
+			t.Fatalf("backend = %q, want the trimmed asset base as last-tier fallback", backend)
+		}
+	})
+
+	t.Run("surfaces profile resolution error", func(t *testing.T) {
+		defer isolateProfiles(t)()
+		t.Setenv("BLOCKS_BACKEND_URL", "")
+		t.Setenv("BLOCKS_PROFILE", "does-not-exist")
+		_, _, err := resolveWebappURLs("", "")
+		if err == nil {
+			t.Fatal("expected resolveWebappURLs to surface the profile error, got nil")
+		}
+	})
+}

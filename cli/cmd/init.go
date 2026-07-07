@@ -245,11 +245,7 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 		return fmt.Errorf("webapp scaffolds require a project name. Try: blocks init <name> --mode webapp --agent <agent>")
 	}
 
-	assetBase := initBlocksBaseURL
-	if assetBase == "" {
-		assetBase = scaffold.DefaultAssetBaseURL
-	}
-	backendURL, err := resolveWebappBackendURL(initBackendURL, assetBase)
+	assetBase, backendURL, err := resolveWebappURLs(initBackendURL, initBlocksBaseURL)
 	if err != nil {
 		return err
 	}
@@ -285,7 +281,7 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 		Name:           nameFromArgs,
 		Mode:           "webapp",
 		Agents:         append([]string(nil), initAgents...),
-		BlocksBaseURL:  initBlocksBaseURL,
+		BlocksBaseURL:  assetBase,
 		BackendBaseURL: backendURL,
 	}
 	printWebappResolvedURLs(assetBase, backendURL, backendResolvedFromExplicitSource(initBackendURL))
@@ -302,11 +298,7 @@ func runWebappWizard(ctx context.Context) error {
 
 	apiKey := ensureOrOfferBlocksLogin(ctx)
 
-	assetBase := initBlocksBaseURL
-	if assetBase == "" {
-		assetBase = scaffold.DefaultAssetBaseURL
-	}
-	resolvedBackend, err := resolveWebappBackendURL(initBackendURL, assetBase)
+	assetBase, resolvedBackend, err := resolveWebappURLs(initBackendURL, initBlocksBaseURL)
 	if err != nil {
 		return err
 	}
@@ -332,7 +324,7 @@ func runWebappWizard(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cfg.BlocksBaseURL = initBlocksBaseURL
+	cfg.BlocksBaseURL = assetBase
 	cfg.BackendBaseURL = resolvedBackend
 	printWebappResolvedURLs(assetBase, cfg.BackendBaseURL, backendResolvedFromExplicitSource(initBackendURL))
 	return scaffoldWebappProject(ctx, cfg, client)
@@ -353,13 +345,13 @@ func scaffoldWebappProject(ctx context.Context, cfg wizard.Config, client *block
 	}
 
 	// Defense in depth: the asset host is baked into index.html as the
-	// widget-bundle <script src> origin. Today it has a single source (the
-	// validated --blocks-base-url flag), but validate it here too so the
-	// guarantee does not silently rest on that call-graph invariant if a future
-	// change ever resolves it from profile/env. Empty means "use the default".
+	// widget-bundle <script src> origin. When --blocks-base-url is unset it
+	// mirrors the resolved backend origin (profile / env / --backend-url), so
+	// this value can come from any of those sources — validate it here too,
+	// not just at the flag check in runWebapp. Empty means "use the default".
 	if cfg.BlocksBaseURL != "" {
 		if err := config.ValidateBackendBaseURL(cfg.BlocksBaseURL); err != nil {
-			return fmt.Errorf("resolved asset host %q %s — fix --blocks-base-url", cfg.BlocksBaseURL, err.Error())
+			return fmt.Errorf("resolved asset host %q %s — set --blocks-base-url, or fix BLOCKS_BACKEND_URL / your active profile", cfg.BlocksBaseURL, err.Error())
 		}
 	}
 

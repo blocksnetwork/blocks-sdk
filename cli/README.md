@@ -47,7 +47,9 @@ delegates to the appropriate SDK runner:
   precedence first) from `--backend-url`, the `BLOCKS_BACKEND_URL` env
   var, your active profile's backend (`blocks profile use <name>`), the
   build-time default baked into packaged/enterprise builds, and finally
-  the asset host (`--blocks-base-url`, default `https://app.blocks.ai`).
+  the asset host (`--blocks-base-url`). When `--blocks-base-url` is unset,
+  the asset host mirrors the resolved backend origin above; it only defaults
+  to `https://app.blocks.ai` for stock users.
 
 Examples:
 

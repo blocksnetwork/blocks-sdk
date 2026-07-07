@@ -10,6 +10,7 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
+	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
 )
 
 // Build-time defaults injected via ldflags.
@@ -129,6 +130,44 @@ func backendResolvedFromExplicitSource(flagVal string) bool {
 		return false
 	}
 	return src != backendFromAsset
+}
+
+// resolveWebappAssetBase picks the widget-bundle asset host baked into a webapp
+// scaffold's index.html at `blocks init --mode webapp` time.
+//
+// Precedence:
+//  1. explicit --blocks-base-url flag (assetFlag), trailing-slash normalized
+//  2. the already-resolved backend origin (resolvedBackendURL)
+//
+// Mirroring the backend origin when the flag is unset is deliberate: the asset
+// host and backend "MUST agree" for on-prem / split deployments (see
+// scaffold.EmbedVars.BlocksAssetBaseUrl), and stock users already resolve the
+// backend to https://app.blocks.ai — so stock scaffolds are byte-stable while
+// enterprise profiles (which set only BaseURL) get the enterprise host for free.
+// --blocks-base-url stays the escape hatch when asset and API legitimately differ.
+func resolveWebappAssetBase(assetFlag, resolvedBackendURL string) string {
+	if s := strings.TrimSpace(assetFlag); s != "" {
+		return trimURL(s)
+	}
+	return resolvedBackendURL
+}
+
+// resolveWebappURLs is the single seam both webapp init paths (runWebapp,
+// runWebappWizard) use to resolve the two origins frozen into a scaffold. It
+// keeps the asset host and backend URL derived from one precedence source so
+// they cannot drift: the backend's last-tier fallback is the asset flag (or the
+// stock default), and the asset host mirrors the resolved backend when the flag
+// is unset. Returns (assetBase, backendURL).
+func resolveWebappURLs(backendFlag, assetFlag string) (string, string, error) {
+	assetFallback := scaffold.DefaultAssetBaseURL
+	if s := strings.TrimSpace(assetFlag); s != "" {
+		assetFallback = trimURL(s)
+	}
+	backendURL, err := resolveWebappBackendURL(backendFlag, assetFallback)
+	if err != nil {
+		return "", "", err
+	}
+	return resolveWebappAssetBase(assetFlag, backendURL), backendURL, nil
 }
 
 // currentIntendedBackendURL reports the backend origin the CURRENT

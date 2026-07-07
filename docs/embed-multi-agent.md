@@ -104,14 +104,15 @@ the summary — chaining three agents in sequence.
 <script src="app.js" defer></script>
 ```
 
-The `<script src>` host above (`--blocks-base-url`, default
-`https://app.blocks.ai`) is the **asset host** — only where the widget bundle
-is served from. It is distinct from the **backend API** the widget actually
-calls for sign-in and task RPC, which the scaffolder bakes into `app.js`. For a
-non-stock backend (on-prem, or a profile other than the default), set it with
-`--backend-url` / `BLOCKS_BACKEND_URL` or your active profile rather than
-`--blocks-base-url`. See [getting-started.md](./getting-started.md) §4 for the
-full resolution order.
+The `<script src>` host above (`--blocks-base-url`) is the **asset host** —
+only where the widget bundle is served from. It is distinct from the
+**backend API** the widget actually calls for sign-in and task RPC, which the
+scaffolder bakes into `app.js`. When `--blocks-base-url` is unset the asset
+host mirrors the resolved backend origin, so for a non-stock backend (on-prem,
+or a profile other than the default) set `--backend-url` / `BLOCKS_BACKEND_URL`
+or your active profile and the asset host follows automatically; pass
+`--blocks-base-url` only when the widget bundle is served from a different host.
+See [getting-started.md](./getting-started.md) §4 for the full resolution order.
 
 ```js
 // app.js
