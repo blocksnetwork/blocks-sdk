@@ -1,0 +1,111 @@
+{
+  "identity": {
+    "agentName": "lifecycle_python",
+    "displayName": "lifecycle (Python)",
+    "description": "Task lifecycle patterns: built-in cooperative cancel, plus provider-composed pause/resume (via a bidirectional control stream) and consumer-composed fail-once retry.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": [
+      "pipe",
+      "request"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "params",
+        "description": "Optional run parameters. `ticks` bounds the pipe work loop; `failOnce` makes a request task fail on its first attempt (drives the retry demo).",
+        "contentType": "application/json",
+        "required": false,
+        "example": {
+          "ticks": 20,
+          "failOnce": true
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ticks": {
+              "type": "integer",
+              "title": "Ticks",
+              "description": "Progress ticks the pipe work loop emits before completing.",
+              "default": 20
+            },
+            "failOnce": {
+              "type": "boolean",
+              "title": "Fail once",
+              "description": "When true on a request task, throw on the first attempt for this idempotency identity so the consumer can demonstrate retry.",
+              "default": false
+            }
+          }
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "summary",
+        "description": "JSON summary of the run: ticks emitted, whether it was paused/resumed, and the completion reason.",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "streams": {
+    "control": {
+      "direction": "bidirectional",
+      "format": "events",
+      "affinity": "dedicated",
+      "description": "Bidirectional control + progress channel. Outbound: { tick } progress events. Inbound: { ctrl: 'pause' | 'resume' } control messages the handler parks/unparks its work loop on.",
+      "outboundSchema": {
+        "type": "object",
+        "required": [
+          "tick"
+        ],
+        "properties": {
+          "tick": {
+            "type": "integer",
+            "description": "Monotonic progress counter emitted each active tick."
+          },
+          "state": {
+            "type": "string",
+            "description": "Work-loop state at emit time: 'running'."
+          }
+        }
+      },
+      "inboundSchema": {
+        "type": "object",
+        "required": [
+          "ctrl"
+        ],
+        "properties": {
+          "ctrl": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "resume"
+            ],
+            "description": "Control command: pause parks the work loop; resume continues it."
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "id": "lifecycle",
+      "name": "Task Lifecycle",
+      "description": "Cancel (built-in), pause/resume (provider-composed), and retry (consumer-composed)."
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.py",
+    "handlerExport": "handler",
+    "concurrency": 2,
+    "expectedInstances": 1,
+    "maxPendingBacklog": 10,
+    "maxRunningTimeSec": 120
+  }
+}

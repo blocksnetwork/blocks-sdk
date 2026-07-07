@@ -1,0 +1,13 @@
+[project]
+name = "lifecycle-agent-example"
+version = "1.0.0"
+description = "Task-lifecycle agent example for Blocks Network"
+requires-python = ">=3.10"
+dependencies = [
+    "blocks-network",
+]
+
+[project.optional-dependencies]
+consumer = [
+    "python-dotenv",
+]

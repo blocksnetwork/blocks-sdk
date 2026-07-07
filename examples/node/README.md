@@ -30,6 +30,7 @@ SDK concept and uses current APIs.
 | [stock-sim](./stock-sim/)                   | Pipe streaming (provider) | Long-running stream of events                      |
 | [stock-sim-consumer](./stock-sim-consumer/) | Pipe streaming (consumer) | Submit pipe task, consume stream in real time      |
 | [advanced-stream](./advanced-stream/)       | Advanced streams          | Multi-stream, schema-validated events, and shared-affinity broadcast on one task |
+| [lifecycle](./lifecycle/)                   | Task lifecycle            | Built-in cancel + provider-composed pause/resume + consumer-composed retry |
 | [chat-agent](./chat-agent/)                 | Multi-turn chat           | Conversation that remembers context across turns   |
 
 ## Advanced Examples
