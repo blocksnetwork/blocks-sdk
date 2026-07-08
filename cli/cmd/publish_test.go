@@ -111,8 +111,12 @@ func TestPublishWithListingPublic(t *testing.T) {
 	if strings.Contains(strings.ToLower(output), "playground") {
 		t.Errorf("success output must not contain playground wording:\n%s", output)
 	}
-	if strings.Contains(output, "View:") {
-		t.Errorf("success output should omit View line when backend provides no URL:\n%s", output)
+	// BLOCKS-563: when the backend response carries no agentUrl, the View link
+	// falls back to the active deployment origin (BLOCKS_BACKEND_URL here), not
+	// stock app.blocks.ai and not an omitted line.
+	wantView := "View: " + ts.URL + "/agents/test_agent"
+	if !strings.Contains(output, wantView) {
+		t.Errorf("success output should show View line at the deployment origin (%q):\n%s", wantView, output)
 	}
 }
 
@@ -638,6 +642,171 @@ func TestPublishedAgentURLOmitsWithoutResolution(t *testing.T) {
 	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", false)
 	if got != "" {
 		t.Errorf("publishedAgentURL = %q, want empty string", got)
+	}
+}
+
+// TestPublishedAgentURLUsesBackendURLEnvFallback covers BLOCKS-563: with no
+// dashboard override set, the "View" link must fall back to the deployment
+// origin (BLOCKS_BACKEND_URL here) rather than stock CDM / app.blocks.ai.
+func TestPublishedAgentURLUsesBackendURLEnvFallback(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_BACKEND_URL", "https://blocks.acme.com")
+
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true)
+	want := "https://blocks.acme.com/agents/test_agent"
+	if got != want {
+		t.Errorf("publishedAgentURL = %q, want %q", got, want)
+	}
+}
+
+// TestPublishedAgentURLUsesActiveProfileFallback covers BLOCKS-563: the active
+// profile's BaseURL (an enterprise/custom deployment) must drive the "View"
+// link when no dashboard override and no BLOCKS_BACKEND_URL are set.
+func TestPublishedAgentURLUsesActiveProfileFallback(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL: "https://blocks.acme.com", Orgs: map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_BACKEND_URL", "")
+
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true)
+	want := "https://blocks.acme.com/agents/test_agent"
+	if got != want {
+		t.Errorf("publishedAgentURL = %q, want %q", got, want)
+	}
+}
+
+// TestPublishedAgentURLDashboardOverrideWinsOverBackend ensures an explicit
+// dashboard origin (profile DashboardBaseURL) still takes precedence over the
+// deployment BaseURL fallback — the split-dashboard deployment case.
+func TestPublishedAgentURLDashboardOverrideWinsOverBackend(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:          "https://api.acme.com",
+		DashboardBaseURL: "https://dashboard.acme.com",
+		Orgs:             map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_BACKEND_URL", "")
+
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true)
+	want := "https://dashboard.acme.com/agents/test_agent"
+	if got != want {
+		t.Errorf("publishedAgentURL = %q, want %q", got, want)
+	}
+}
+
+// TestPublishedAgentURLSkipsBackendFallbackWhenNonInteractive verifies the
+// network-dependent deployment fallback stays gated behind allowNetworkFallback
+// so CI/non-interactive publishes never stall on a resolveBackendURL fetch.
+func TestPublishedAgentURLSkipsBackendFallbackWhenNonInteractive(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL: "https://blocks.acme.com", Orgs: map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_BACKEND_URL", "")
+
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", false)
+	if got != "" {
+		t.Errorf("publishedAgentURL = %q, want empty string (fallback gated off)", got)
+	}
+}
+
+// TestPublishedAgentURLBackendOverrideBeatsStaleProfileDashboard covers the
+// BLOCKS-563 precedence hole: when BLOCKS_BACKEND_URL targets a different
+// backend than the active profile was logged into, the profile's cached
+// DashboardBaseURL is stale and must be skipped so the View link follows the
+// backend actually being published to.
+func TestPublishedAgentURLBackendOverrideBeatsStaleProfileDashboard(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:          "https://a.example.com",
+		DashboardBaseURL: "https://dashboard.a.example.com",
+		Orgs:             map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_BACKEND_URL", "https://b.example.com")
+
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true)
+	want := "https://b.example.com/agents/test_agent"
+	if got != want {
+		t.Errorf("publishedAgentURL = %q, want %q (must follow BLOCKS_BACKEND_URL, not stale profile dashboard)", got, want)
+	}
+}
+
+// TestPublishedAgentURLProfileDashboardKeptWhenBackendMatches ensures the
+// split-dashboard case still works: a profile whose dashboard origin differs
+// from its backend keeps that dashboard origin when BLOCKS_BACKEND_URL is unset
+// or points at the profile's own backend (not a divergence).
+func TestPublishedAgentURLProfileDashboardKeptWhenBackendMatches(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:          "https://a.example.com",
+		DashboardBaseURL: "https://dashboard.a.example.com",
+		Orgs:             map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+
+	// Unset override: split-dashboard origin is honored.
+	t.Setenv("BLOCKS_BACKEND_URL", "")
+	if got, want := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true), "https://dashboard.a.example.com/agents/test_agent"; got != want {
+		t.Errorf("unset override: publishedAgentURL = %q, want %q", got, want)
+	}
+
+	// Override equals the profile backend (trailing slash aside): still honored.
+	t.Setenv("BLOCKS_BACKEND_URL", "https://a.example.com/")
+	if got, want := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true), "https://dashboard.a.example.com/agents/test_agent"; got != want {
+		t.Errorf("matching override: publishedAgentURL = %q, want %q", got, want)
+	}
+
+	// Override differs only by an explicit default port / case: origin-equivalent,
+	// so the dashboard origin is still honored (not a divergence).
+	t.Setenv("BLOCKS_BACKEND_URL", "https://A.example.com:443")
+	if got, want := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true), "https://dashboard.a.example.com/agents/test_agent"; got != want {
+		t.Errorf("default-port override: publishedAgentURL = %q, want %q", got, want)
+	}
+}
+
+// TestPublishedAgentURLBackendOverrideDivergesByPath covers same-host,
+// path-prefixed multi-tenant deployments: BaseURL is a full request prefix, so
+// a BLOCKS_BACKEND_URL that differs only by path is a different deployment and
+// must drop the profile's cached (tenant-a) dashboard origin.
+func TestPublishedAgentURLBackendOverrideDivergesByPath(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:          "https://host.example.com/tenant-a",
+		DashboardBaseURL: "https://host.example.com/tenant-a/dashboard",
+		Orgs:             map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+
+	// Different path prefix → divergence → follow BLOCKS_BACKEND_URL.
+	t.Setenv("BLOCKS_BACKEND_URL", "https://host.example.com/tenant-b")
+	if got, want := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true), "https://host.example.com/tenant-b/agents/test_agent"; got != want {
+		t.Errorf("path divergence: publishedAgentURL = %q, want %q (must not open tenant-a dashboard)", got, want)
+	}
+
+	// Same path prefix (trailing slash aside) → not a divergence → keep dashboard.
+	t.Setenv("BLOCKS_BACKEND_URL", "https://host.example.com/tenant-a/")
+	if got, want := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", true), "https://host.example.com/tenant-a/dashboard/agents/test_agent"; got != want {
+		t.Errorf("same path: publishedAgentURL = %q, want %q", got, want)
 	}
 }
 
