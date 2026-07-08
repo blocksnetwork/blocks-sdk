@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/spf13/cobra"
 )
 
@@ -51,12 +50,18 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// resolveDashboardURL picks the dashboard origin. Explicit dashboard overrides
+// (BLOCKS_APP_BASE_URL / BLOCKS_DASHBOARD_URL / active profile DashboardBaseURL)
+// win via resolveAppBaseURL; otherwise fall back to the deployment origin from
+// resolveBackendURL (BLOCKS_BACKEND_URL → active profile BaseURL → ldflag
+// default → CDM) so the dashboard opens on the active profile's deployment
+// rather than always stock https://app.blocks.ai (BLOCKS-563).
 func resolveDashboardURL() (string, error) {
 	if v := resolveAppBaseURL(); v != "" {
 		return v, nil
 	}
-	if cfg, err := cdm.Get(); err == nil && cfg.Api.BaseURL != "" {
-		return cfg.Api.BaseURL, nil
+	if v := resolveBackendURL(); v != "" {
+		return v, nil
 	}
 	return "", fmt.Errorf("could not resolve dashboard URL - set BLOCKS_APP_BASE_URL or BLOCKS_DASHBOARD_URL, or ensure CDM config is reachable")
 }

@@ -607,7 +607,13 @@ blocks dashboard <agent-name>                 # Override the agent name (default
 `blocks check` validates the JSON schema **and** the file referenced
 by `runtime.handler` -- a missing handler produces `[FAIL]` even when
 the JSON is valid. `blocks dashboard` resolves the dashboard URL from
-the CDM config or from `BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL`.
+`BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` (or the active profile's
+dashboard origin) if set, otherwise from the active deployment
+(`BLOCKS_BACKEND_URL`, the active profile's backend, or the CDM config),
+so it targets the deployment you're on rather than always stock Blocks
+Network. When `BLOCKS_BACKEND_URL` targets a different backend than the
+active profile was logged into, the profile's cached dashboard origin is
+skipped so the link follows `BLOCKS_BACKEND_URL`.
 
 ### Manage private-agent grants (`blocks invite`)
 

@@ -16,7 +16,6 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
 	"github.com/pubnub/blocks-sdk/cli/internal/branding"
-	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/cliconfig"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
@@ -755,20 +754,23 @@ func publishedAgentURL(respBody []byte, agentName string, allowNetworkFallback b
 }
 
 // agentAppURL builds the dashboard URL for an agent. Resolution order:
-// BLOCKS_APP_BASE_URL env var → CDM api.baseUrl (only when allowNetworkFallback
-// is true). In production CDM returns the app origin (https://app.blocks.ai);
-// in local dev where frontend and backend are split, set BLOCKS_APP_BASE_URL
-// to the frontend origin. The CDM fallback is skipped in non-interactive mode
-// to avoid a potential 21s timeout stall in CI/offline environments.
+// BLOCKS_APP_BASE_URL / BLOCKS_DASHBOARD_URL → active profile DashboardBaseURL
+// (all via resolveAppBaseURL) → the deployment origin from resolveBackendURL
+// (BLOCKS_BACKEND_URL → active profile BaseURL → ldflag default → CDM), the
+// last tier only when allowNetworkFallback is true. Routing the fallback
+// through resolveBackendURL is what keeps the "View" link on the deployment
+// the publish actually targeted instead of always stock https://app.blocks.ai
+// (BLOCKS-563). In production CDM returns the app origin; in local dev where
+// frontend and backend are split, set BLOCKS_APP_BASE_URL to the frontend
+// origin. The network-dependent fallback is skipped in non-interactive mode to
+// avoid a potential 21s timeout stall in CI/offline environments.
 func agentAppURL(agentName string, allowNetworkFallback bool) string {
 	if strings.TrimSpace(agentName) == "" {
 		return ""
 	}
 	baseURL := resolveAppBaseURL()
 	if baseURL == "" && allowNetworkFallback {
-		if cfg, err := cdm.Get(); err == nil && cfg.Api.BaseURL != "" {
-			baseURL = cfg.Api.BaseURL
-		}
+		baseURL = resolveBackendURL()
 	}
 	if baseURL == "" {
 		return ""

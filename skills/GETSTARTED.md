@@ -309,10 +309,15 @@ Consumer Projects & Trigger / Client Code.
 cd <your-agent-name> && blocks dashboard
 ```
 
-`blocks dashboard` reads the dashboard URL from the CDM config (or from
-`BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` if either is set), then
-opens the agent's page. To target a non-prod environment, export the
-env var before invoking:
+`blocks dashboard` reads the dashboard URL from `BLOCKS_APP_BASE_URL` /
+`BLOCKS_DASHBOARD_URL` (or the active profile's dashboard origin) if
+set, otherwise from the active deployment — `BLOCKS_BACKEND_URL`, the
+active profile's backend, or the CDM config — then opens the agent's
+page on the deployment you're targeting. When `BLOCKS_BACKEND_URL`
+points at a different backend than the active profile was logged into,
+the profile's cached dashboard origin is skipped so the link follows
+`BLOCKS_BACKEND_URL`. To target a non-prod environment, export the env
+var before invoking:
 
 ```bash
 BLOCKS_APP_BASE_URL=https://staging.blocks.ai blocks dashboard

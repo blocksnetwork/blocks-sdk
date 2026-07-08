@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -181,6 +182,17 @@ func currentIntendedBackendURL() (string, error) {
 	return resolveWebappBackendURL("", "")
 }
 
+// resolveAppBaseURL resolves an explicit dashboard origin (empty if none).
+// Precedence: BLOCKS_APP_BASE_URL → BLOCKS_DASHBOARD_URL → active profile
+// DashboardBaseURL. The two env vars are the caller's direct intent and always
+// win. The profile's stored DashboardBaseURL is trusted only when it still
+// describes the deployment being targeted: if BLOCKS_BACKEND_URL is set and
+// diverges from the profile's own BaseURL, the caller is publishing to a
+// different backend than the one the profile was logged into, so the saved
+// dashboard origin is stale and is skipped — the caller then falls back to
+// resolveBackendURL(), which honors BLOCKS_BACKEND_URL. Without this guard a
+// publish to deployment B via BLOCKS_BACKEND_URL would still open deployment
+// A's dashboard (BLOCKS-563).
 func resolveAppBaseURL() string {
 	if v := strings.TrimSpace(os.Getenv(blocksAppBaseURLEnv)); v != "" {
 		return v
@@ -188,10 +200,51 @@ func resolveAppBaseURL() string {
 	if v := strings.TrimSpace(os.Getenv(blocksDashboardURLEnv)); v != "" {
 		return v
 	}
-	if _, p, err := profiles.Active(); err == nil && p.DashboardBaseURL != "" {
+	if _, p, err := profiles.Active(); err == nil && p.DashboardBaseURL != "" && !backendOverrideDivergesFromProfile(p) {
 		return p.DashboardBaseURL
 	}
 	return ""
+}
+
+// backendOverrideDivergesFromProfile reports whether BLOCKS_BACKEND_URL is set
+// to a different deployment than the profile's own BaseURL. When it does, the
+// profile's cached dashboard origin no longer describes the targeted backend.
+// An unset override, or one whose normalized base URL matches the profile's
+// BaseURL, is not a divergence. Comparison normalizes scheme/host case,
+// default ports (:443/:80), and trailing slashes, but KEEPS the path: the CLI
+// uses BaseURL as a full request prefix (`BaseURL + "/api/v1/..."`), so
+// same-host path-prefixed deployments (e.g. `https://host/tenant-a` vs
+// `/tenant-b`) are distinct. An override that fails to parse is treated as a
+// divergence (fail safe toward the backend fallback).
+func backendOverrideDivergesFromProfile(p *profiles.Profile) bool {
+	override := strings.TrimSpace(os.Getenv("BLOCKS_BACKEND_URL"))
+	if override == "" {
+		return false
+	}
+	ov := normalizedBaseURL(override)
+	return ov == "" || ov != normalizedBaseURL(p.BaseURL)
+}
+
+// normalizedBaseURL parses raw into a comparable "scheme://host[:port][/path]"
+// base URL: scheme/host lowercased, the scheme's default port (443 for https,
+// 80 for http) dropped, and any trailing slash on the path trimmed. The path is
+// retained so path-prefixed multi-tenant deployments compare as distinct.
+// Returns "" when raw has no parseable host.
+func normalizedBaseURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return scheme + "://" + host + strings.TrimRight(u.EscapedPath(), "/")
 }
 
 func resolveClientID() string {
