@@ -24,14 +24,8 @@ const (
 )
 
 func resolveBackendURL() string {
-	if v := os.Getenv("BLOCKS_BACKEND_URL"); v != "" {
+	if v := resolveBackendURLOffline(); v != "" {
 		return v
-	}
-	if _, p, err := profiles.Active(); err == nil && p.BaseURL != "" {
-		return p.BaseURL
-	}
-	if defaultBackendURL != "" {
-		return defaultBackendURL
 	}
 	cfg, err := cdm.Get()
 	if err != nil {
@@ -40,6 +34,24 @@ func resolveBackendURL() string {
 	}
 	if cfg.Api.BaseURL != "" {
 		return cfg.Api.BaseURL
+	}
+	return ""
+}
+
+// resolveBackendURLOffline resolves the backend origin from the tiers that need
+// no network round-trip: BLOCKS_BACKEND_URL → active profile BaseURL → ldflag
+// default. Returns "" when none is set, leaving the (network-dependent) CDM
+// fetch to resolveBackendURL. Split out so callers that must not stall on a CDM
+// fetch (e.g. non-interactive publish) can still use the offline tiers.
+func resolveBackendURLOffline() string {
+	if v := os.Getenv("BLOCKS_BACKEND_URL"); v != "" {
+		return v
+	}
+	if _, p, err := profiles.Active(); err == nil && p.BaseURL != "" {
+		return p.BaseURL
+	}
+	if defaultBackendURL != "" {
+		return defaultBackendURL
 	}
 	return ""
 }

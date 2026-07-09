@@ -755,20 +755,24 @@ func publishedAgentURL(respBody []byte, agentName string, allowNetworkFallback b
 
 // agentAppURL builds the dashboard URL for an agent. Resolution order:
 // BLOCKS_APP_BASE_URL / BLOCKS_DASHBOARD_URL → active profile DashboardBaseURL
-// (all via resolveAppBaseURL) → the deployment origin from resolveBackendURL
-// (BLOCKS_BACKEND_URL → active profile BaseURL → ldflag default → CDM), the
-// last tier only when allowNetworkFallback is true. Routing the fallback
-// through resolveBackendURL is what keeps the "View" link on the deployment
-// the publish actually targeted instead of always stock https://app.blocks.ai
-// (BLOCKS-563). In production CDM returns the app origin; in local dev where
-// frontend and backend are split, set BLOCKS_APP_BASE_URL to the frontend
-// origin. The network-dependent fallback is skipped in non-interactive mode to
-// avoid a potential 21s timeout stall in CI/offline environments.
+// (all via resolveAppBaseURL) → the deployment origin's offline tiers
+// (BLOCKS_BACKEND_URL → active profile BaseURL → ldflag default) → CDM. Routing
+// the fallback through the deployment origin is what keeps the "View" link on
+// the deployment the publish actually targeted instead of always stock
+// https://app.blocks.ai (BLOCKS-563). Only the CDM tier depends on the network,
+// so only it is gated behind allowNetworkFallback — a non-interactive publish
+// with BLOCKS_BACKEND_URL (or a profile / ldflag default) set still gets a View
+// link, while CI/offline environments avoid a potential 21s CDM timeout stall.
+// In production CDM returns the app origin; in local dev where frontend and
+// backend are split, set BLOCKS_APP_BASE_URL to the frontend origin.
 func agentAppURL(agentName string, allowNetworkFallback bool) string {
 	if strings.TrimSpace(agentName) == "" {
 		return ""
 	}
 	baseURL := resolveAppBaseURL()
+	if baseURL == "" {
+		baseURL = resolveBackendURLOffline()
+	}
 	if baseURL == "" && allowNetworkFallback {
 		baseURL = resolveBackendURL()
 	}
