@@ -704,10 +704,11 @@ func TestPublishedAgentURLDashboardOverrideWinsOverBackend(t *testing.T) {
 	}
 }
 
-// TestPublishedAgentURLSkipsBackendFallbackWhenNonInteractive verifies the
-// network-dependent deployment fallback stays gated behind allowNetworkFallback
-// so CI/non-interactive publishes never stall on a resolveBackendURL fetch.
-func TestPublishedAgentURLSkipsBackendFallbackWhenNonInteractive(t *testing.T) {
+// TestPublishedAgentURLOfflineTierResolvesWhenNonInteractive verifies the
+// offline deployment tiers (here the active profile BaseURL) still resolve a
+// View link in non-interactive mode — computing it needs no network, so gating
+// them off would needlessly drop the link in CI.
+func TestPublishedAgentURLOfflineTierResolvesWhenNonInteractive(t *testing.T) {
 	restore := isolateProfiles(t)
 	defer restore()
 	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
@@ -718,8 +719,28 @@ func TestPublishedAgentURLSkipsBackendFallbackWhenNonInteractive(t *testing.T) {
 	t.Setenv("BLOCKS_BACKEND_URL", "")
 
 	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", false)
+	want := "https://blocks.acme.com/agents/test_agent"
+	if got != want {
+		t.Errorf("publishedAgentURL = %q, want %q (offline tier must resolve non-interactively)", got, want)
+	}
+}
+
+// TestPublishedAgentURLSkipsCDMFetchWhenNonInteractive verifies only the
+// network-dependent CDM tier is gated behind allowNetworkFallback: with no
+// offline tier set (no env, no profile BaseURL, no ldflag), a non-interactive
+// call must NOT fall through to a CDM fetch (which could stall in CI/offline).
+func TestPublishedAgentURLSkipsCDMFetchWhenNonInteractive(t *testing.T) {
+	restore := isolateProfiles(t)
+	defer restore()
+	t.Setenv("BLOCKS_APP_BASE_URL", "")
+	t.Setenv("BLOCKS_DASHBOARD_URL", "")
+	t.Setenv("BLOCKS_BACKEND_URL", "")
+	t.Setenv("BLOCKS_CDM_URL", "http://127.0.0.1:1/nonexistent")
+	cdm.Reset()
+
+	got := publishedAgentURL([]byte(`{"status":"ok"}`), "test_agent", false)
 	if got != "" {
-		t.Errorf("publishedAgentURL = %q, want empty string (fallback gated off)", got)
+		t.Errorf("publishedAgentURL = %q, want empty string (CDM fetch must stay gated off)", got)
 	}
 }
 
