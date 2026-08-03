@@ -420,6 +420,7 @@ client = TaskClient.create(
 
 - `billing_mode` is the first positional arg (required) and selects the keyset ('free' → playground, 'paid' → network)
 - Exactly one auth mode: `api_key`, `token_endpoint`, or `token_provider`
+- `rpc_headers: Optional[Dict[str, str]] = None` — optional extra request headers merged onto every RPC call (not the token mint). Merged UNDER SDK-owned headers, so a caller cannot override `Authorization`, `Content-Type`, `Blocks-Protocol-Version`, or `X-Write-Affinity` (case-insensitive). Request metadata, not auth; the canonical dashboard use is `X-Active-Org` to scope a multi-org user's submission to the agent's owning org.
 - Does not call `load_dotenv()` -- caller manages env vars
 - Synchronous (no `await`)
 

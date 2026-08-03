@@ -447,6 +447,7 @@ class TaskClient:
         agent_auth: Any = None,
         auth_provider: Optional[AuthProvider] = None,
         anon_fingerprint: Optional[str] = None,
+        rpc_headers: Optional[Dict[str, str]] = None,
     ) -> None:
         if billing_mode not in ("free", "paid"):
             raise ValueError(
@@ -473,6 +474,12 @@ class TaskClient:
         # gate and mints read tokens via the fingerprint-gated public endpoint.
         self._anon_fingerprint: Optional[str] = anon_fingerprint
 
+        # Optional caller-supplied headers merged UNDER SDK-owned headers on
+        # every RPC. Protected headers (Authorization / Content-Type /
+        # protocol version / X-Write-Affinity) are enforced by the rpc-client
+        # merge. Default-off.
+        self._rpc_headers: Optional[Dict[str, str]] = rpc_headers
+
     # -- Factory classmethod ---------------------------------------------------
 
     @classmethod
@@ -488,6 +495,7 @@ class TaskClient:
         token_provider: Optional[Callable[[], Any]] = None,
         on_auth_error: Optional[Callable[[Exception], None]] = None,
         anon_fingerprint: Optional[str] = None,
+        rpc_headers: Optional[Dict[str, str]] = None,
     ) -> "TaskClient":
         """Create a TaskClient from environment variables or CDM config.
 
@@ -644,6 +652,7 @@ class TaskClient:
             auth_provider=auth_provider_instance,
             default_owner_id=default_owner,
             anon_fingerprint=anon_fingerprint,
+            rpc_headers=rpc_headers,
         )
         client._consumer_auth = consumer_auth_instance
         return client
@@ -1077,6 +1086,7 @@ class TaskClient:
             self._subscribe_key, "SendMessage", rpc_params,
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
 
         is_idempotent = result.get("idempotent", False)
@@ -1114,6 +1124,7 @@ class TaskClient:
                     "auth_provider": self._auth_provider,
                     "base_url": self._base_url,
                     "agent_auth": self._agent_auth,
+                    "rpc_headers": self._rpc_headers,
                 },
                 idempotent=True,
                 queued=result.get("queued"),
@@ -1139,6 +1150,7 @@ class TaskClient:
             "auth_provider": self._auth_provider,
             "base_url": self._base_url,
             "agent_auth": self._agent_auth,
+            "rpc_headers": self._rpc_headers,
         }
 
         # Resolve channel: prefer server-provided, fall back to derived.
@@ -1386,6 +1398,7 @@ class TaskClient:
             "base_url": self._base_url,
             "agent_auth": self._agent_auth,
             "auth_provider": self._auth_provider,
+            "rpc_headers": self._rpc_headers,
         }
 
         # Fetch history up front. History is authoritative for session
@@ -1709,6 +1722,7 @@ class TaskClient:
             self._subscribe_key, "GetTask", {"taskId": task_id},
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
         task_data = result.get("task", result) if isinstance(result, dict) else result
         return TaskInfo.from_dict(task_data)
@@ -1732,6 +1746,7 @@ class TaskClient:
             self._subscribe_key, "ListTasks", rpc_params,
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
         tasks = [TaskInfo.from_dict(t) for t in result.get("tasks", [])]
         return ListTasksResult(
@@ -1746,6 +1761,7 @@ class TaskClient:
             self._subscribe_key, "CancelTask", {"taskId": task_id},
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
 
     def pause_task(self, task_id: str) -> None:
@@ -1754,6 +1770,7 @@ class TaskClient:
             self._subscribe_key, "PauseTask", {"taskId": task_id},
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
 
     def resume_task(self, task_id: str) -> None:
@@ -1762,6 +1779,7 @@ class TaskClient:
             self._subscribe_key, "ResumeTask", {"taskId": task_id},
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
 
     def retry_task(self, task_id: str) -> None:
@@ -1770,6 +1788,7 @@ class TaskClient:
             self._subscribe_key, "RetryTask", {"taskId": task_id},
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
 
     def terminate_task(self, task_id: str) -> None:
@@ -1778,6 +1797,7 @@ class TaskClient:
             self._subscribe_key, "TerminateTask", {"taskId": task_id},
             base_url=self._base_url, agent_auth=self._agent_auth,
             auth_provider=self._auth_provider,
+            rpc_headers=self._rpc_headers,
         )
 
     # -- Subscribe helper ---------------------------------------------------

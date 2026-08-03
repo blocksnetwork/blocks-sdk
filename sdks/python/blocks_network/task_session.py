@@ -1041,6 +1041,7 @@ class TaskSession:
             base_url=self._rpc_config.get("base_url"),
             agent_auth=self._rpc_config.get("agent_auth"),
             auth_provider=self._rpc_config.get("auth_provider"),
+            rpc_headers=self._rpc_config.get("rpc_headers"),
         )
 
     def terminate(self) -> None:
@@ -1057,6 +1058,7 @@ class TaskSession:
             base_url=self._rpc_config.get("base_url"),
             agent_auth=self._rpc_config.get("agent_auth"),
             auth_provider=self._rpc_config.get("auth_provider"),
+            rpc_headers=self._rpc_config.get("rpc_headers"),
         )
 
     # -- Cleanup --

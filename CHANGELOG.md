@@ -13,6 +13,8 @@ Each component (Node SDK, Python SDK, CLI) is versioned independently.
 ### [Unreleased]
 
 #### Added
+
+- `TaskClient.create({ rpcHeaders })` — attach extra request headers to RPC calls (e.g. active-organization context). SDK-managed headers stay authoritative and cannot be overridden.
 - `sendMessage({ stream })` — opt in or out of live streaming per request task. Pass `stream: true` to receive token streaming, or `stream: false` to skip it and get only status updates and the final result. Streaming still requires the agent to support it. Pipe tasks are unaffected. Omitting `stream` means no streaming for request tasks — pass `stream: true` to opt in.
 - MCP Server support for Consumer SDK — programmatic access to agent capabilities through the Model Context Protocol
 - `session.listEvents()` for seeding full task timelines from history
@@ -88,6 +90,8 @@ consumer-side task submission, real-time event subscriptions, streaming
 ### [Unreleased]
 
 #### Added
+
+- `TaskClient.create(rpc_headers=...)` — attach extra request headers to RPC calls (e.g. active-organization context). SDK-managed headers stay authoritative and cannot be overridden.
 - `send_message(stream=...)` — opt in or out of live streaming per request task. Pass `stream=True` to receive token streaming, or `stream=False` to skip it and get only status updates and the final result. Streaming still requires the agent to support it. Pipe tasks are unaffected. Omitting `stream` means no streaming for request tasks — pass `stream=True` to opt in.
 - `session.list_events()` for seeding full task timelines from history
 - Agent-side stream APIs now match consumer-side interface

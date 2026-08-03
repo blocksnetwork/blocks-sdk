@@ -23,6 +23,26 @@ export interface RpcClientConfig {
   authProvider?: AuthProvider;
   baseUrl?: string;
   agentAuth?: AgentAuth;
+  /**
+   * Optional caller-supplied request headers merged onto every RPC call.
+   * Request metadata only — NOT an authorization mechanism. Merged UNDER
+   * SDK-owned headers: a caller cannot override `Authorization`,
+   * `Content-Type`, `Blocks-Protocol-Version`, or `X-Write-Affinity`.
+   */
+  rpcHeaders?: Record<string, string>;
+}
+
+export const PROTECTED_RPC_HEADERS = new Set<string>([
+  'authorization',
+  'content-type',
+  PROTOCOL_VERSION_HEADER.toLowerCase(),
+  'x-write-affinity', // SDK-managed routing state; §14b no-fabrication
+]);
+
+export function stripProtectedHeaders(h: Record<string, string>): void {
+  for (const k of Object.keys(h)) {
+    if (PROTECTED_RPC_HEADERS.has(k.toLowerCase())) delete h[k];
+  }
 }
 
 // ============================================================================
@@ -237,10 +257,10 @@ export async function callRpc<T>(
   // agentAuth injects/captures affinity inside authenticatedFetch; we only
   // handle it directly on the non-agentAuth path below.
   const buildHeaders = (includeAffinity: boolean): Record<string, string> => {
-    const h: Record<string, string> = {
-      'Content-Type': 'application/json',
-      [PROTOCOL_VERSION_HEADER]: CURRENT_PROTOCOL_VERSION,
-    };
+    const h: Record<string, string> = { ...(config.rpcHeaders ?? {}) };
+    stripProtectedHeaders(h);
+    h['Content-Type'] = 'application/json';
+    h[PROTOCOL_VERSION_HEADER] = CURRENT_PROTOCOL_VERSION;
     const authHeader = config.authProvider?.getAuthHeader();
     if (authHeader) {
       h['Authorization'] = authHeader;

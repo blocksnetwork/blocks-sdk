@@ -8,6 +8,7 @@ import {
   type RpcClientConfig,
 } from '../src/runtime/rpc-client.js';
 import { StaticAuthProvider } from '../src/runtime/auth-provider.js';
+import { captureAffinity, resetAffinity } from '../src/runtime/write-affinity.js';
 
 describe('rpc-client', () => {
   // ==========================================================================
@@ -122,10 +123,12 @@ describe('rpc-client', () => {
     beforeEach(() => {
       fetchSpy = vi.fn();
       globalThis.fetch = fetchSpy;
+      resetAffinity();
     });
 
     afterEach(() => {
       globalThis.fetch = originalFetch;
+      resetAffinity();
     });
 
     it('falls back to PubNub Functions gateway when baseUrl is missing from config', async () => {
@@ -437,6 +440,117 @@ describe('rpc-client', () => {
         expect(e).toBeInstanceOf(RpcError);
         expect(e).not.toBeInstanceOf(BillingModeMismatchError);
       }
+    });
+
+    it('merges rpcHeaders onto the RPC request', async () => {
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ jsonrpc: '2.0', id: 'x', result: {} }),
+      });
+      const cfg: RpcClientConfig = {
+        subscribeKey: 'sub-c-test-key',
+        baseUrl: 'http://localhost:3001',
+        rpcHeaders: { 'X-Active-Org': 'org-B' },
+      };
+      await callRpc(cfg, 'Method', {});
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(init.headers['X-Active-Org']).toBe('org-B');
+      // SDK-owned headers still present and authoritative.
+      expect(init.headers['Content-Type']).toBe('application/json');
+    });
+
+    it('does not let rpcHeaders override protected headers (case-insensitive)', async () => {
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ jsonrpc: '2.0', id: 'x', result: {} }),
+      });
+      const cfg: RpcClientConfig = {
+        subscribeKey: 'sub-c-test-key',
+        baseUrl: 'http://localhost:3001',
+        authProvider: new StaticAuthProvider('real-jwt'),
+        rpcHeaders: {
+          authorization: 'Bearer FORGED',
+          'Content-Type': 'text/evil',
+          'blocks-protocol-version': '0.0.0-forged',
+        },
+      };
+      await callRpc(cfg, 'Method', {});
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(init.headers['Authorization']).toBe('Bearer real-jwt');
+      expect(init.headers['Content-Type']).toBe('application/json');
+      // The forged lowercase keys must not survive.
+      expect(init.headers['authorization']).toBeUndefined();
+      expect(init.headers['blocks-protocol-version']).toBeUndefined();
+    });
+
+    it('strips a caller-supplied X-Write-Affinity (fetch branch, case-insensitive)', async () => {
+      // §14b: X-Write-Affinity is SDK-managed routing state. A caller MUST NOT
+      // be able to smuggle it via rpcHeaders and force primary-DB routing.
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers(),
+        json: async () => ({ jsonrpc: '2.0', id: 'x', result: {} }),
+      });
+      const cfg: RpcClientConfig = {
+        subscribeKey: 'sub-c-test-key',
+        baseUrl: 'http://localhost:3001',
+        // Capitalized key proves the strip is case-insensitive.
+        rpcHeaders: { 'X-Write-Affinity': '9999999999' },
+      };
+      await callRpc(cfg, 'Method', {});
+      const [, init] = fetchSpy.mock.calls[0];
+      // No stored affinity exists, so no affinity header at all should go out.
+      expect(init.headers['X-Write-Affinity']).toBeUndefined();
+      expect(init.headers['x-write-affinity']).toBeUndefined();
+    });
+
+    it('strips a caller-supplied X-Write-Affinity (agentAuth branch, case-insensitive)', async () => {
+      const authenticatedFetch = vi.fn(async () => ({
+        ok: true,
+        headers: new Headers(),
+        json: async () => ({ jsonrpc: '2.0', id: 'x', result: {} }),
+      }));
+      const cfg: RpcClientConfig = {
+        subscribeKey: 'sub-c-test-key',
+        baseUrl: 'http://localhost:3001',
+        // agentAuth handles affinity inside authenticatedFetch, so the SDK's own
+        // injectAffinity does NOT run here — the strip must still remove it.
+        agentAuth: { authenticatedFetch } as unknown as RpcClientConfig['agentAuth'],
+        rpcHeaders: { 'x-write-affinity': '9999999999', 'X-Write-Affinity': '9999999999' },
+      };
+      await callRpc(cfg, 'Method', {});
+      expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+      const [, init] = authenticatedFetch.mock.calls[0] as unknown as [string, RequestInit];
+      const headers = init.headers as Record<string, string>;
+      expect(headers['X-Write-Affinity']).toBeUndefined();
+      expect(headers['x-write-affinity']).toBeUndefined();
+      // fetch must not have been used on the agentAuth branch.
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('still injects a legit SDK-captured affinity when the caller supplies none (fetch branch)', async () => {
+      const future = String(Math.floor(Date.now() / 1000) + 60);
+      captureAffinity(new Headers({ 'x-write-affinity': future }));
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers(),
+        json: async () => ({ jsonrpc: '2.0', id: 'x', result: {} }),
+      });
+      await callRpc(config, 'Method', {});
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(init.headers['x-write-affinity']).toBe(future);
+    });
+
+    it('sends byte-identical headers when rpcHeaders is omitted (no regression)', async () => {
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ jsonrpc: '2.0', id: 'x', result: {} }),
+      });
+      await callRpc(config, 'Method', {});
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(Object.keys(init.headers).sort()).toEqual(
+        ['Content-Type', 'Blocks-Protocol-Version'].sort(),
+      );
     });
   });
 
