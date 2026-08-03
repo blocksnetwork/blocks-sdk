@@ -92,6 +92,14 @@ export interface TaskClientOptions {
    * viewer flow; non-browser SDK callers should not use this.
    */
   anonFingerprint?: string;
+
+  /**
+   * Optional caller-supplied RPC request headers. Forwarded to callRpc and
+   * merged under SDK-owned headers (cannot override Authorization,
+   * Content-Type, Blocks-Protocol-Version, or X-Write-Affinity). Request
+   * metadata only.
+   */
+  rpcHeaders?: Record<string, string>;
 }
 
 /**
@@ -465,6 +473,7 @@ export class TaskClient {
       authProvider: options.authProvider,
       baseUrl: options.baseUrl,
       agentAuth: options.agentAuth,
+      rpcHeaders: options.rpcHeaders,
     };
     this._pubnub = options.pubnub;
     this._createPubNub = options.createPubNub;
@@ -516,6 +525,7 @@ export class TaskClient {
      * not use this.
      */
     anonFingerprint?: string;
+    rpcHeaders?: Record<string, string>;
   }): Promise<TaskClient> {
     const opts = options ?? {};
     const billingMode = opts.billingMode;
@@ -607,6 +617,7 @@ export class TaskClient {
         baseUrl,
         createSessionPubNub: sessionPubNubFactory,
         defaultOwnerId: consumerAuth.getUserId() ?? undefined,
+        rpcHeaders: opts.rpcHeaders,
       });
       client.config.authProvider = consumerAuth;
       client._consumerAuth = consumerAuth;
@@ -620,6 +631,7 @@ export class TaskClient {
       baseUrl,
       createSessionPubNub: sessionPubNubFactory,
       anonFingerprint: opts.anonFingerprint,
+      rpcHeaders: opts.rpcHeaders,
     });
   }
 

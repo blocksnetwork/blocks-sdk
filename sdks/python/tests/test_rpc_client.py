@@ -177,6 +177,85 @@ class TestCallRpc:
         with pytest.raises(ValueError, match="base_url is required"):
             call_rpc("sub-c-test", "SendMessage", {})
 
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_merges_rpc_headers(self, mock_urlopen):
+        mock_urlopen.return_value = _make_urlopen_response(
+            {"jsonrpc": "2.0", "id": "x", "result": None}
+        )
+        call_rpc(
+            "sub-c-test", "Ping", {}, base_url="http://localhost:3001",
+            rpc_headers={"X-Active-Org": "org-B"},
+        )
+        req = mock_urlopen.call_args[0][0]
+        # urllib title-cases header keys.
+        assert req.headers["X-active-org"] == "org-B"
+        assert req.headers["Content-type"] == "application/json"
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_rpc_headers_cannot_override_protected(self, mock_urlopen):
+        mock_urlopen.return_value = _make_urlopen_response(
+            {"jsonrpc": "2.0", "id": "x", "result": None}
+        )
+        call_rpc(
+            "sub-c-test", "Ping", {}, base_url="http://localhost:3001",
+            auth_provider=StaticAuthProvider("real-jwt"),
+            rpc_headers={
+                "authorization": "Bearer FORGED",
+                "Content-Type": "text/evil",
+            },
+        )
+        req = mock_urlopen.call_args[0][0]
+        assert req.headers["Authorization"] == "Bearer real-jwt"
+        assert req.headers["Content-type"] == "application/json"
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_rpc_headers_cannot_override_write_affinity(self, mock_urlopen):
+        # §14b: X-Write-Affinity is SDK-managed routing state. A caller MUST NOT
+        # be able to smuggle it via rpc_headers and force primary-DB routing.
+        from blocks_network.write_affinity import reset_affinity
+
+        reset_affinity()
+        mock_urlopen.return_value = _make_urlopen_response(
+            {"jsonrpc": "2.0", "id": "x", "result": None}
+        )
+        # Lowercase caller key proves the strip is case-insensitive: inject_affinity
+        # only manages the exact-cased "X-Write-Affinity", so without the protected-set
+        # entry a lowercase caller value would survive on the fetch branch.
+        call_rpc(
+            "sub-c-test", "Ping", {}, base_url="http://localhost:3001",
+            rpc_headers={"x-write-affinity": "9999999999"},
+        )
+        req = mock_urlopen.call_args[0][0]
+        # No stored affinity exists, so no affinity header should be present.
+        # urllib title-cases keys → check the normalized form and the raw forms.
+        assert "X-write-affinity" not in req.headers
+        assert "x-write-affinity" not in req.headers
+        assert "X-Write-Affinity" not in req.headers
+        reset_affinity()
+
+    def test_agent_auth_rpc_headers_cannot_override_write_affinity(self):
+        # agent_auth branch: affinity is managed inside authenticated_request, so
+        # inject_affinity does NOT run here — the strip must still remove a
+        # caller-supplied affinity header (case-insensitive).
+        from blocks_network.write_affinity import reset_affinity
+
+        reset_affinity()
+        captured = {}
+
+        class _FakeAgentAuth:
+            def authenticated_request(self, url, method, body, headers):
+                captured["headers"] = headers
+                return ({"jsonrpc": "2.0", "id": "x", "result": None}, 200)
+
+        call_rpc(
+            "sub-c-test", "Ping", {}, base_url="http://localhost:3001",
+            agent_auth=_FakeAgentAuth(),
+            rpc_headers={"x-write-affinity": "9999999999", "X-Write-Affinity": "9999999999"},
+        )
+        headers = captured["headers"]
+        assert all(k.lower() != "x-write-affinity" for k in headers)
+        reset_affinity()
+
 
 # ============================================================================
 # with_retry

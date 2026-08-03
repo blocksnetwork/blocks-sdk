@@ -144,4 +144,30 @@ describe('TaskClient.create — billingMode parity', () => {
       }),
     ).toThrow("TaskClient requires a billingMode option ('free' or 'paid')");
   });
+
+  it('propagates rpcHeaders to config for a provider-mode client', async () => {
+    const client = await TaskClient.create({
+      billingMode: 'free',
+      subscribeKey: 'sub-c-test',
+      publishKey: 'pub-c-test',
+      baseUrl: 'http://localhost:3001',
+      tokenProvider: async () => ({ token: 'jwt-x', expiresIn: 60 }),
+      rpcHeaders: { 'X-Active-Org': 'org-B' },
+    });
+    // config is private; cast to read it in-test (matches existing test style).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((client as any).config.rpcHeaders).toEqual({ 'X-Active-Org': 'org-B' });
+    client.destroy();
+  });
+
+  it('propagates rpcHeaders to config for an anon-mode client', async () => {
+    const client = await TaskClient.create({
+      anonFingerprint: 'fp-owner',
+      billingMode: 'free',
+      rpcHeaders: { 'X-Active-Org': 'org-C' },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((client as any).config.rpcHeaders).toEqual({ 'X-Active-Org': 'org-C' });
+    client.destroy();
+  });
 });

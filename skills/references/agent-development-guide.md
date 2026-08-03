@@ -557,11 +557,11 @@ npm start  # Terminal 2
 
 ---
 
-## Local SDK Setup
+## SDK Dependency
 
-The `@blocks-network/sdk` package is available locally at
-`blocks-network/` in the project root. Reference it as a file
-dependency:
+The `@blocks-network/sdk` package is published on npm
+(<https://www.npmjs.com/package/@blocks-network/sdk>). Reference it in
+your `package.json` (`blocks init` scaffolds this for you):
 
 ```json
 {
@@ -574,7 +574,7 @@ dependency:
     "check": "blocks check"
   },
   "dependencies": {
-    "@blocks-network/sdk": "file:../blocks-network",
+    "@blocks-network/sdk": "latest",
     "dotenv": "^16.4.5",
     "tsx": "^4.15.7"
   }

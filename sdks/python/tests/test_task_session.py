@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -2209,3 +2210,151 @@ class TestOnTerminalImmediateFire:
         assert "consumer_user_id" not in original_opts
         # The session's internal copy must carry the key.
         assert session._sdk_options["consumer_user_id"] == "usr_xyz"
+
+
+class TestCancelTerminateForwardRpcHeaders:
+    """Regression: cancel()/terminate() forward rpc_headers (e.g. X-Active-Org) from rpc_config, matching Node's whole-config passthrough."""
+
+    def _make_session_with_headers(self, headers):
+        return TaskSession(
+            task_id="task-9",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={"subscribe_key": "sub", "publish_key": "pub"},
+            rpc_config={
+                "subscribe_key": "rpc-sub",
+                "auth_provider": None,
+                "base_url": "http://localhost:3001",
+                "agent_auth": None,
+                "rpc_headers": headers,
+            },
+        )
+
+    @patch("blocks_network.task_session.call_rpc")
+    def test_cancel_forwards_rpc_headers(self, mock_call_rpc) -> None:
+        session = self._make_session_with_headers({"X-Active-Org": "org-B"})
+        session.cancel()
+        assert mock_call_rpc.call_args.kwargs["rpc_headers"] == {"X-Active-Org": "org-B"}
+
+    @patch("blocks_network.task_session.call_rpc")
+    def test_terminate_forwards_rpc_headers(self, mock_call_rpc) -> None:
+        session = self._make_session_with_headers({"X-Active-Org": "org-B"})
+        session.terminate()
+        assert mock_call_rpc.call_args.kwargs["rpc_headers"] == {"X-Active-Org": "org-B"}
+
+    @patch("blocks_network.task_session.call_rpc")
+    def test_cancel_no_headers_is_noop(self, mock_call_rpc) -> None:
+        """When rpc_config carries no rpc_headers, cancel() passes None (default-off)."""
+        session = self._make_session_with_headers(None)
+        session.cancel()
+        assert mock_call_rpc.call_args.kwargs["rpc_headers"] is None
+
+    @patch("blocks_network.task_session.call_rpc")
+    def test_cancel_tolerates_legacy_rpc_config_without_key(
+        self, mock_call_rpc
+    ) -> None:
+        """An older rpc_config shape (no rpc_headers key) must not KeyError -- .get() yields None."""
+        session = TaskSession(
+            task_id="task-9",
+            owner_id="alice",
+            read_token=None,
+            agent_name="echo",
+            pubnub=_make_mock_pubnub(),
+            sdk_options={"subscribe_key": "sub", "publish_key": "pub"},
+            rpc_config={
+                "subscribe_key": "rpc-sub",
+                "auth_provider": None,
+                "base_url": "http://localhost:3001",
+                "agent_auth": None,
+            },
+        )
+        session.cancel()
+        assert mock_call_rpc.call_args.kwargs["rpc_headers"] is None
+
+
+class TestTaskClientBuildsRpcConfigWithHeaders:
+    """The other half of the bug: TaskClient places rpc_headers into the rpc_config handed to each TaskSession (send_message + connect)."""
+
+    @staticmethod
+    def _full_send_response():
+        return {
+            "taskId": "task-123",
+            "idempotent": False,
+            "queued": False,
+            "extensions": {
+                "blocks": {
+                    "streamChannels": {"status": "u.user-1.task-123"},
+                    "readToken": "T4-read-token",
+                }
+            },
+        }
+
+    @patch("blocks_network.task_client.TaskClient._create_session_pubnub")
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_send_message_rpc_config_includes_rpc_headers(
+        self, mock_urlopen, mock_create_pn
+    ) -> None:
+        from blocks_network.task_client import TaskClient
+
+        body = json.dumps(
+            {"jsonrpc": "2.0", "id": "x", "result": self._full_send_response()}
+        ).encode("utf-8")
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        mock_create_pn.return_value = _make_mock_pubnub()
+
+        client = TaskClient(
+            subscribe_key="sub-c-test",
+            billing_mode="free",
+            base_url="http://localhost:3001",
+            rpc_headers={"X-Active-Org": "org-B"},
+        )
+        session = client.send_message(
+            agent_name="agent-b",
+            request_parts=[{"type": "text", "text": "Hello"}],
+            owner_id="user-1",
+        )
+
+        assert session._rpc_config is not None
+        assert session._rpc_config.get("rpc_headers") == {"X-Active-Org": "org-B"}
+        session.close()
+
+    @patch("blocks_network.task_client.call_rpc")
+    def test_connect_rpc_config_includes_rpc_headers(self, mock_rpc) -> None:
+        from blocks_network.auth_provider import StaticAuthProvider
+        from blocks_network.task_client import TaskClient
+
+        mock_rpc.return_value = {
+            "task": {
+                "taskId": "task-1",
+                "agentName": "echo",
+                "owner": "alice",
+                "state": "completed",
+            },
+        }
+
+        client = TaskClient(
+            subscribe_key="sub-key",
+            billing_mode="free",
+            auth_provider=StaticAuthProvider("jwt-token"),
+            base_url="http://localhost:3000",
+            rpc_headers={"X-Active-Org": "org-B"},
+        )
+
+        mock_pn = _make_mock_pubnub()
+        with patch.object(client, "_create_session_pubnub", return_value=mock_pn), \
+             patch.object(client, "_fetch_task_read_token", return_value={
+                 "pamToken": "t4-fresh",
+                 "channel": "u.org1.task-1",
+                 "ttlMinutes": 60,
+             }):
+            session = client.connect("task-1")
+
+        assert session._rpc_config is not None
+        assert session._rpc_config.get("rpc_headers") == {"X-Active-Org": "org-B"}

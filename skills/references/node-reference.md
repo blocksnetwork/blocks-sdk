@@ -477,6 +477,7 @@ const client = await TaskClient.create({
 
 - `billingMode` is required ('free' → playground keyset, 'paid' → network keyset) and must match the target agent's server-derived billingMode (exception: authenticated same-org callers are exempt from this check). Read it from the registry: `(await getAgent(name)).billingMode`.
 - Exactly one auth mode: `apiKey`, `tokenEndpoint`, or `tokenProvider`
+- `rpcHeaders?: Record<string, string>` — optional extra request headers merged onto every RPC call (not the token mint). Merged UNDER SDK-owned headers, so a caller cannot override `Authorization`, `Content-Type`, `Blocks-Protocol-Version`, or `X-Write-Affinity` (case-insensitive). Request metadata, not auth; the canonical dashboard use is `X-Active-Org` to scope a multi-org user's submission to the agent's owning org.
 - Returns `Promise<TaskClient>`
 
 ---

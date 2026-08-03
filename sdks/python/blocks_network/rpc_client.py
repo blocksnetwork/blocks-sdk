@@ -28,6 +28,31 @@ from .write_affinity import capture_affinity, inject_affinity
 T = TypeVar("T")
 
 # ============================================================================
+# RPC header merge
+# ============================================================================
+
+# SDK-owned headers that caller-supplied ``rpc_headers`` may never override.
+# Compared case-insensitively (via ``.lower()``) so no casing of a caller key
+# can slip a forged Authorization / Content-Type / protocol-version header
+# past the SDK-owned base. Parity with Node ``rpc-client``.
+_PROTECTED_RPC_HEADERS = {
+    "authorization",
+    "content-type",
+    PROTOCOL_VERSION_HEADER.lower(),
+    "x-write-affinity",  # SDK-managed routing state; §14b no-fabrication
+}
+
+
+def _merge_rpc_headers(base: Dict[str, str], extra: Optional[Dict[str, str]]) -> Dict[str, str]:
+    merged = {
+        k: v for k, v in (extra or {}).items()
+        if k.lower() not in _PROTECTED_RPC_HEADERS
+    }
+    merged.update(base)  # SDK-owned base wins
+    return merged
+
+
+# ============================================================================
 # RPC Error
 # ============================================================================
 
@@ -213,6 +238,7 @@ def call_rpc(
     base_url: Optional[str] = None,
     agent_auth: Any = None,
     auth_provider: Any = None,
+    rpc_headers: Optional[Dict[str, str]] = None,
 ) -> Any:
     """Send a JSON-RPC 2.0 request to the PubNub Functions RPC gateway.
 
@@ -260,24 +286,28 @@ def call_rpc(
                 url,
                 method="POST",
                 body=rpc_payload,
-                headers={
-                    "Content-Type": "application/json",
-                    PROTOCOL_VERSION_HEADER: CURRENT_PROTOCOL_VERSION,
-                },
+                headers=_merge_rpc_headers(
+                    {
+                        "Content-Type": "application/json",
+                        PROTOCOL_VERSION_HEADER: CURRENT_PROTOCOL_VERSION,
+                    },
+                    rpc_headers,
+                ),
             )
             return _parse_rpc_response(resp_data)
 
         return with_retry(_do_auth_request)
 
     def _build_headers() -> Dict[str, str]:
-        hdrs: Dict[str, str] = {
+        base: Dict[str, str] = {
             "Content-Type": "application/json",
             PROTOCOL_VERSION_HEADER: CURRENT_PROTOCOL_VERSION,
         }
         if auth_provider is not None:
             auth_header = auth_provider.get_auth_header()
             if auth_header:
-                hdrs["Authorization"] = auth_header
+                base["Authorization"] = auth_header
+        hdrs = _merge_rpc_headers(base, rpc_headers)
         inject_affinity(hdrs)
         return hdrs
 
