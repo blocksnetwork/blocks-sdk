@@ -135,6 +135,13 @@ func TestInviteSendSuccess(t *testing.T) {
 	}
 }
 
+func TestInviteListHelpDescribesUnacceptedInvitations(t *testing.T) {
+	const want = "List unaccepted invitations for a private agent"
+	if got := inviteListCmd.Short; got != want {
+		t.Errorf("invite list help = %q, want %q", got, want)
+	}
+}
+
 func TestInviteListEmpty(t *testing.T) {
 	cleanup := setupFakeCredentials(t)
 	defer cleanup()
@@ -156,8 +163,8 @@ func TestInviteListEmpty(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(output, "No pending invitations.") {
-		t.Errorf("output = %q, want 'No pending invitations.'", output)
+	if !strings.Contains(output, "No unaccepted invitations.") {
+		t.Errorf("output = %q, want 'No unaccepted invitations.'", output)
 	}
 }
 

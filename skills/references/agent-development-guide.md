@@ -148,7 +148,7 @@ invite`:
 ```bash
 blocks invite send <agentName> --email user@example.com   # invite a user
 blocks invite send <agentName> --org consumer-org-slug    # invite an org
-blocks invite list <agentName>                            # list pending invitations
+blocks invite list <agentName>                            # list unaccepted invitations, including expired
 blocks invite grants <agentName>                          # list active grants
 blocks invite revoke <agentName> --email user@example.com # revoke a user grant
 blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org grant

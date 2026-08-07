@@ -57,7 +57,7 @@ var inviteSendCmd = &cobra.Command{
 
 var inviteListCmd = &cobra.Command{
 	Use:   "list <agentName>",
-	Short: "List pending invitations for a private agent",
+	Short: "List unaccepted invitations for a private agent",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInviteList(args[0])
@@ -187,7 +187,7 @@ func runInviteList(agentName string) error {
 	}
 
 	if len(result.Invitations) == 0 {
-		fmt.Println("No pending invitations.")
+		fmt.Println("No unaccepted invitations.")
 		return nil
 	}
 
