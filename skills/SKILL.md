@@ -5,7 +5,7 @@ metadata:
   author: blocks-network
   version: "0.3.0"
   domain: real-time
-  triggers: blocks, blocks-network, agent, a2a, modify agent, update agent, change agent, fix agent, edit agent, deploy agent, connect agent, register agent, publish agent, republish, streaming agent, consumer, consume agent, call agent, task client, taskclient, trigger script, invite, private agent, agent card, io schema, runtime config, blocks cli, troubleshoot, pitfall, blocks login, blocks register, blocks publish, blocks check, blocks dashboard
+  triggers: blocks, blocks-network, agent, a2a, modify agent, update agent, change agent, fix agent, edit agent, deploy agent, connect agent, register agent, publish agent, republish, streaming agent, consumer, consume agent, call agent, task client, taskclient, trigger script, invite, private agent, agent card, io schema, runtime config, blocks cli, troubleshoot, pitfall, blocks login, headless login, docker login, blocks register, blocks publish, blocks check, blocks dashboard
   role: specialist
   scope: implementation
   output-format: code
@@ -58,7 +58,7 @@ guidance) and [IO Schema Reference] (input/output rules).
 ## Section Index
 
 - [Required Reading: the Agent Card Schema](#required-reading-the-agent-card-schema) -- **read first** -- canonical, enforced `agent-card.json` structure
-- [CLI Reference](#cli-reference) -- install, login, whoami, run, check, dashboard, env overrides
+- [CLI Reference](#cli-reference) -- install, login (+ headless), whoami, run, check, dashboard, env overrides
 - [Agent Card Reference](#agent-card-reference) -- runtime config, optional fields
 - [IO Schema Rules](#io-schema-rules) -- transport classes, examples, drafting from a handler
 - [Streaming Agents](#streaming-agents) -- direction/format matrix, handler I/O, consumer I/O
@@ -117,6 +117,42 @@ write `.env`. Pass the flag explicitly so the outcome is deterministic:
   `.env`).
 - `--dir <name>` points `--write-env` at the named project's `.env`
   when invoking from a parent directory.
+
+### Login in containerized / headless environments
+
+`blocks login` waits for the OAuth callback on
+`http://127.0.0.1:8787/callback`. In Docker, SSH, a cloud VM, or an
+agent sandbox, that address is the *container's* loopback --
+unreachable from the user's browser, so login hangs, then times out.
+
+**Path A -- browser relay** (interactive user who has a browser). The
+authorize URL is printed *before* the browser-open attempt, so it is
+usable even where no browser exists.
+
+1. Inside the container: `blocks login --write-env --dir <project> &`
+   (`blocks: command not found` after `npm i -g` means the install dir
+   is off `PATH` -- `export PATH="$HOME/.blocks/bin:$PATH"` first.)
+2. Open the printed `.../api/auth/oauth2/authorize?...` URL (default
+   deployment: `https://app.blocks.ai/...`) and authenticate.
+3. The redirect to `http://127.0.0.1:8787/callback?code=...` fails to
+   load -- **expected**. Copy it from the address bar and run, *inside
+   the container*: `curl -s "<callback-url>"`
+4. The CLI finishes the exchange and writes `BLOCKS_API_KEY`. Verify
+   with `blocks whoami`.
+
+Path A fails if: more than 5 minutes elapse (`authorization timed out
+— no callback received within 5 minutes`); the `curl` runs outside the
+container (the listener binds `127.0.0.1` only); or the URL is from an
+earlier attempt (`state mismatch`).
+
+**Path B -- pre-obtained API key** (CI / scripted / no user present):
+
+```bash
+echo "<key>" | blocks login --api-key-stdin --write-env --dir <project>
+```
+
+Mint the key at `https://app.blocks.ai/manage/api-keys`. The same flags
+work on `blocks register` / `blocks publish`.
 
 ### Verify or revoke credentials
 
@@ -502,7 +538,7 @@ When `--listing private` is set, the agent is invite-only. Use the
 |---|---|
 | `blocks invite send <agentName> --email <email>` | Invite a specific user by email. |
 | `blocks invite send <agentName> --org <slug>` | Invite an entire consumer organization by slug. `--email` and `--org` are mutually exclusive. |
-| `blocks invite list <agentName>` | List pending invitations for the agent. |
+| `blocks invite list <agentName>` | List unaccepted invitations for the agent, including expired invitations. |
 | `blocks invite grants <agentName>` | List active grants (users + orgs that already have access). |
 | `blocks invite revoke <agentName> --email <email>` | Revoke a user grant. |
 | `blocks invite revoke <agentName> --org <slug-or-id>` | Revoke an org grant. |
@@ -922,6 +958,7 @@ is already terminal (live-only data is gone; artifacts persist).
 | `blocks publish` hangs after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. See [Registering & Publishing → Non-interactive publish flags](#non-interactive-publish-flags). |
 | `blocks invite send` returns `either --email or --org is required` (or 4xx) | The two flags are required and mutually exclusive -- pass exactly one. |
 | Bare `blocks login` finishes but `BLOCKS_API_KEY` is missing in `.env` | Non-TTY auto-detection skipped the write-env prompt. Re-run with explicit `--write-env` (and `--dir <name>` if invoking from a parent directory). |
+| `blocks login` never completes in Docker/SSH/a cloud VM | Callback goes to `127.0.0.1:8787` *inside* the container. See [Login in containerized / headless environments](#login-in-containerized--headless-environments). |
 
 ## References
 
