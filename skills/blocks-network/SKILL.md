@@ -18,8 +18,8 @@ reference** for working with Blocks agents that already exist or for
 looking up Blocks features. Jump to the section that matches what the
 user is asking for.
 
-**Building a brand-new agent from nothing?** Stop and use the
-**`blocks-getstarted`** skill (`GETSTARTED.md`). This skill covers
+**Building a brand-new agent from nothing?** Stop and activate the
+**`blocks-getstarted`** skill. This skill covers
 everything *after* the first build: modifying, deploying existing code,
 streaming, calling agents from scripts, invite management, publishing
 flags, troubleshooting.
@@ -35,8 +35,8 @@ user explicitly requests it. For Python, see [Python Reference].
 runs inside a coding assistant -- there is no interactive terminal for
 `blocks` CLI prompts, and product decisions (agent name, description,
 ambiguous directory) must be confirmed via the host's question tool
-(`AskUserQuestion` in Claude Code). The full plumbing rules live in
-`GETSTARTED.md` → Asking the User Questions / No TTY available --
+(`AskUserQuestion` in Claude Code). The full plumbing rules live in the
+`blocks-getstarted` skill → Asking the User Questions / No TTY available --
 treat that copy as authoritative and follow it.
 
 ## Required Reading: the Agent Card Schema
@@ -67,7 +67,7 @@ guidance) and [IO Schema Reference] (input/output rules).
 - [Deploying Code You've Already Written](#deploying-code-youve-already-written) -- locate, draft missing card, publish
 - [Consumer Projects & Trigger / Client Code](#consumer-projects--trigger--client-code) -- calling agents from scripts/apps
 - [Common Pitfalls](#common-pitfalls) -- error → cause lookup
-- [References](#references) -- external doc index
+- [References](#references) -- bundled reference index
 
 ## CLI Reference
 
@@ -267,7 +267,7 @@ Populate `tags[].examples` whenever possible — they power the dashboard
 "Try it" UI and help consumers understand agent capabilities.
 
 For full handler signatures, project structure, and trigger-script
-shape, see [Agent Card Reference] (external).
+shape, see the bundled [Agent Card Reference].
 
 ## IO Schema Rules
 
@@ -944,7 +944,7 @@ is already terminal (live-only data is gone; artifacts persist).
 
 | Symptom | Likely cause |
 |---|---|
-| User says "I want to build my first Blocks agent" | Wrong skill -- this one is for managing existing agents. Switch to `blocks-getstarted` (`GETSTARTED.md`). |
+| User says "I want to build my first Blocks agent" | Wrong skill -- this one is for managing existing agents. Switch to the `blocks-getstarted` skill. |
 | `BillingModeMismatchError` on `sendMessage` | `TaskClient.create({ billingMode })` does not match the agent's registered billingMode. Read it from the registry: `(await getAgent(name)).billingMode`. |
 | `AuthRefreshFailedError` on the next `TaskClient` call | Background token refresh failed 3 times AND the per-call preflight's reactive-recovery attempt also failed (expired/revoked API key, broken token endpoint, persistent outage). Re-create the `TaskClient` with valid credentials, or register `onAuthError` for proactive re-auth UX. A transient outage that recovers before the preflight runs is handled silently and the call proceeds. |
 | Pipe task rejected at `sendMessage` | Missing `duration`, `duration` not an integer in `[1, 43200]` (minutes), or `duration` set on a non-pipe task. |
@@ -968,7 +968,7 @@ is already terminal (live-only data is gone; artifacts persist).
 - [Node Reference] -- handler patterns, streaming, agent-to-agent, TaskClient, env vars, CLI commands, deployment
 - [Python Reference] -- Python handler signature, snake_case APIs, run/test commands (use only when user requests Python)
 - [SDK Contract §8.6.4h] -- Embedded Auth (third-party page) consumer pattern: popup handshake, refresh, sign-out, error envelopes
-- [Agent Development Guide] -- narrative walkthrough of the build / publish / run flow; useful for first-time agent authors as a companion to `GETSTARTED.md`
+- [Agent Development Guide] -- narrative walkthrough of the build / publish / run flow; useful for first-time agent authors as a companion to the `blocks-getstarted` skill
 
 [Agent Card Schema]: https://config.blocks.ai/references/agent-card.schema.json
 [Agent Card Reference]: https://config.blocks.ai/references/agent-card-reference.md

@@ -91,7 +91,7 @@ agent's metadata. Run with `blocks run`.
 canonical schema. Before authoring a card, read:
 
 - [`schemas/agent-card.schema.json`](../../schemas/agent-card.schema.json) — the JSON Schema used to validate publishable agent cards.
-- [`skills/references/io-schema-reference.md`](../../skills/references/io-schema-reference.md) — form / text / file transport classes, form-class `schema` keyword allow-list, default values.
+- [`skills/blocks-network/references/io-schema-reference.md`](../../skills/blocks-network/references/io-schema-reference.md) — form / text / file transport classes, form-class `schema` keyword allow-list, default values.
 
 Summary rules: every `io.inputs[]` entry MUST declare `description`;
 `contentType` MUST be lowercase canonical form; form-class inputs MUST

@@ -1,5 +1,13 @@
 {
   "name": "blocks-sdk",
   "private": true,
-  "workspaces": ["sdks/node", "examples/node/*", "embed-auth"]
+  "scripts": {
+    "check:agent-distribution": "node scripts/check-agent-distribution.mjs",
+    "test:agent-distribution": "node --test scripts/check-agent-distribution.test.mjs"
+  },
+  "workspaces": [
+    "sdks/node",
+    "examples/node/*",
+    "embed-auth"
+  ]
 }

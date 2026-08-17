@@ -73,7 +73,7 @@ descriptors). On every `io.inputs[]` entry, **required**: `id`,
 `description`, `example`, `schema`. Per-class invariants on inputs
 (form requires `schema` and `example`; text and file forbid `schema`;
 only file allows `accept` and `maxSizeBytes`) are enforced at
-registration; see `skills/references/io-schema-reference.md` for the
+registration; see `io-schema-reference.md` for the
 detailed rules. `contentType` values must be in canonical lowercase
 MIME form with no `;` parameters; the schema accepts a curated
 catalog plus `text|image|audio|video/*` family wildcards and
