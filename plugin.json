@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "blocks-network",
+  "version": "0.3.0",
+  "description": "Build, deploy, manage, and call Blocks Network agents.",
+  "author": {
+    "name": "Blocks Network",
+    "url": "https://blocks.ai"
+  },
+  "homepage": "https://blocks.ai",
+  "repository": "https://github.com/blocksnetwork/blocks-sdk",
+  "keywords": ["agents", "a2a", "blocks-network", "pubnub"]
+}

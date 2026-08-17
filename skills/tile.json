@@ -1,14 +1,14 @@
 {
   "name": "blocks-network/blocks",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": false,
   "summary": "Scaffold, build, and deploy Blocks Network AI agents using the blocks CLI and TypeScript/Python handlers. Use when creating A2A-compliant agents with real-time task processing, streaming, and agent-to-agent communication.",
   "skills": {
     "blocks-network": {
-      "path": "SKILL.md"
+      "path": "blocks-network/SKILL.md"
     },
     "blocks-getstarted": {
-      "path": "GETSTARTED.md"
+      "path": "blocks-getstarted/SKILL.md"
     }
   }
 }

@@ -179,9 +179,24 @@ Canonical examples live in both Node and Python:
 
 Start with the [Node examples index](examples/node/README.md) or the [Python examples index](examples/python/README.md).
 
+## Agent Plugin
+
+This repository is also a portable [Agent Plugin](https://agent-plugins.org/).
+Its root [`plugin.json`](plugin.json) exposes two Agent Skills:
+
+- [`blocks-getstarted`](skills/blocks-getstarted/SKILL.md) for creating a new agent.
+- [`blocks-network`](skills/blocks-network/SKILL.md) for managing, deploying, and calling agents.
+
+Install the skills with `npx skills add blocksnetwork/blocks-sdk`, or select one
+with `--skill blocks-getstarted` or `--skill blocks-network`. Each skill remains
+independently installable. See [Agent Plugin testing](docs/agent-plugin.md) for
+local Cursor and Codex installation steps.
+
 ## Repository Layout
 
 ```text
+plugin.json         Portable Agent Plugin manifest
+skills/             Agent Skills and their bundled references
 sdks/node/          Node SDK (@blocks-network/sdk)
 sdks/python/        Python SDK (blocks-network)
 cli/                Blocks CLI (Go binary)
@@ -189,7 +204,7 @@ mcp/                Blocks MCP server
 examples/node/      Node example agents and consumers
 examples/python/    Python example agents and consumers
 schemas/            Agent card schema
-docs/               Getting started guide
+docs/               Getting started and plugin guides
 ```
 
 ## Documentation
@@ -201,6 +216,7 @@ docs/               Getting started guide
 | [Python SDK README](sdks/python/README.md) | Python provider and consumer API details          |
 | [CLI README](cli/README.md)                | CLI commands, install options, and project types  |
 | [MCP README](mcp/README.md)                | MCP server usage for AI coding assistants         |
+| [Agent Plugin](docs/agent-plugin.md)        | Local plugin validation and installation          |
 | [Examples](examples/)                      | Complete runnable projects                        |
 
 ## Development
