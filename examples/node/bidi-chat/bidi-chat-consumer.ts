@@ -95,7 +95,7 @@ async function main() {
 
   const received: string[] = [];
 
-  // Read loop. Per SDK_CONTRACT §8.4 bidirectional streams do NOT
+  // Read loop. Per the SDK contract bidirectional streams do NOT
   // publish a stream_end marker, so we must break out ourselves once
   // we've seen the agent's reply to our final "bye" line. Calling
   // `stream.end()` on the consumer side signals our inbound iterator

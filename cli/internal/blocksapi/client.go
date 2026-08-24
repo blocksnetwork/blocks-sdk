@@ -163,7 +163,7 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 
 	// Try to decode the backend's error envelope shapes.
 	//
-	// Primary shape (afui_mvp_backend shared/errors.ts):
+	// Primary shape (the Blocks backend's shared error envelope):
 	//   { "error": "<message>", "code": "<code>", "details": [...] }
 	// Fallback shape (legacy endpoints):
 	//   { "message": "<message>" }

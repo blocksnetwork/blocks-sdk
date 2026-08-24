@@ -13,7 +13,7 @@ import type { HandlerResult, StartTaskMessage, TaskContext } from '@blocks-netwo
  *                                   { ctrl: 'pause' | 'resume' } on a bidi
  *                                   control stream and park the work loop.
  *   - retry   (consumer-composed)   NOT done here — task state is in-memory
- *                                   only (SDK_CONTRACT §17), so retry is a
+ *                                   only, so retry is a
  *                                   consumer resubmit. This handler stays
  *                                   idempotent and honors a `failOnce` flag so
  *                                   the consumer can drive a failed→completed

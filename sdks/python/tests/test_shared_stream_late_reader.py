@@ -1,5 +1,5 @@
 """Late-reader broadcast resilience test for shared streams
-(SHARED_STREAM_LIFECYCLE_IMPL Code Changes §12b).
+(shared-stream lifecycle).
 
 Scenario:
 
@@ -170,7 +170,7 @@ def _simulate_cached_message(
 
 
 class TestSharedStreamLateReader:
-    """§12b: writer-side end() on shared stream does not publish
+    """Writer-side end() on shared stream does not publish
     stream_end, and a late-subscribing reader does not exit on a cached
     marker."""
 

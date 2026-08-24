@@ -43,7 +43,7 @@ function createMockPubNub() {
     subscribedChannels,
     // When `timetoken` is omitted, auto-increment a unique token so repeated
     // fixture deliveries don't get dedup-suppressed by TaskSession's
-    // timetoken-based dedup (SDK_CONTRACT §10.4.1a / Family E).
+    // timetoken-based dedup at the cache-replay layer.
     _simulateMessage(channel: string, message: unknown, timetoken?: string) {
       const tt = timetoken ?? `sim-${++simCounter}`;
       for (const l of listeners) {

@@ -88,7 +88,7 @@ class TestTaskSession:
         assert not session.is_closed
         pn.subscribe.assert_called()
         # Verify cached-message retrieval via timetoken 1000
-        # (SDK_CONTRACT §10.4.1a: 1000 replays everything still in the
+        # (1000 replays everything still in the
         # channel's in-memory cache; 0 would mean "no catch-up").
         sub_chain = pn.subscribe.return_value
         sub_chain.with_timetoken.assert_called_with(1000)
@@ -1352,7 +1352,7 @@ class TestAutoDrain:
 
 
 class TestConfigurableDrainWindow:
-    """Family F: drain_window_s is configurable; default is 30.0s."""
+    """drain_window_s is configurable; default is 30.0s."""
 
     def _make_session(self, pn, **kwargs):
         return TaskSession(
@@ -1425,7 +1425,7 @@ class TestConfigurableDrainWindow:
 
 
 class TestOpenAllStreams:
-    """Family F: open_all_streams returns List[StreamClient] in insertion order."""
+    """open_all_streams returns List[StreamClient] in insertion order."""
 
     def _make_session(self, pn, **kwargs):
         return TaskSession(
@@ -1601,7 +1601,7 @@ class TestOpenAllStreams:
 
 
 class TestTerminalSessionStreamUnavailable:
-    """Family F regression: unopened terminal-session ref.open() still raises
+    """Regression: unopened terminal-session ref.open() still raises
     StreamUnavailableError (merged t7c baseline), and open_all_streams must
     honor that short-circuit by silently skipping those refs."""
 
@@ -1990,14 +1990,14 @@ class TestTerminalStateMutation:
 
 
 class TestSubscribeCacheReplayDedup:
-    """Family E: timetoken-based dedup at the TaskSession dispatch layer.
+    """Timetoken-based dedup at the TaskSession dispatch layer.
 
     Cache replay + live delivery can surface the same PubNub message twice.
     TaskSession._handle_event drops repeats by timetoken before any dispatch
     happens, so ``on_artifact``, ``on_progress``, ``on_terminal``, and
     ``on_event`` callbacks fire exactly once per unique event and
     ``list_artifacts()`` contains each artifact exactly once
-    (SDK_CONTRACT §10.4.1a).
+    (per the cache-replay contract).
     """
 
     def _make_session(self) -> tuple[TaskSession, MagicMock]:

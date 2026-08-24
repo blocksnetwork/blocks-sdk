@@ -27,8 +27,7 @@ export interface PubNubClientConfig {
    * Default: true (parity with the Python SDK). Per-task / ephemeral /
    * per-stream call sites MUST pass `subscribeRetryUnbounded: false`
    * explicitly so they keep the fail-fast retry budget — a stuck task
-   * is preferable to a stuck loop. See dev_docs/SDK_CONTRACT.md
-   * §Cross-SDK retry-budget defaults for the contract.
+   * is preferable to a stuck loop.
    */
   subscribeRetryUnbounded?: boolean;
 }

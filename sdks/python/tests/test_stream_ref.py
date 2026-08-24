@@ -372,7 +372,7 @@ class TestTerminalSessionShortCircuit:
         # Regression: a consumer that opened a stream while the task was
         # running MUST continue to receive the same live StreamClient from
         # open() during the auto-drain window or with auto_drain=False,
-        # per SDK_CONTRACT §8.7.2 "idempotent while active". The terminal
+        # per the SDK contract "idempotent while active". The terminal
         # short-circuit only protects against *constructing* a new client
         # against a revoked T7c token.
         descriptor = self._make_descriptor()

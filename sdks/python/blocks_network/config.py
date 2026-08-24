@@ -1,8 +1,8 @@
 """
 Environment variable configuration for Blocks Network Python SDK.
 
-After the sdk_remove_env_vars initiative, this module exports only the
-env vars that remain supported for provider/runtime use:
+This module exports only the env vars that remain supported for
+provider/runtime use:
 
 - BLOCKS_CDM_URL     -- CDM endpoint override
 - LOG_LEVEL          -- explicit log verbosity (error|warn|info|debug)

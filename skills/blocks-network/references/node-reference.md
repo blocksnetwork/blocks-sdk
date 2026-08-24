@@ -27,7 +27,7 @@ Options: `direction` (`'outbound'`|`'inbound'`|`'bidirectional'`), `onActivate`,
 
 ### StreamObject
 
-The handler-side stream wrapper. Mirrors the consumer-side `StreamClient` read/error/uuid surface so handler code uses the same iterators and callbacks consumers do (see `dev_docs/SDK_CONTRACT.md` §8.2.10 for the normative definition).
+The handler-side stream wrapper. Mirrors the consumer-side `StreamClient` read/error/uuid surface so handler code uses the same iterators and callbacks consumers do (see the SDK contract for the normative definition).
 
 Properties: `streamId`, `channel`, `isActive`, `external`, `uuid` (read; same as `StreamClient.uuid`, useful for log correlation), `token` (external only).
 
@@ -39,7 +39,7 @@ Read iterators (inbound and bidirectional streams):
 
 Errors: `onError(cb: (err: StreamError) => void)` subscribes to per-stream PubNub status errors. **Append-only** — register before the read path activates; past errors do not replay. On `fatal: true` the underlying client auto-tears down so the iterator exits cleanly.
 
-`onInboundDone` is intentionally NOT part of `StreamObject` — it's an internal callback owned by `TaskSession` (SDK_CONTRACT §8.3.8). For a "stream drained" signal, `await` the for-await-of loop on `bytes()` / `events()` / `inbound`.
+`onInboundDone` is intentionally NOT part of `StreamObject` — it's an internal callback owned by `TaskSession`. For a "stream drained" signal, `await` the for-await-of loop on `bytes()` / `events()` / `inbound`.
 
 ### HandlerResult
 
@@ -88,8 +88,8 @@ export default async function handler(
   const input = task.requestParts?.[0];
   const text = typeof input === 'string' ? input : 'Hello from streaming agent!';
 
-  // Guard on hasStream — request-task streaming is consumer opt-in
-  // (BLOCKS-181), so createStream() throws when the consumer didn't opt in.
+  // Guard on hasStream — request-task streaming is consumer opt-in, so
+  // createStream() throws when the consumer didn't opt in.
   if (ctx?.hasStream) {
     ctx.reportStatus('Streaming...');
     const stream = await ctx.createStream({
@@ -143,7 +143,7 @@ accepts `taskKinds` and rejects all other fields (`additionalProperties: false`)
 `ctx.createStream()` throws `"Streaming was not negotiated for this task."`
 whenever `ctx.hasStream` is false — either the card lacks the `streams`
 declaration, or (for request tasks) the consumer didn't opt in via
-`extensions.blocks.stream` (BLOCKS-181). Guard on `ctx.hasStream` before
+`extensions.blocks.stream`. Guard on `ctx.hasStream` before
 calling it.
 
 ### agent-card.json (streams section)
@@ -170,7 +170,7 @@ Stream property options:
 - `direction`: `"outbound"` | `"inbound"` | `"bidirectional"`
 - `format`: `"bytes"` | `"events"`
 - `description`: human-readable description (optional)
-- `affinity`: `"shared"` | `"dedicated"` (optional; default `"dedicated"`). Shared-affinity streams are cross-task broadcasts with a single writer per agent; they are **pipe-only** (the SDK throws on request tasks) and do not publish a `stream_end` marker on per-task cleanup. See `dev_docs/SDK_CONTRACT.md` §4.4.2, §8.4.1a, §8.7.3a, §8.7.4 for the lifecycle contract.
+- `affinity`: `"shared"` | `"dedicated"` (optional; default `"dedicated"`). Shared-affinity streams are cross-task broadcasts with a single writer per agent; they are **pipe-only** (the SDK throws on request tasks) and do not publish a `stream_end` marker on per-task cleanup. See the SDK contract for the full stream lifecycle.
 - `schema`, `outboundSchema`, `inboundSchema`: JSON Schema (for `events` format only)
 - `contentType`: string (for `bytes` format only)
 
@@ -223,8 +223,8 @@ The low-level `stream.inbound` iterator is still available for advanced use. Its
 
 ## Consumer Auth Patterns
 
-Three browser/runtime patterns are supported (see SDK Contract
-§8.6.4 for the full taxonomy):
+Three browser/runtime patterns are supported (see the SDK contract for
+the full taxonomy):
 
 1. **API key** (`TaskClient.create({ apiKey })`) — for Node trigger
    scripts, CI, server-side jobs. **Never** embed an API key in
@@ -251,8 +251,7 @@ Three browser/runtime patterns are supported (see SDK Contract
    netlify, or a user-defined plugin; for non-interactive deploys set
    `CLOUDFLARE_API_TOKEN` / `VERCEL_TOKEN` / `NETLIFY_AUTH_TOKEN`). See
    `blocks-sdk/embed-auth/README.md` for the widget API,
-   `docs/embed-getting-started.md` and SDK Contract §8.6.4h for the
-   wire-level pattern.
+   `docs/embed-getting-started.md` for the wire-level pattern.
 
 ## Trigger Scripts (Consumer Task Submission)
 
@@ -299,9 +298,9 @@ client.destroy();
 
 **TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`, `isClosed` (getter; `true` after `close()` / `asyncClose()` runs). Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onCancelRequested(cb: (e: CancelRequestedEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)`, `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)`. Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
 
-**At-most-once `onTerminal` (BLOCKS-370 R7).** `session.onTerminal`, `session.waitForTerminal()`, `TaskClient.subscribeToTask`'s `onTerminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner Phase-6 force-cancel + agent's delayed terminal).
+**At-most-once `onTerminal`.** `session.onTerminal`, `session.waitForTerminal()`, `TaskClient.subscribeToTask`'s `onTerminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner force-cancel + agent's delayed terminal).
 
-**`onCancelRequested`** — backend-published acknowledgment of a cooperative cancel on `u.{orgId}.{taskId}`. Fires zero or once per session; suppressed once a terminal has been delivered. Event shape surfaced to the callback: `{ type: 'cancel_requested', taskId, ts }`. (The wire payload also carries `protocolVersion` per `schemas/SDK/task-events/cancel_requested.schema.json`, but it is not surfaced to the callback.) Use to render an in-flight "cancel requested" UI signal before any terminal arrives. **Late registration:** callbacks registered after the wire event arrived still receive a synthetic replay of the first event, mirroring `onTerminal`'s sticky behavior — but only while no terminal has been delivered (a post-terminal registration gets nothing, preserving causality).
+**`onCancelRequested`** — backend-published acknowledgment of a cooperative cancel on `u.{orgId}.{taskId}`. Fires zero or once per session; suppressed once a terminal has been delivered. Event shape surfaced to the callback: `{ type: 'cancel_requested', taskId, ts }`. (The wire payload also carries `protocolVersion` per the SDK task-event schema, but it is not surfaced to the callback.) Use to render an in-flight "cancel requested" UI signal before any terminal arrives. **Late registration:** callbacks registered after the wire event arrived still receive a synthetic replay of the first event, mirroring `onTerminal`'s sticky behavior — but only while no terminal has been delivered (a post-terminal registration gets nothing, preserving causality).
 
 `onArtifact(cb)` replays pre-populated artifacts synchronously at registration time, in the same spirit as `onStream()` and sticky `onTerminal()`. Replay events are minimal synthetic artifact events with `type`, `taskId`, and `artifactRef`; original history-only wire fields such as `outputId` and `protocolVersion` are not retained.
 
@@ -325,7 +324,7 @@ client.destroy();
 | `BillingModeMismatchError` | `TaskClient.sendMessage`, `TaskClient.connect` | The `billingMode` passed to `TaskClient.create()` does not match the target agent's registered mode. Carries `expected` / `got`. |
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminalState` and `.streamId`. |
-| `AgentAuthFatalError` | `AgentAuth` token-exchange path | The API key has been revoked / the org has been disabled. Non-retryable; the agent should exit. |
+| `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`process.exit(1)`). Transient connect failures (network, 5xx, `404 not-published`) are NOT fatal and do not block startup. |
 
 ---
 
@@ -337,8 +336,8 @@ Additional env vars read by the SDK:
 
 - `BLOCKS_CDM_URL` -- CDM config endpoint (defaults to production S3-hosted endpoint)
 - `LOG_LEVEL` -- error/warn/info/debug (default info)
-- `BLOCKS_DEBUG_INTERNAL` -- comma-separated debug subsystems. Values: `diagnostics` (transport-status listener — connectivity transitions and alive snapshots; **Node SDK only**), `forward_transport` (surface the underlying transport's own log output; **both SDKs** — Node forwards it through the Blocks logger under `[Transport]`, Python stops filtering the `httpx`/`httpcore` request lines; see `python-reference.md`). Neither implied by `LOG_LEVEL=debug`. See `dev_docs/SDK_CONTRACT.md` §11.2 for the canonical contract.
-- `BLOCKS_PROFILE` -- comma-separated opt-in local profilers. `timing` makes the runtime log one `dispatch timing` line per task with `received_to_running_ms` / `running_to_handler_ms` / `received_to_handler_ms` (single process clock, skew-free). **Local-only, no egress**; off by default; for bench use. See `dev_docs/SDK_CONTRACT.md` §11.2.
+- `BLOCKS_DEBUG_INTERNAL` -- comma-separated debug subsystems. Values: `diagnostics` (transport-status listener — connectivity transitions and alive snapshots; **Node SDK only**), `forward_transport` (surface the underlying transport's own log output; **both SDKs** — Node forwards it through the Blocks logger under `[Transport]`, Python stops filtering the `httpx`/`httpcore` request lines; see `python-reference.md`). Neither implied by `LOG_LEVEL=debug`. See the SDK contract for the canonical definition.
+- `BLOCKS_PROFILE` -- comma-separated opt-in local profilers. `timing` makes the runtime log one `dispatch timing` line per task with `received_to_running_ms` / `running_to_handler_ms` / `received_to_handler_ms` (single process clock, skew-free). **Local-only, no egress**; off by default; for bench use. See the SDK contract
 - `STREAM_BUNDLE_SIZE` -- stream flush byte threshold (default 4096)
 - `STREAM_MAX_LATENCY_MS` -- stream flush time threshold in ms (default 250)
 - `STREAM_MAX_MESSAGE_SIZE` -- max message size before multipart splitting (default 16384)
@@ -470,7 +469,7 @@ Create a `TaskClient` with automatic CDM config resolution and auth:
 const client = await TaskClient.create({
   billingMode: 'free',  // required: 'free' | 'paid'
   apiKey: 'blocks-api-key',  // auth mode 1: API key → JWT
-  // tokenEndpoint: 'https://my-backend/token',  // auth mode 2: session-authenticated backend endpoint (customer proxy OR dashboard embedder — see SDK_CONTRACT §8.6.4b/g)
+  // tokenEndpoint: 'https://my-backend/token',  // auth mode 2: session-authenticated backend endpoint (customer proxy OR dashboard embedder — see the SDK contract)
   // tokenProvider: async () => ({ token, expiresAt }),  // auth mode 3: custom
 });
 ```

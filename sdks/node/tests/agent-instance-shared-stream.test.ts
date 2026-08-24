@@ -1,8 +1,7 @@
 /**
- * Unit tests for the shared-affinity stream lifecycle fixes landed as
- * part of the `shared_stream_lifecycle` sub-initiative.
+ * Unit tests for the shared-affinity stream lifecycle.
  *
- * Covers IMPL Code Changes §9 (Node half) — 8 cases:
+ * Covers the Node half — 8 cases:
  *   1. First acquirer shared: `stream_setup` embedded, entry created
  *      with `taskIds: {taskA}`, `affinity: 'shared'`.
  *   2. Second acquirer different task: `stream_setup activate` with
@@ -458,7 +457,7 @@ describe('shared-stream lifecycle', () => {
     // (shared = one SDK-managed writer + many refs; external =
     // delegate writer entirely). The SDK rejects the combination
     // before any registry / handshake state is touched, regardless
-    // of taskKind. See SDK_CONTRACT §4.4.3.
+    // of taskKind. See the SDK contract
     const mockPn = createMockPubNub();
     let caught: unknown;
 
@@ -789,7 +788,7 @@ describe('shared-stream lifecycle', () => {
   // This is a registry-scope test covering the barrier mechanism
   // itself. The end-to-end agent-instance behavior (the !isNew branch
   // awaiting entry.setupPromise before the activate publish) is
-  // exercised by the existing case-2 test and by the human-test §6.2
+  // exercised by the existing case-2 test
   // concurrent-task scenario.
   it('case 9: setupPromise on the registry entry serializes second-acquirer attach-after-setup (race regression)', async () => {
     const registry = new StreamRegistry();

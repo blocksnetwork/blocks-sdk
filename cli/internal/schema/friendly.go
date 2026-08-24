@@ -96,7 +96,7 @@ var (
 
 // classifyContentType returns the transport class for v using the same
 // first-match-wins rules as the canonical schema and backend Zod (see
-// IMPL §1 "Classification rule"):
+// "Classification rule"):
 //
 //  1. catalogFileTypes
 //  2. catalogTextTypes
@@ -147,7 +147,7 @@ func classifyContentType(v string, c schemaCatalogs) transportClass {
 // without hiding unrelated deeper failures such as an invalid
 // `schema.properties[x].type`.
 //
-// Only the 8 invariant cases enumerated in IMPL Part 9 are handled;
+// Only the 8 invariant cases enumerated in the transport-class case set are handled;
 // anything else falls through to the raw schema messages.
 func auditInputInvariants(card map[string]interface{}) ([]string, map[int]map[string]struct{}) {
 	cats, err := catalogs()

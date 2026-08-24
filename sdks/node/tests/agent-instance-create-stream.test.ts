@@ -1,6 +1,6 @@
 /**
  * Unit tests for `AgentInstance.createStream` after the stream-id-arg
- * removal (see STREAM_ID_ARG_REMOVAL_IMPL.md).
+ * removal.
  *
  * Covers:
  * 1. Options-only signature (no positional arg accepted; compile-time

@@ -217,7 +217,7 @@ describe('createPubNubClient', () => {
   });
 });
 
-// Cross-SDK parity with Python; see SDK_CONTRACT.md §Cross-SDK retry-budget defaults.
+// Cross-SDK parity with Python; see the SDK contract.
 describe('createPubNubClient — default subscribeRetryUnbounded parity', () => {
   it('implicit default and explicit true produce identical retry config', async () => {
     const { createPubNubClient: createImplicit, instances: implicitInstances } = await setup();

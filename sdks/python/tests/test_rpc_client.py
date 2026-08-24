@@ -210,7 +210,7 @@ class TestCallRpc:
 
     @patch("blocks_network.rpc_client.urllib.request.urlopen")
     def test_rpc_headers_cannot_override_write_affinity(self, mock_urlopen):
-        # §14b: X-Write-Affinity is SDK-managed routing state. A caller MUST NOT
+        # X-Write-Affinity is SDK-managed routing state. A caller MUST NOT
         # be able to smuggle it via rpc_headers and force primary-DB routing.
         from blocks_network.write_affinity import reset_affinity
 
@@ -412,7 +412,7 @@ class TestWithRetry:
 class TestBillingModeMismatchMapping:
     """Backend ``BillingModeMismatch`` JSON-RPC errors map to the typed subclass.
 
-    Backend wire shape (per ``bmc-data`` Phase 1 IMPL_REPORT):
+    Backend wire shape (per ``bmc-data`` Phase 1 report):
 
         error.data = {
           "code": "BillingModeMismatch",
@@ -530,7 +530,7 @@ class TestBillingModeMismatchMapping:
 
     @patch("blocks_network.rpc_client.urllib.request.urlopen")
     def test_does_not_retry_on_mismatch(self, mock_urlopen):
-        """Per IMPL §6 Python 7: SDK does NOT auto-retry on BillingModeMismatch."""
+        """SDK does NOT auto-retry on BillingModeMismatch."""
         body = {
             "jsonrpc": "2.0",
             "id": "x",

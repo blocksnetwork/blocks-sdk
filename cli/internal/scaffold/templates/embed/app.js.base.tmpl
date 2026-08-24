@@ -32,7 +32,7 @@
 
   // Render an artifact's bytes into outputEl based on its own mimeType.
   // Used for: (a) untagged artifacts (event.outputId may be undefined per
-  // SDK_CONTRACT §9.1), (b) outputId values that don't match any declared
+  // the SDK contract), (b) outputId values that don't match any declared
   // output, (c) the post-terminal listArtifacts() defensive fallback.
   function renderArtifactByMime(bytes, mimeType, outputEl) {
     const mt = mimeType || '';

@@ -13,7 +13,7 @@ framework backs as first-class commands, and which a provider (or consumer)
 | --- | --- | --- |
 | **cancel** | Framework (built-in) | `client.cancelTask(taskId)` aborts `ctx.cancelSignal`; the handler's work loop checks it each iteration and stops → terminal `canceled`. `session.onCancelRequested()` logs the backend ack. |
 | **pause / resume** | Provider (composed) | The framework's `pauseTask`/`resumeTask` publish a `status` event **only** — the handler keeps running, so they do not suspend work. This example builds *real* suspension: the consumer writes `{ ctrl: 'pause' \| 'resume' }` on a **bidirectional** stream and the handler parks its work loop on an app-level `paused` flag. |
-| **retry** | Consumer (composed) | Task state is in-memory only (SDK_CONTRACT §17), so there is no resume-in-place. Retry is a consumer **resubmit** with a fresh `idempotencyKey`. The handler is idempotent; a `failOnce` flag lets the consumer script a deterministic `failed` → `completed`. |
+| **retry** | Consumer (composed) | Task state is in-memory only, so there is no resume-in-place. Retry is a consumer **resubmit** with a fresh `idempotencyKey`. The handler is idempotent; a `failOnce` flag lets the consumer script a deterministic `failed` → `completed`. |
 
 No op is faked and none is silently dropped. Where the framework only emits a
 status event (pause/resume) or is a provider no-op (retry), the example builds

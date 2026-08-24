@@ -1,5 +1,5 @@
 /**
- * `resolveBackendBaseUrl` precedence chain (impl_03 §R4.2):
+ * `resolveBackendBaseUrl` precedence chain:
  *   1. `opts.backendBaseUrl`
  *   2. `window.__BLOCKS_EMBED_DEV__.backendBaseUrl`
  *   3. compiled-in `BACKEND_BASE_URL_DEFAULT`

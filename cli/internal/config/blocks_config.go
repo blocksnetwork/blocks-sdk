@@ -97,8 +97,7 @@ func Save(path string, cfg *BlocksConfig) error {
 	return nil
 }
 
-// Validate checks cfg against every rule from
-// schemas/internal/blocks-config.schema.json and impl_05 §R8.1.
+// Validate checks cfg against every documented rule for this config.
 // It collects ALL violations rather than failing on the first.
 func Validate(cfg *BlocksConfig) error {
 	var errs []string

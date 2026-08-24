@@ -102,8 +102,7 @@ def _start_and_block(
         # before the hard exit. The timeout caps worst-case Ctrl-C
         # latency if pubnub.stop() blocks; healthy paths complete well
         # under the default 3s. Proper task-drain on SIGINT/SIGTERM is
-        # tracked under the graceful-shutdown initiative
-        # (dev_docs/initiative/sdk_graceful_shutdown/).
+        # not yet implemented.
         if stop_fn is not None:
             t = threading.Thread(target=stop_fn, name="agent-stop", daemon=True)
             t.start()

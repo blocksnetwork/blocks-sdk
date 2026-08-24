@@ -105,7 +105,7 @@ def main() -> None:
     producer_thread = threading.Thread(target=producer, name="bidi-producer", daemon=True)
     producer_thread.start()
 
-    # Consumer reads on the main thread. Per SDK_CONTRACT §8.4 a
+    # Consumer reads on the main thread. Per the SDK contract a
     # bidirectional stream does NOT publish stream_end, so we end our
     # own side once we see the agent's reply to "bye" and break out.
     for event in stream.events():

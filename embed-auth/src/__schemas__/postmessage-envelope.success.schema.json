@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "version 1.0.0 — host_static_pages embedded auth (postMessage success envelope)",
+  "$comment": "version 1.0.0 — embedded auth (postMessage success envelope)",
   "title": "Embedded Auth — postMessage success envelope (v1)",
   "description": "Wire shape posted by the embed-auth popup back to its opener via `window.opener.postMessage(envelope, requestedOrigin)` after a successful auth flow. The widget verifies `event.origin === blocksApiOrigin`, asserts `event.data.type === 'blocks-auth-success'` and `event.data.version === 1`, asserts `event.data.state` matches the nonce the widget generated before opening the popup (per `embed-popup-request.schema.json`), and then routes `jwt`, `refreshToken`, `expiresAt`, `agentIds`, `agents`, `orgId`, and `userId` into the SDK. v1 envelopes are intentionally exact (`additionalProperties: false`); see the README for the versioning principle.",
   "type": "object",

@@ -39,7 +39,7 @@ _PROTECTED_RPC_HEADERS = {
     "authorization",
     "content-type",
     PROTOCOL_VERSION_HEADER.lower(),
-    "x-write-affinity",  # SDK-managed routing state; §14b no-fabrication
+    "x-write-affinity",  # SDK-managed routing state; no-fabrication
 }
 
 

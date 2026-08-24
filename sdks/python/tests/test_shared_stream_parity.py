@@ -1,5 +1,5 @@
 """Cross-SDK parity test for the shared-affinity stream lifecycle work
-(SHARED_STREAM_LIFECYCLE_IMPL Code Changes §11).
+(shared-stream lifecycle).
 
 Parity claim: every assertion here has a Node mirror in
 ``blocks-sdk/sdks/node/tests/shared-stream-parity.test.ts``. Harness
@@ -25,8 +25,8 @@ stream):
   channel, a later consumer would not be forced to exit on a stale
   marker from any prior task's cleanup.
 
-The sibling tests at ``test_shared_up_consumer_writer.py`` (§12a)
-and ``test_shared_stream_late_reader.py`` (§12b) cover the
+The sibling tests at ``test_shared_up_consumer_writer.py`` 
+and ``test_shared_stream_late_reader.py`` cover the
 consumer-writer and late-reader cases at the StreamClient /
 descriptor level.
 """
@@ -258,7 +258,7 @@ def _shared_card() -> Dict[str, Any]:
 
 
 class TestSharedStreamParityTwoConcurrentPipeTasks:
-    """§11 Cross-SDK parity: two concurrent pipe tasks on a shared stream.
+    """Cross-SDK parity: two concurrent pipe tasks on a shared stream.
 
     Mirrors
     ``blocks-sdk/sdks/node/tests/shared-stream-parity.test.ts`` →

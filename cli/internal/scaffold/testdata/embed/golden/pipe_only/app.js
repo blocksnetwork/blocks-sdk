@@ -34,7 +34,7 @@
 
   // Render an artifact's bytes into outputEl based on its own mimeType.
   // Used for: (a) untagged artifacts (event.outputId may be undefined per
-  // SDK_CONTRACT §9.1), (b) outputId values that don't match any declared
+  // the SDK contract), (b) outputId values that don't match any declared
   // output, (c) the post-terminal listArtifacts() defensive fallback.
   function renderArtifactByMime(bytes, mimeType, outputEl) {
     const mt = mimeType || '';
@@ -179,7 +179,7 @@
       const client = clients["pipe_only"];
       const requestParts = [];
       // input "request" is form-class (application/json) — wire shape is
-      // { partId, text: <JSON-encoded value> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <JSON-encoded value> } per the SDK contract
       const ta_0 = document.getElementById("input-pipe_only-request");
       try { JSON.parse(ta_0.value); } catch (e) { throw new Error('input ' + "request" + ': invalid JSON: ' + e.message); }
       requestParts.push({ partId: "request", text: ta_0.value });

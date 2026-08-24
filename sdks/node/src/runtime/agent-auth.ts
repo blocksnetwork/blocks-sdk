@@ -20,6 +20,14 @@ import { captureAffinity, injectAffinity } from './write-affinity.js';
 
 const ERROR_CODE_API_KEY_INVALID = 'API_KEY_INVALID';
 const ERROR_CODE_REFRESH_TOKEN_INVALID = 'REFRESH_TOKEN_INVALID';
+const ERROR_CODE_AGENT_FORCED_OFFLINE = 'AGENT_FORCED_OFFLINE';
+
+/** Message shown when an administrator has forced the agent offline. The SDK
+ * owns this human-facing sentence; the backend's `error` field is its own full
+ * sentence, so interpolating it here would double-render. */
+function forcedOfflineMessage(): string {
+  return 'Agent forced offline by an administrator. It must be re-enabled before it can reconnect.';
+}
 
 // ============================================================================
 // Types
@@ -131,7 +139,21 @@ export class AgentAuth {
 
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as ErrorResponse;
-      throw new AgentAuthFatalError(
+      // Only two connect failures are fatal (agent can never obtain runtime
+      // credentials → caller terminates the process): an administrator
+      // force-offline and a revoked/invalid API key. Everything else
+      // (transient 5xx, 404 not-published, network) is retryable and MUST
+      // stay non-blocking per SDK_CONTRACT.md §11 — throw the base Error so
+      // the caller does NOT exit. BLOCKS-553.
+      if (body.code === ERROR_CODE_AGENT_FORCED_OFFLINE) {
+        throw new AgentAuthFatalError(forcedOfflineMessage());
+      }
+      if (body.code === ERROR_CODE_API_KEY_INVALID) {
+        throw new AgentAuthFatalError(
+          `API key invalid or revoked: ${body.error ?? 'API_KEY_INVALID'}`,
+        );
+      }
+      throw new Error(
         `Agent registration failed: ${body.error ?? `HTTP ${response.status}`}`,
       );
     }
@@ -215,6 +237,12 @@ export class AgentAuth {
       }
       await this.init(this.registrationPayload);
       return;
+    }
+
+    if (body.code === ERROR_CODE_AGENT_FORCED_OFFLINE) {
+      // Forced offline by an administrator — fatal. Must NOT fall into the
+      // re-init path above, which would re-register and bypass the ban.
+      throw new AgentAuthFatalError(forcedOfflineMessage());
     }
 
     if (body.code === ERROR_CODE_API_KEY_INVALID) {

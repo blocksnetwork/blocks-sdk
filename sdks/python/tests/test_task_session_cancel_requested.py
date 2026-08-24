@@ -1,4 +1,4 @@
-"""BLOCKS-370: on_cancel_requested tests for Python TaskSession.
+"""on_cancel_requested tests for Python TaskSession.
 
 Mirror of blocks-sdk/sdks/node/tests/task-session.cancel-requested.test.ts.
 """
@@ -117,7 +117,7 @@ def test_does_not_fire_after_terminal_delivered() -> None:
 
 
 def test_fires_zero_or_once_on_duplicate_wire_emissions() -> None:
-    """BLOCKS-370: docs claim cancel_requested fires zero-or-once.
+    """Docs claim cancel_requested fires zero-or-once.
     Two back-to-back wire events (e.g. PubNub cache replay) must not
     double-fire.
     """
@@ -142,7 +142,7 @@ def test_fires_zero_or_once_on_duplicate_wire_emissions() -> None:
 
 
 def test_replays_first_cancel_requested_to_late_callback() -> None:
-    """BLOCKS-370: a callback registered AFTER the wire event arrived
+    """A callback registered AFTER the wire event arrived
     still receives a synthetic replay of the first event. Mirrors
     on_terminal's sticky-replay behavior.
     """
@@ -165,7 +165,7 @@ def test_replays_first_cancel_requested_to_late_callback() -> None:
 
 
 def test_does_not_double_fire_cancel_requested_across_registration_order() -> None:
-    """BLOCKS-370: an early callback fires once when the wire event
+    """An early callback fires once when the wire event
     arrives; a late callback registered afterward gets a synthetic
     replay of the same event. Neither callback fires twice.
     """
@@ -189,7 +189,7 @@ def test_does_not_double_fire_cancel_requested_across_registration_order() -> No
 
 
 def test_does_not_replay_after_terminal_delivered() -> None:
-    """BLOCKS-370: a callback registered AFTER a terminal was delivered must
+    """A callback registered AFTER a terminal was delivered must
     NOT receive a replayed cancel_requested. Mirrors the Node parity test.
     """
     pn = _make_mock_pubnub()

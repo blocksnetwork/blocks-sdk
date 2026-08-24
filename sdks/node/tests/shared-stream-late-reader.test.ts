@@ -1,6 +1,6 @@
 /**
  * Late-reader broadcast resilience test for shared streams
- * (SHARED_STREAM_LIFECYCLE_IMPL Code Changes §12b).
+ * (shared-stream lifecycle).
  *
  * Scenario:
  *   1. A writer-side StreamClient on a shared-affinity channel writes
@@ -72,7 +72,7 @@ beforeEach(() => {
   capturedListener = null;
 });
 
-describe('late-reader broadcast resilience (§12b)', () => {
+describe('late-reader broadcast resilience', () => {
   it('writer-side end() on shared stream does not publish stream_end, and a late-subscribing reader does not exit on a cached marker', async () => {
     const channel = 'stream.late_reader_test.shared_down';
 

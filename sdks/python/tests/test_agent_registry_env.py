@@ -1,7 +1,6 @@
 """
 Tests for device OS detection and SDK language in the registration payload.
 
-Phase 6 of the agent-personal initiative.
 """
 
 from __future__ import annotations

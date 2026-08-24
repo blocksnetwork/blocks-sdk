@@ -84,7 +84,7 @@ The `ctx` parameter provides handler APIs:
 **Requires** a top-level `streams` block in `agent-card.json`. `ctx.create_stream()`
 raises `"Streaming was not negotiated for this task."` whenever `ctx.has_stream`
 is false — either the card lacks `streams`, or (for request tasks) the consumer
-didn't opt in via `extensions.blocks.stream` (BLOCKS-181). Guard on
+didn't opt in via `extensions.blocks.stream`. Guard on
 `ctx.has_stream` before calling it.
 
 Add this to `agent-card.json` (peer of `identity`, `capabilities`, `io`):
@@ -104,14 +104,14 @@ Add this to `agent-card.json` (peer of `identity`, `capabilities`, `io`):
 - `capabilities` only accepts `taskKinds` -- anything else fails `blocks check`.
 - For request-only agents (`taskKinds: ["request"]`), streams must contain only `_default`.
 - Both `direction` and `format` are required on each stream.
-- A stream declared with `affinity: "shared"` is a cross-task broadcast and is **pipe-only** — `create_stream()` raises on request tasks, and per-task `stream.end()` does not publish a `stream_end` marker. See `dev_docs/SDK_CONTRACT.md` §4.4.2, §8.4.1a, §8.7.3a, §8.7.4 for the lifecycle contract.
+- A stream declared with `affinity: "shared"` is a cross-task broadcast and is **pipe-only** — `create_stream()` raises on request tasks, and per-task `stream.end()` does not publish a `stream_end` marker. See the SDK contract for the full stream lifecycle.
 - Re-register or re-publish (`blocks register` / `blocks publish`) after adding `streams`. Use `blocks publish` here if the agent has already been promoted to public or paid — `blocks register` would reset the listing back to private+free.
 
 `create_stream` accepts keyword-only options: `direction` (`"outbound"`|`"inbound"`|`"bidirectional"`, default `"outbound"`), `on_activate`, `metadata`, `external` (bool), `format` (`"bytes"`|`"events"`), `bundle_size_bytes`, `max_latency_ms`, `declared_stream` (omit when the card declares a single stream -- the SDK resolves it automatically; **required** when the card declares multiple streams), `subscribe_grace_ms`. The SDK derives the channel from `declared_stream` plus the card's affinity; handler code cannot specify the channel suffix directly.
 
 ### StreamObject (handler-side)
 
-The wrapper returned by `ctx.create_stream(...)`. Mirrors the consumer-side `StreamClient` read/error/uuid surface so handler code uses the same iterators and callbacks consumers do (see `dev_docs/SDK_CONTRACT.md` §8.2.10 for the normative definition).
+The wrapper returned by `ctx.create_stream(...)`. Mirrors the consumer-side `StreamClient` read/error/uuid surface so handler code uses the same iterators and callbacks consumers do (see the SDK contract for the normative definition).
 
 Properties: `stream_id`, `channel`, `is_active`, `external`, `uuid` (read; same as `StreamClient.uuid`, useful for log correlation), `token` (external only).
 
@@ -123,7 +123,7 @@ Read iterators (inbound and bidirectional streams):
 
 Errors: `on_error(cb)` subscribes to per-stream PubNub status errors. The callback receives a `StreamError` with `category`, `error`, `channel`, `timestamp`, `fatal`. **Append-only** — register before the read path activates; past errors do not replay. On `fatal=True` the underlying client auto-tears down so the iterator exits cleanly.
 
-`on_inbound_done` is intentionally NOT part of `StreamObject` — it's an internal callback owned by `TaskSession` (SDK_CONTRACT §8.3.8). For a "stream drained" signal, iterate `bytes()` / `events()` / `inbound` to completion.
+`on_inbound_done` is intentionally NOT part of `StreamObject` — it's an internal callback owned by `TaskSession`. For a "stream drained" signal, iterate `bytes()` / `events()` / `inbound` to completion.
 
 Type exports for handler code: `from blocks_network import InboundMessage, StreamError`.
 
@@ -132,8 +132,8 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     parts = task.request_parts or []
     text = parts[0].text if parts and hasattr(parts[0], "text") else "Hello!"
 
-    # Guard on has_stream — request-task streaming is consumer opt-in
-    # (BLOCKS-181), so create_stream() raises when the consumer didn't opt in.
+    # Guard on has_stream — request-task streaming is consumer opt-in, so
+    # create_stream() raises when the consumer didn't opt in.
     if ctx and ctx.has_stream:
         ctx.report_status("Streaming...")
         stream = ctx.create_stream(
@@ -204,9 +204,9 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 **TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_cancel_requested(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_artifacts()`, `download_artifact(ref)`, `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)`. Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
 
-**At-most-once `on_terminal` (BLOCKS-370 R7).** `session.on_terminal`, `session.wait_for_terminal()`, `subscribe_to_task`'s `on_terminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner Phase-6 force-cancel + agent's delayed terminal).
+**At-most-once `on_terminal`.** `session.on_terminal`, `session.wait_for_terminal()`, `subscribe_to_task`'s `on_terminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner force-cancel + agent's delayed terminal).
 
-**`on_cancel_requested(cb)`** — backend-published acknowledgment of a cooperative cancel on `u.{org_id}.{task_id}`. Fires zero or once per session; suppressed once a terminal has been delivered. Event shape surfaced to the callback: `{"type": "cancel_requested", "taskId": ..., "ts": ...}`. (The wire payload also carries `protocolVersion` per `schemas/SDK/task-events/cancel_requested.schema.json`, but it is not surfaced to the callback.) Use to render an in-flight "cancel requested" UI signal before any terminal arrives. **Late registration:** callbacks registered after the wire event arrived still receive a synthetic replay of the first event, mirroring `on_terminal`'s sticky behavior — but only while no terminal has been delivered (a post-terminal registration gets nothing, preserving causality).
+**`on_cancel_requested(cb)`** — backend-published acknowledgment of a cooperative cancel on `u.{org_id}.{task_id}`. Fires zero or once per session; suppressed once a terminal has been delivered. Event shape surfaced to the callback: `{"type": "cancel_requested", "taskId": ..., "ts": ...}`. (The wire payload also carries `protocolVersion` per the SDK task-event schema, but it is not surfaced to the callback.) Use to render an in-flight "cancel requested" UI signal before any terminal arrives. **Late registration:** callbacks registered after the wire event arrived still receive a synthetic replay of the first event, mirroring `on_terminal`'s sticky behavior — but only while no terminal has been delivered (a post-terminal registration gets nothing, preserving causality).
 
 `on_artifact(cb)` replays pre-populated artifacts synchronously at registration time, in the same spirit as `on_stream()` and sticky `on_terminal()`. Replay events are minimal synthetic artifact events with `type`, `taskId`, and `artifactRef`; original history-only wire fields such as `outputId` and `protocolVersion` are not retained.
 
@@ -232,7 +232,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 | `BillingModeMismatchError` | `TaskClient.send_message`, `TaskClient.connect` | The `billing_mode` passed to `TaskClient.create()` does not match the target agent's registered mode. Carries `expected` / `got`. |
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminal_state` and `.stream_id`. |
-| `AgentAuthFatalError` | `AgentAuth` token-exchange path | The API key has been revoked / the org has been disabled. Non-retryable; the agent should exit. |
+| `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`os._exit(1)` from the connect thread). Transient connect failures (network, 5xx, `404 not-published`) are NOT fatal and do not block startup. |
 | `FileUploadError` | `presigned_upload_flow` | Presign rejection or object-storage upload failure. Carries the original cause. |
 
 ---
@@ -260,8 +260,7 @@ in the Node/JS bundle, not Python:
   (positional target; set `CLOUDFLARE_API_TOKEN` / `VERCEL_TOKEN` /
   `NETLIFY_AUTH_TOKEN` for non-interactive deploys). The widget is
   JS-only; the scaffolded page is not Python. See
-  `blocks-sdk/embed-auth/README.md`, `docs/embed-getting-started.md`, and
-  SDK Contract §8.6.4h.
+  `blocks-sdk/embed-auth/README.md` and `docs/embed-getting-started.md`.
 
 ## Trigger Script
 
@@ -413,7 +412,7 @@ Lower-level factory with full control over CDM config resolution and auth:
 client = TaskClient.create(
     billing_mode="free",  # required: 'free' | 'paid'
     api_key="blocks-api-key",  # auth mode 1: API key -> JWT
-    # token_endpoint="https://my-backend/token",  # auth mode 2: session-authenticated backend endpoint (customer proxy OR dashboard embedder -- see SDK_CONTRACT §8.6.4b/g)
+    # token_endpoint="https://my-backend/token",  # auth mode 2: session-authenticated backend endpoint (customer proxy OR dashboard embedder -- see the SDK contract)
     # token_provider=my_func,  # auth mode 3: custom callback
 )
 ```
@@ -651,11 +650,11 @@ Additional env vars read by the Python SDK:
 
 - `BLOCKS_CDM_URL` -- CDM config endpoint (defaults to production S3-hosted endpoint)
 - `LOG_LEVEL` -- error/warn/info/debug (default info)
-- `BLOCKS_DEBUG_INTERNAL` -- comma-separated debug subsystems. The Python SDK honors the `forward_transport` token (same name/format as the Node SDK). By default the SDK quiets the underlying transport's `httpx`/`httpcore` per-request INFO logging ("HTTP Request: GET https://ps.pndsn.com/... 200 OK"); set `BLOCKS_DEBUG_INTERNAL=forward_transport` to surface the raw request stream for connectivity debugging. Not implied by `LOG_LEVEL=debug`. A `httpx`/`httpcore` level your app sets explicitly is honored. See `dev_docs/SDK_CONTRACT.md` §11.2.
-- `BLOCKS_PROFILE` -- comma-separated opt-in local profilers. `timing` makes the runtime log one `dispatch timing` line per task with `received_to_running_ms` / `running_to_handler_ms` / `received_to_handler_ms` (single `time.monotonic()` clock, skew-free). **Local-only, no egress**; off by default; for bench use. At parity with the Node SDK. See `dev_docs/SDK_CONTRACT.md` §11.2.
+- `BLOCKS_DEBUG_INTERNAL` -- comma-separated debug subsystems. The Python SDK honors the `forward_transport` token (same name/format as the Node SDK). By default the SDK quiets the underlying transport's `httpx`/`httpcore` per-request INFO logging ("HTTP Request: GET https://ps.pndsn.com/... 200 OK"); set `BLOCKS_DEBUG_INTERNAL=forward_transport` to surface the raw request stream for connectivity debugging. Not implied by `LOG_LEVEL=debug`. A `httpx`/`httpcore` level your app sets explicitly is honored. See the SDK contract
+- `BLOCKS_PROFILE` -- comma-separated opt-in local profilers. `timing` makes the runtime log one `dispatch timing` line per task with `received_to_running_ms` / `running_to_handler_ms` / `received_to_handler_ms` (single `time.monotonic()` clock, skew-free). **Local-only, no egress**; off by default; for bench use. At parity with the Node SDK. See the SDK contract
 - `ARTIFACT_INLINE_LIMIT_BYTES` -- max artifact size for inline base64 encoding
 
-Note: the Python SDK does not implement the `diagnostics` token (Node-only). Its retry / connectivity surface is always-on via `on_retry` callbacks (see `dev_docs/SDK_CONTRACT.md` §10.4.1). Mechanism divergence from Node: Node re-routes transport lines through its own `[Transport]`-tagged logger (so they obey `LOG_LEVEL`); Python's `forward_transport` simply stops suppressing the third-party `httpx`/`httpcore` loggers, which then emit at their own levels. Same opt-in contract, raw output.
+Note: the Python SDK does not implement the `diagnostics` token (Node-only). Its retry / connectivity surface is always-on via `on_retry` callbacks (see the SDK contract). Mechanism divergence from Node: Node re-routes transport lines through its own `[Transport]`-tagged logger (so they obey `LOG_LEVEL`); Python's `forward_transport` simply stops suppressing the third-party `httpx`/`httpcore` loggers, which then emit at their own levels. Same opt-in contract, raw output.
 
 ---
 

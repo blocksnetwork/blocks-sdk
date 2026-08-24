@@ -1,5 +1,5 @@
 """
-Tests for new agent card structure (new-agent-card initiative).
+Tests for the agent card structure.
 
 Covers:
 - New-format card parsing (identity block, capabilities.taskKinds)

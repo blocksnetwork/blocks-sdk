@@ -35,7 +35,7 @@
 
   // Render an artifact's bytes into outputEl based on its own mimeType.
   // Used for: (a) untagged artifacts (event.outputId may be undefined per
-  // SDK_CONTRACT §9.1), (b) outputId values that don't match any declared
+  // the SDK contract), (b) outputId values that don't match any declared
   // output, (c) the post-terminal listArtifacts() defensive fallback.
   function renderArtifactByMime(bytes, mimeType, outputEl) {
     const mt = mimeType || '';
@@ -178,7 +178,7 @@
       const client = clients["inbound_stream"];
       const requestParts = [];
       // input "request" is form-class (application/json) — wire shape is
-      // { partId, text: <JSON-encoded value> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <JSON-encoded value> } per the SDK contract
       const ta_0 = document.getElementById("input-inbound_stream-request");
       try { JSON.parse(ta_0.value); } catch (e) { throw new Error('input ' + "request" + ': invalid JSON: ' + e.message); }
       requestParts.push({ partId: "request", text: ta_0.value });
@@ -189,7 +189,7 @@
       });
       // Card declares exactly 1 output — route every artifact here
       // regardless of event.outputId. outputId is OPTIONAL per
-      // SDK_CONTRACT §9.1; we don't gate on its presence.
+      // the SDK contract; we don't gate on its presence.
       session.onArtifact(async (event) => {
         if (renderedRefs.has(event.artifactRef)) return;
         renderedRefs.add(event.artifactRef);
@@ -206,7 +206,7 @@
       });
       // TODO: agent declares an inbound stream "uploads" (bytes).
       //       Consumer-side stream writing is not generated — see
-      //       SDK_CONTRACT §8.4 / §8.7 for the consumer-writer pattern.
+      //       the SDK contract for the consumer-writer pattern.
       const terminal = await session.waitForTerminal();
       if (terminal.state !== 'completed') {
         outputEl.textContent += '\n[' + (terminal.error || terminal.reason || 'task ' + terminal.state) + ']';

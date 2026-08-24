@@ -31,6 +31,19 @@ logger = logging.getLogger(__name__)
 
 ERROR_CODE_API_KEY_INVALID = "API_KEY_INVALID"
 ERROR_CODE_REFRESH_TOKEN_INVALID = "REFRESH_TOKEN_INVALID"
+ERROR_CODE_AGENT_FORCED_OFFLINE = "AGENT_FORCED_OFFLINE"
+
+
+def _forced_offline_message() -> str:
+    """Message shown when an administrator has forced the agent offline.
+
+    The SDK owns this human-facing sentence; the backend's ``error`` field is
+    its own full sentence, so interpolating it here would double-render.
+    """
+    return (
+        "Agent forced offline by an administrator. "
+        "It must be re-enabled before it can reconnect."
+    )
 
 
 # ============================================================================
@@ -48,10 +61,9 @@ class RegistrationPayload(TypedDict, total=False):
     backend Zod schema validates required-ness. The SDK serializes a
     partial dict and strips ``None`` before sending.
 
-    Wire fields use camelCase per IMPL §3.4. ``billingMode`` is REQUIRED
-    on every real connect request (Phase 2 of the Billing Mode Contract
-    initiative) and is populated by the SDK from the registry GET at
-    boot. There is no provider-supplied override.
+    Wire fields use camelCase. ``billingMode`` is REQUIRED
+    on every real connect request, and is populated by the SDK from the
+    registry GET at boot. There is no provider-supplied override.
     """
 
     agentName: str
@@ -150,12 +162,27 @@ class AgentAuth:
         try:
             data = self._post(url, body=body_bytes, headers=self._api_key_headers())
         except _HttpError as exc:
+            code = exc.body.get("code", "") if isinstance(exc.body, dict) else ""
+            # Only two connect failures are fatal (agent can never obtain
+            # runtime credentials -> caller terminates the process): an
+            # administrator force-offline and a revoked/invalid API key.
+            # Everything else (transient 5xx, 404 not-published, network) is
+            # retryable and MUST stay non-blocking per SDK_CONTRACT.md §11 --
+            # raise the transient RuntimeError so the caller does NOT exit.
+            # BLOCKS-553.
+            if code == ERROR_CODE_AGENT_FORCED_OFFLINE:
+                raise AgentAuthFatalError(_forced_offline_message()) from exc
+            if code == ERROR_CODE_API_KEY_INVALID:
+                raise AgentAuthFatalError(
+                    f"API key invalid or revoked: "
+                    f"{exc.body.get('error', 'API_KEY_INVALID') if isinstance(exc.body, dict) else 'API_KEY_INVALID'}"
+                ) from exc
             error_msg = (
                 exc.body.get("error", f"HTTP {exc.status}")
                 if isinstance(exc.body, dict)
                 else f"HTTP {exc.status}"
             )
-            raise AgentAuthFatalError(
+            raise RuntimeError(
                 f"Agent connect failed: {error_msg}"
             ) from exc
 
@@ -208,6 +235,12 @@ class AgentAuth:
                 # Refresh token invalid -- re-connect with stored payload
                 self.init()
                 return
+
+            if code == ERROR_CODE_AGENT_FORCED_OFFLINE:
+                # Forced offline by an administrator -- fatal. Must NOT fall
+                # into the re-connection path above, which would re-register
+                # and bypass the ban.
+                raise AgentAuthFatalError(_forced_offline_message()) from exc
 
             if code == ERROR_CODE_API_KEY_INVALID:
                 raise AgentAuthFatalError(

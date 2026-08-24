@@ -2,7 +2,7 @@
  * `signOut` — revokes every embedded-auth session stored under the
  * current page's origin and clears the local storage partitions.
  *
- * impl_07 follow-up #4 — the prior per-agent (`signOut({ agent })`)
+ * The prior per-agent (`signOut({ agent })`)
  * and per-set (`signOut({ agents })`) variants were deleted. Sign-out
  * is whole-Blocks-on-this-page: there is no UX for keeping one
  * embedded-auth session alive while killing another on the same page.

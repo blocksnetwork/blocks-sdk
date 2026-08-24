@@ -64,8 +64,8 @@ blocks run
 3. Press Ctrl+C to stop. The agent's `stop()` runs best-effort cleanup
    in a daemon thread, then the runtime hard-exits — **in-flight tasks
    are interrupted, not drained**. Proper graceful task-drain on
-   SIGINT/SIGTERM is tracked under the agent SDK graceful-shutdown
-   initiative; today the Python and Node runtimes behave the same way.
+   SIGINT/SIGTERM is not yet implemented; today the Python and Node
+   runtimes behave the same way.
 
 ## Optional .env support
 

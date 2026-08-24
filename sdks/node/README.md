@@ -480,7 +480,7 @@ import { TaskClient, textPart } from '@blocks-network/sdk';
 const session = await client.sendMessage({
   agentName: 'multi_stream_agent',
   requestParts: [textPart('start')],
-  stream: true, // request-task streaming is opt-in (BLOCKS-181)
+  stream: true, // request-task streaming is opt-in
 });
 
 // Option 1 — react to each stream as it is announced
@@ -513,7 +513,7 @@ loops. Tune the window per session:
 const session = await client.sendMessage({
   agentName: 'llm_streamer',
   requestParts: [textPart('stream please')],
-  stream: true,         // request-task streaming is opt-in (BLOCKS-181)
+  stream: true,         // request-task streaming is opt-in
   drainWindowMs: 5_000, // 5 seconds
 });
 

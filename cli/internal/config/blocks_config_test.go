@@ -333,8 +333,8 @@ func TestValidate_RejectsBadDeployTarget(t *testing.T) {
 	}
 }
 
-// Regression: a custom plugin target persists across save/load. Prior to
-// impl_07 follow-up F2 the validator hardcoded {cloudflare,vercel,netlify}
+// Regression: a custom plugin target persists across save/load. The
+// validator previously hardcoded {cloudflare,vercel,netlify}
 // so a first `blocks deploy railway` saved `deployTarget: "railway"`, and
 // the next deploy failed at config validation on reload.
 func TestValidate_PluginDeployTargetPersists(t *testing.T) {

@@ -245,7 +245,7 @@ func TestCardUpdate_PromptDeclined(t *testing.T) {
 	}
 }
 
-// TestCardUpdate_EOFSkipsUpdate is the impl_07 F7 regression gate: a deploy
+// TestCardUpdate_EOFSkipsUpdate is the regression gate: a deploy
 // running in CI (or any pipeline) with no interactive stdin must NOT silently
 // modify agent-card.json. The reader returns io.EOF immediately, and the
 // previous code path treated empty input as "yes, edit the file."

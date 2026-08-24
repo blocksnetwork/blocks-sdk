@@ -104,7 +104,7 @@ export class StreamRef {
     // consumer that opened a stream while the task was running must be
     // able to re-call open() during the drain window (or with
     // autoDrain: false) and receive the same live client, per the
-    // SDK_CONTRACT idempotency rule.
+    // the idempotency rule.
     if (this._client && this._client.isActive) {
       return this._client;
     }

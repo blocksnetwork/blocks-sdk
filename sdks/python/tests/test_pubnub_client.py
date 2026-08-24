@@ -175,8 +175,8 @@ def test_create_pubnub_client_does_not_override_retry_when_unbounded_false():
     intentional fail-fast behavior for short-lived clients.
 
     The cross-SDK default for subscribe_retry_unbounded is True (see
-    test_default_subscribe_retry_unbounded_is_true and SDK_CONTRACT.md
-    §Cross-SDK retry-budget defaults), so per-task / ephemeral call
+    test_default_subscribe_retry_unbounded_is_true and the SDK's
+    cross-SDK retry-budget defaults), so per-task / ephemeral call
     sites MUST opt out explicitly to retain this baseline behavior.
 
     Imports the real `pubnub` package — no mocks.
@@ -220,9 +220,8 @@ def test_subscribe_retry_unbounded_raises_maximum_reconnection_retries_to_43200(
     # control clients to shrink the post-blip recovery gap, but the
     # cap also fires on every healthy long-poll — the broker observed
     # each client-side abort as a clean socket close and emitted a
-    # presence `leave` every 60s on idle agents. See the FAST_RECOVERY
-    # plan under dev_docs/initiative/05-04_presence_dot_fixes/ for the
-    # heartbeat-driven recovery approach that replaces this knob.
+    # presence `leave` every 60s on idle agents. A heartbeat-driven
+    # recovery approach replaces this knob.
     assert pn.config.subscribe_request_timeout == 310
 
 
@@ -350,8 +349,7 @@ def test_on_retry_callback_receives_retry_limit_reached_warning():
 def test_default_subscribe_retry_unbounded_is_true():
     """Cross-SDK parity contract: Python and Node both default the
     unbounded-retry flag to True. Per-task / ephemeral / per-stream
-    call sites MUST opt OUT explicitly. See
-    dev_docs/SDK_CONTRACT.md §Cross-SDK retry-budget defaults."""
+    call sites MUST opt OUT explicitly."""
     import inspect
 
     from blocks_network.pubnub_client import create_pubnub_client

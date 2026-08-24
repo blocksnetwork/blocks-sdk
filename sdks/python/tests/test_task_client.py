@@ -1860,7 +1860,7 @@ class TestTaskClientBillingModeRequired:
 class TestTaskClientCreateNoRegistryLookup:
     """``TaskClient.create(billing_mode=...)`` does NOT call into the registry.
 
-    Per IMPL §6 Python 1, the consumer-side factory takes the caller's
+    The consumer-side factory takes the caller's
     explicit ``billing_mode`` and maps directly to the CDM keyset. It
     must not perform a registry GET — that would silently bind the
     consumer's billing-mode declaration to the agent's current value
@@ -1887,7 +1887,7 @@ class TestSendMessageBillingModeOnWire:
     """SendMessage RPC params dict carries camelCase ``billingMode``.
 
     The wire field is camelCase ``billingMode`` even though the Python
-    SDK parameter is snake_case ``billing_mode`` (per IMPL §6 Python 5
+    SDK parameter is snake_case ``billing_mode`` (the wire field
     + the agent prompt's naming reminder).
     """
 
@@ -2147,7 +2147,7 @@ class TestCrossBillingModeSubscribeKeyRouting:
 class TestSendMessageBillingModeMismatch:
     """Backend ``BillingModeMismatch`` errors surface as the typed exception.
 
-    Per IMPL §6 Python 6-8: SDK maps RPC ``code: 'BillingModeMismatch'``
+    SDK maps RPC ``code: 'BillingModeMismatch'``
     to ``BillingModeMismatchError`` carrying ``expected``/``got`` from
     ``error.data.details``. SDK does NOT auto-retry.
     """

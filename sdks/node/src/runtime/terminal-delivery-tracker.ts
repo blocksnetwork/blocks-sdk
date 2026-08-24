@@ -3,7 +3,7 @@ import type { TerminalEvent } from './task-session.js';
 /**
  * Layer-1 dedup for terminal events.
  *
- * Cooperative cancel and the scanner's Phase-6 safety net can both produce
+ * Cooperative cancel and the scanner's safety net can both produce
  * a terminal for the same task. The DB layer (`taskFanout` PubNub Function)
  * already dedupes at the row-status level, but consumers subscribed to the
  * task channel still see two wire-level terminals. This tracker enforces

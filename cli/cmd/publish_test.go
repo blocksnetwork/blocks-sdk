@@ -111,7 +111,7 @@ func TestPublishWithListingPublic(t *testing.T) {
 	if strings.Contains(strings.ToLower(output), "playground") {
 		t.Errorf("success output must not contain playground wording:\n%s", output)
 	}
-	// BLOCKS-563: when the backend response carries no agentUrl, the View link
+	// When the backend response carries no agentUrl, the View link
 	// falls back to the active deployment origin (BLOCKS_BACKEND_URL here), not
 	// stock app.blocks.ai and not an omitted line.
 	wantView := "View: " + ts.URL + "/agents/test_agent"
@@ -645,7 +645,7 @@ func TestPublishedAgentURLOmitsWithoutResolution(t *testing.T) {
 	}
 }
 
-// TestPublishedAgentURLUsesBackendURLEnvFallback covers BLOCKS-563: with no
+// TestPublishedAgentURLUsesBackendURLEnvFallback covers the case where, with no
 // dashboard override set, the "View" link must fall back to the deployment
 // origin (BLOCKS_BACKEND_URL here) rather than stock CDM / app.blocks.ai.
 func TestPublishedAgentURLUsesBackendURLEnvFallback(t *testing.T) {
@@ -662,7 +662,7 @@ func TestPublishedAgentURLUsesBackendURLEnvFallback(t *testing.T) {
 	}
 }
 
-// TestPublishedAgentURLUsesActiveProfileFallback covers BLOCKS-563: the active
+// TestPublishedAgentURLUsesActiveProfileFallback covers the case where the active
 // profile's BaseURL (an enterprise/custom deployment) must drive the "View"
 // link when no dashboard override and no BLOCKS_BACKEND_URL are set.
 func TestPublishedAgentURLUsesActiveProfileFallback(t *testing.T) {
@@ -745,7 +745,7 @@ func TestPublishedAgentURLSkipsCDMFetchWhenNonInteractive(t *testing.T) {
 }
 
 // TestPublishedAgentURLBackendOverrideBeatsStaleProfileDashboard covers the
-// BLOCKS-563 precedence hole: when BLOCKS_BACKEND_URL targets a different
+// Precedence hole: when BLOCKS_BACKEND_URL targets a different
 // backend than the active profile was logged into, the profile's cached
 // DashboardBaseURL is stale and must be skipped so the View link follows the
 // backend actually being published to.

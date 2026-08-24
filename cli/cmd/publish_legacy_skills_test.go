@@ -8,11 +8,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 )
+
+// internalRefRe matches any internal tracker ID. Customer-facing output must
+// never contain one.
+var internalRefRe = regexp.MustCompile(`BLOCKS-\d+`)
 
 // validateCardWithLegacyShim is the shared entry used by `blocks run`,
 // `blocks check`, and `blocks publish`. The legacy-skills path must succeed
@@ -72,7 +77,7 @@ func TestValidateCardWithLegacyShimSurfacesWarning(t *testing.T) {
 		t.Errorf("stderr should call out an explicit Action: line; got=%q", stderr)
 	}
 	// Internal-only references must not leak to customers (Jira IDs, internal URLs).
-	if strings.Contains(stderr, "BLOCKS-389") || strings.Contains(stderr, "atlassian") {
+	if internalRefRe.MatchString(stderr) || strings.Contains(stderr, "atlassian") {
 		t.Errorf("stderr leaked an internal reference to the customer; got=%q", stderr)
 	}
 
@@ -187,7 +192,7 @@ func TestPreprocessAgentCard(t *testing.T) {
 				t.Errorf("stderr unexpectedly contains %q: got=%q", tc.wantStderrMiss, stderrStr)
 			}
 			// No customer-visible warning may leak internal references.
-			if strings.Contains(stderrStr, "BLOCKS-389") || strings.Contains(stderrStr, "atlassian") {
+			if internalRefRe.MatchString(stderrStr) || strings.Contains(stderrStr, "atlassian") {
 				t.Errorf("stderr leaked an internal reference; got=%q", stderrStr)
 			}
 		})
@@ -288,7 +293,7 @@ func TestPublishRewritesLegacySkillsField(t *testing.T) {
 	if !strings.Contains(stderr, "skills") || !strings.Contains(stderr, "tags") {
 		t.Errorf("stderr should mention both skills and tags to be actionable:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "BLOCKS-389") || strings.Contains(stderr, "atlassian") {
+	if internalRefRe.MatchString(stderr) || strings.Contains(stderr, "atlassian") {
 		t.Errorf("stderr leaked an internal reference to the customer:\n%s", stderr)
 	}
 

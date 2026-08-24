@@ -124,7 +124,7 @@ describe('part-helpers', () => {
   });
 
   describe('package surface', () => {
-    // Guard: SDK_CONTRACT §8.6.2g documents textPart / filePart /
+    // Guard: the SDK contract documents textPart / filePart /
     // filePartFromPath as exported from the package root. These must
     // be reachable through the barrel, not just the internal module.
     it('re-exports textPart, filePart, and filePartFromPath from the package entrypoint', async () => {

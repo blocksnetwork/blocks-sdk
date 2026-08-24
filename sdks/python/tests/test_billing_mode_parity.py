@@ -10,7 +10,7 @@ map. All three layers (Node SDK, Python SDK, the service) must agree:
 Any divergence between these three sources of truth will split routing
 and messages will land on the wrong keyset.
 
-Phase 3 of the Billing Mode Contract initiative also adds wire-shape
+Wire-shape
 parity for ``BillingModeMismatch`` typed errors: the same canonical
 backend JSON-RPC error envelope must deserialize to a typed exception
 with matching attributes in both Node and Python SDKs.
@@ -106,7 +106,7 @@ class TestTaskClientCreateRequiresBillingMode:
 # Canonical backend JSON-RPC error envelope for BillingModeMismatch.
 # This payload shape is normative — the Node SDK's parity test must use
 # the SAME literal envelope and assert the same expected/got values.
-# Source: backend `bmc-data` Phase 1 IMPL_REPORT, "JSON-RPC error.data wire shape".
+# Source: backend `bmc-data` Phase 1 report, "JSON-RPC error.data wire shape".
 BILLING_MODE_MISMATCH_FIXTURE = {
     "jsonrpc": "2.0",
     "id": "rpc-fixture-id",
@@ -172,7 +172,7 @@ class TestBillingModeMismatchWireParity:
 
         If this test changes, the Node SDK parity test fixture and any
         backend code emitting BillingModeMismatch must be updated in
-        lock-step (and so must `bmc-data`'s IMPL_REPORT.md).
+        lock-step (and so must `bmc-data`'s report).
         """
         env = BILLING_MODE_MISMATCH_FIXTURE["error"]
         assert env["code"] == -32000

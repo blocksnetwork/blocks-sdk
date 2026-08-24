@@ -16,7 +16,7 @@
  * The class exposes `tokenProvider` as the SDK Mode 3 callback: pass it
  * directly to `TaskClient.create({ tokenProvider })`.
  *
- * **JWT discipline (C345-3-1).** The JWT and its `expiresAt` live in memory
+ * **JWT discipline.** The JWT and its `expiresAt` live in memory
  * only. On every successful refresh, the manager calls
  * `storage.updateScope` with `{ agentIds, userId }` — never `token`. Tests
  * iterate `localStorage` and assert no `token`/`jwt`/`expiresAt` field
@@ -239,7 +239,7 @@ export class EmbeddedAuthSessionManager {
 
     // Persist the rotated refresh token + narrowed scope. The submitted
     // refresh token is revoked server-side; subsequent refreshes MUST
-    // use the new one. JWT itself remains in-memory only (C345-3-1).
+    // use the new one. JWT itself remains in-memory only.
     this.storage.updateScope(this.partitionKey, {
       agentIds: parsed.agentIds,
       userId: parsed.userId,

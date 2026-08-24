@@ -1403,7 +1403,7 @@ export class TaskClient {
           const tt = String(event.timetoken ?? '0');
           if (dispatching && dispatchRef) {
             // Forward the PubNub timetoken to the session so its dedup
-            // layer (SDK_CONTRACT §10.4.1a) can drop replay duplicates.
+            // layer can drop replay duplicates.
             dispatchRef(msg, tt);
           } else {
             buffer.push({ message: msg, timetoken: tt });
@@ -1560,11 +1560,11 @@ function subscribeToTask(
   callbacks: TaskEventCallbacks,
 ): TaskSubscription {
   const channel = taskChannel(taskId, orgId);
-  // BLOCKS-370 R7: per-subscription tracker so the consumer's onTerminal
+  // Per-subscription tracker so the consumer's onTerminal
   // fires at most once even if the wire delivers two terminals (e.g.
-  // scanner Phase-6 force-cancel + agent's delayed terminal).
+  // scanner force-cancel + agent's delayed terminal).
   const terminalTracker = new TerminalDeliveryTracker();
-  // BLOCKS-370: cancel_requested fires zero-or-once per subscription.
+  // cancel_requested fires zero-or-once per subscription.
   // Suppressed once a terminal has been delivered (causality) AND
   // suppressed on duplicate emissions of the event itself (e.g. PubNub
   // cache replay before timetoken-dedup catches it). Mirrors Python.
@@ -1649,7 +1649,7 @@ function subscribeToTask(
 
   pubnub.addListener(listener);
   // timetoken: 1000 asks PubNub to replay everything still in the
-  // channel's in-memory cache (per SDK_CONTRACT §10.4.1a). Using 0
+  // channel's in-memory cache (per the SDK contract). Using 0
   // would mean "initial subscribe, no catch-up" and leaves the
   // publish-before-subscribe race unfixed.
   //

@@ -215,8 +215,8 @@ func cardWebAppsAtCap(raw []byte) (bool, error) {
 // preserves the document's indent style but does not preserve key order
 // (JSON has no ordering guarantee and Go's encoder emits keys sorted). For
 // a card authored by `blocks init` + `blocks publish`, key reordering is
-// acceptable; see impl_07 §9.4 for the alternative "punt and emit snippet"
-// path the user can take via `--no-card-update`.
+// acceptable; the alternative "punt and emit snippet" path is available
+// via `--no-card-update`.
 func insertWebApp(raw []byte, url, label, indent string) ([]byte, error) {
 	var card map[string]any
 	if err := json.Unmarshal(raw, &card); err != nil {

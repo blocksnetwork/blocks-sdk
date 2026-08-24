@@ -1,4 +1,4 @@
-"""BLOCKS-370: dedup + on_cancel_requested for Python subscribe_to_task.
+"""Dedup + on_cancel_requested for Python subscribe_to_task.
 
 Mirror of blocks-sdk/sdks/node/tests/subscribe-to-task.dedup.test.ts.
 """
@@ -153,7 +153,7 @@ def test_on_cancel_requested_suppressed_after_terminal() -> None:
 
 
 def test_on_cancel_requested_fires_zero_or_once_on_duplicate_wire_emissions() -> None:
-    """BLOCKS-370: docs claim cancel_requested fires zero-or-once.
+    """Docs claim cancel_requested fires zero-or-once.
     Duplicate emissions (e.g. PubNub cache replay) must not double-fire.
     """
     pn = _make_mock_pubnub()

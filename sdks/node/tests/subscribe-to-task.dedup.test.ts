@@ -29,7 +29,7 @@ function createMockPubNub() {
   };
 }
 
-describe('TaskClient.subscribeToTask terminal dedup (BLOCKS-370 R7)', () => {
+describe('TaskClient.subscribeToTask terminal dedup', () => {
   it('onTerminal fires exactly once when two wire terminals arrive on the same channel', () => {
     const onTerminal = vi.fn();
     const pubnub = createMockPubNub();
@@ -114,7 +114,7 @@ describe('TaskClient.subscribeToTask terminal dedup (BLOCKS-370 R7)', () => {
   });
 });
 
-describe('TaskClient.subscribeToTask onCancelRequested (BLOCKS-370)', () => {
+describe('TaskClient.subscribeToTask onCancelRequested', () => {
   it('dispatches cancel_requested events to onCancelRequested', () => {
     const onCancelRequested = vi.fn();
     const pubnub = createMockPubNub();

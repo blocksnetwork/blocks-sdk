@@ -20,7 +20,7 @@ import (
 const pluginProtocolVersion = 1
 
 // pluginConfig models a single plugin YAML file at
-// ~/.config/blocks/deploy-targets/<name>.yml. Per impl_07 §5.3.
+// ~/.config/blocks/deploy-targets/<name>.yml.
 type pluginConfig struct {
 	ProtocolVersion  int               `yaml:"protocolVersion"`
 	Name             string            `yaml:"name"`

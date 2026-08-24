@@ -37,7 +37,7 @@ func writeBlocksConfig(t *testing.T, dir string, agents []string) string {
 	return path
 }
 
-// TestDevRunsWithoutLogin verifies the impl_07 follow-up #8 fix: `blocks dev`
+// TestDevRunsWithoutLogin verifies that `blocks dev`
 // no longer hard-fails when `blocks login` has not been run. The dev server
 // is a static-file host with hot reload; the embed-auth popup it serves
 // authenticates the end user against the backend, and the CLI's API key

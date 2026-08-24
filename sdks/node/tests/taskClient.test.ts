@@ -258,7 +258,7 @@ describe('TaskClient', () => {
     });
 
     it('includes billingMode (free) on every SendMessage RPC params object', async () => {
-      // BMC §6: billingMode is threaded into every SendMessage call so the
+      // billingMode is threaded into every SendMessage call so the
       // backend can compare against the agent's persisted mode.
       fetchSpy.mockResolvedValueOnce(mockRpcResponse(fullResponse()));
 

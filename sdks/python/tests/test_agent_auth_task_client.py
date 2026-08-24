@@ -1,7 +1,7 @@
 """Regression: AgentAuth + TaskClient.send_message cross-SDK parity.
 
 Mirrors sdks/node/tests/agent-auth-task-client.test.ts for cross-SDK parity
-(AGENTS.md §SDK Rules). Verifies that:
+Verifies that:
 1. The T4 readToken from the RPC response is applied to the per-session PubNub
    via set_token() -- the smoking gun.
 2. The SDK subscribes to the backend-named status channel.

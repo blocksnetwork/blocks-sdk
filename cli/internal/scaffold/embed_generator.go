@@ -11,7 +11,7 @@
 // Per-agent JS function bodies and HTML <section>s are constructed
 // programmatically rather than via Go template loops; the conditional
 // logic over inputs / outputs / streams is too branchy for text/template
-// to read or maintain (per IMPL §7.3).
+// to read or maintain.
 package scaffold
 
 import (
@@ -63,7 +63,7 @@ type AppFiles struct {
 	ReadmeMD  string
 }
 
-// Generator complexity ceilings (IMPL §R3.5). Cards exceeding any of
+// Generator complexity ceilings. Cards exceeding any of
 // these have the surplus elements listed as TODO comments rather than
 // emitted as live code.
 const (
@@ -255,10 +255,10 @@ func renderSignIn(cards []*cardfetch.AgentCard, vars EmbedVars, multi bool) (str
 	// Reveal only the sections for agents the backend actually returned a
 	// client for. The popup intersects requested agents with agents the
 	// user can reach, so a private agent the user has no grant on is
-	// filtered out (impl_06 §4.1). Revealing its section would let the
+	// filtered out. Revealing its section would let the
 	// user click Send and hit "no signed-in client" mid-flow; better to
-	// hide it until the user requests access (BLOCKS-162 invitation
-	// flow). Customize this block if you want to show a tailored
+	// hide it until the user requests access via the invitation
+	// flow. Customize this block if you want to show a tailored
 	// "request access" notice for filtered-out agents.
 	for _, c := range cards {
 		fmt.Fprintf(&b, "      if (clients[%s]) document.getElementById('section-%s').hidden = false;\n", jsString(c.AgentName), c.AgentName)
@@ -516,13 +516,13 @@ func renderInputBlock(agentName string, idx int, in cardfetch.InputDecl) string 
 	switch cls {
 	case schema.TransportForm:
 		fmt.Fprintf(&b, "      // input %q is form-class (%s) — wire shape is\n", in.ID, in.ContentType)
-		b.WriteString("      // { partId, text: <JSON-encoded value> } per SDK_CONTRACT §8.6.2g.\n")
+		b.WriteString("      // { partId, text: <JSON-encoded value> } per the SDK contract\n")
 		fmt.Fprintf(&b, "      const ta_%d = document.getElementById(%s);\n", idx, domID)
 		fmt.Fprintf(&b, "      try { JSON.parse(ta_%d.value); } catch (e) { throw new Error('input ' + %s + ': invalid JSON: ' + e.message); }\n", idx, idLit)
 		fmt.Fprintf(&b, "      requestParts.push({ partId: %s, text: ta_%d.value });\n", partLit, idx)
 	case schema.TransportText:
 		fmt.Fprintf(&b, "      // input %q is text-class (%s) — wire shape is\n", in.ID, in.ContentType)
-		b.WriteString("      // { partId, text: <raw string> } per SDK_CONTRACT §8.6.2g.\n")
+		b.WriteString("      // { partId, text: <raw string> } per the SDK contract\n")
 		fmt.Fprintf(&b, "      const ta_%d = document.getElementById(%s);\n", idx, domID)
 		fmt.Fprintf(&b, "      requestParts.push({ partId: %s, text: ta_%d.value });\n", partLit, idx)
 	case schema.TransportFile:
@@ -605,12 +605,12 @@ func renderOutputDispatch(outputs []cardfetch.OutputDecl) string {
 	if len(limited) == 1 {
 		// Single declared output — route every artifact here regardless
 		// of event.outputId presence. outputId is OPTIONAL per
-		// SDK_CONTRACT §9.1 and many real agents (echo2, stest1) emit
+		// the SDK contract and many real agents (echo2, stest1) emit
 		// artifacts without setting it.
 		op := limited[0]
 		b.WriteString("      // Card declares exactly 1 output — route every artifact here\n")
 		b.WriteString("      // regardless of event.outputId. outputId is OPTIONAL per\n")
-		b.WriteString("      // SDK_CONTRACT §9.1; we don't gate on its presence.\n")
+		b.WriteString("      // the SDK contract; we don't gate on its presence.\n")
 		preamble()
 		fmt.Fprintf(&b, "        // === Output: %q (%s, guaranteed=%t) ===\n", op.ID, displayContentType(op.ContentType), op.Guaranteed)
 		b.WriteString(indent(renderOutputCase(op), "        "))
@@ -621,7 +621,7 @@ func renderOutputDispatch(outputs []cardfetch.OutputDecl) string {
 	// >=2 declared outputs: switch on event.outputId, with a mimeType-
 	// based default for untagged or unknown ids.
 	b.WriteString("      // Output rendering is dispatched via onArtifact, switching on\n")
-	b.WriteString("      // event.outputId. outputId is OPTIONAL per SDK_CONTRACT §9.1, so\n")
+	b.WriteString("      // event.outputId. outputId is OPTIONAL per the SDK contract, so\n")
 	b.WriteString("      // untagged or unknown artifacts fall to a mimeType-based renderer.\n")
 	preamble()
 	b.WriteString("        switch (event.outputId) {\n")
@@ -715,7 +715,7 @@ func renderStreamConsumers(streams map[string]cardfetch.StreamDecl) string {
 		case "inbound", "bidirectional":
 			fmt.Fprintf(&b, "      // TODO: agent declares an %s stream %q (%s).\n", s.Direction, k, s.Format)
 			b.WriteString("      //       Consumer-side stream writing is not generated — see\n")
-			b.WriteString("      //       SDK_CONTRACT §8.4 / §8.7 for the consumer-writer pattern.\n")
+			b.WriteString("      //       the SDK contract for the consumer-writer pattern.\n")
 		default:
 			fmt.Fprintf(&b, "      // TODO: stream %q has unrecognized direction %q.\n", k, s.Direction)
 		}
@@ -731,7 +731,7 @@ func renderOutboundStream(key string, s cardfetch.StreamDecl) string {
 	b.WriteString("      // If declaredStream is undefined the agent didn't tag this stream\n")
 	b.WriteString("      // with a card key — the filter falls through and we ignore the stream.\n")
 	if s.Affinity == "shared" {
-		b.WriteString("      // Note: shared-affinity stream — see SDK_CONTRACT §8.4.1a; do not\n")
+		b.WriteString("      // Note: shared-affinity stream — see the SDK contract; do not\n")
 		b.WriteString("      //       call stream.end() on the inbound side.\n")
 	}
 	b.WriteString("      session.onStream(async (streamRef) => {\n")

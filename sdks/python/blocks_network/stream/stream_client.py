@@ -315,14 +315,14 @@ class StreamClient:
             )
         self._direction = direction
         # Shared-affinity streams must never publish a stream_end marker
-        # on per-task cleanup (SDK_CONTRACT §8.4.1a carve-out). Store the
+        # on per-task cleanup (carve-out). Store the
         # value once; `end()` consults it below. Invalid inputs fall back
         # to 'dedicated' (the safer default — wrongly suppressing the
         # marker is more surprising than wrongly publishing it). Log a
         # WARN on fallback so misconfigured hand-constructed clients
-        # surface in logs rather than as silent correctness drift. See
-        # QUESTIONS.md D6 (shared_stream_lifecycle). The parser-level
-        # enum guard already rejects invalid affinity on the wire path.
+        # surface in logs rather than as silent correctness drift. The
+        # parser-level enum guard already rejects invalid affinity on
+        # the wire path.
         if affinity in ("dedicated", "shared"):
             self._affinity = affinity
         else:
@@ -476,7 +476,7 @@ class StreamClient:
         # producer's per-task cleanup (or a consumer-writer's end()) is
         # refcount-internal and MUST NOT publish a stream_end marker that
         # would end peer consumers' iterators mid-broadcast.
-        # See SDK_CONTRACT §8.4.1a shared-affinity carve-out.
+        # See the shared-affinity carve-out.
         if (
             self._direction != 'bidirectional'
             and self._bundle is not None
@@ -661,7 +661,7 @@ class StreamClient:
         self._message_listener = _MessageListener()
         self._pubnub.add_listener(self._message_listener)
         # with_timetoken(1000) asks PubNub to replay everything still in the
-        # channel's in-memory cache (per SDK_CONTRACT §10.4.1a). On data-plane
+        # channel's in-memory cache (per the SDK contract). On data-plane
         # stream channels this is a short-term mitigation for the
         # publish-before-subscribe race; the reorder buffer's seq-based
         # dedup handles duplicate delivery from replay overlap. The durable

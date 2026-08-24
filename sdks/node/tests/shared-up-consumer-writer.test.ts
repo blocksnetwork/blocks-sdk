@@ -1,6 +1,6 @@
 /**
- * Consumer-writer split test for shared_up (SHARED_STREAM_LIFECYCLE_IMPL
- * Code Changes §12a, fix (f) coverage).
+ * Consumer-writer split test for shared_up (shared-stream lifecycle,
+ * consumer-writer coverage).
  *
  * On `shared_up` (affinity: 'shared', agentDirection: 'inbound'),
  * consumer direction inverts to 'outbound' — the consumer builds a
@@ -75,7 +75,7 @@ function endMarkerPublishes(): unknown[] {
     );
 }
 
-describe('shared_up consumer-writer (§12a): no stream_end on end()', () => {
+describe('shared_up consumer-writer: no stream_end on end()', () => {
   it('two consumer-writers on a shared_up channel end() without publishing stream_end', async () => {
     // Two distinct consumer tasks, both building a writer-side
     // StreamClient from a shared-affinity descriptor.
@@ -116,7 +116,7 @@ describe('shared_up consumer-writer (§12a): no stream_end on end()', () => {
     // Sanity: the gate is specific to affinity: 'shared'. A dedicated
     // consumer-writer (rare but symmetric) MUST still publish the
     // marker — over-broad suppression would regress the dedicated
-    // stream contract (§8.4 marker emission on per-task cleanup).
+    // stream contract (marker emission on per-task cleanup).
     const desc = makeConsumerWriterDescriptor({
       streamId: 'ded_up',
       channel: 'stream.sharedup_test.ded_up',

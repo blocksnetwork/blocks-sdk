@@ -1,11 +1,9 @@
 """Shared-stream lifecycle tests for ``ctx.create_stream()``.
 
-Mirrors the Node SDK suite landed by ssl-node-sdk at
+Mirrors the Node SDK suite at
 ``blocks-sdk/sdks/node/tests/agent-instance-shared-stream.test.ts``.
 
-Covers the 8 behaviors required by
-``dev_docs/initiative/sdk_consumer_fixes/SHARED_STREAM_LIFECYCLE_IMPL.md``
-(Code Changes §10, mirrored in the Python SDK):
+Covers the 8 behaviors of the shared-stream lifecycle contract:
 
 1. First acquirer on a shared stream publishes ``stream_setup`` with
    ``phase: 'embedded'`` and creates a registry entry carrying the task.
@@ -308,7 +306,7 @@ class TestSharedStreamFirstAcquirer:
             assert len(setups) == 1, f"Expected 1 setup publish, got {len(setups)}"
             msg = setups[0]
             # Python publishes `phase: 'embedded'` explicitly on the
-            # single-phase path to match Node (see QUESTIONS.md D5).
+            # single-phase path to match Node.
             assert msg.get("phase") == "embedded"
             assert msg.get("taskId") == "task-A"
             assert msg.get("affinity") == "shared"
@@ -577,8 +575,7 @@ class TestSharedStreamRejectOnExternal:
     Shared affinity is "one SDK-managed broadcast writer, many
     ref-holding tasks"; external delegates the writer entirely. The
     combination has no coherent registry model, so both SDKs reject
-    it at createStream time regardless of task_kind. See SDK_CONTRACT
-    §4.4.3.
+    it at createStream time regardless of task_kind. See the SDK contract.
     """
 
     def test_shared_external_raises(
@@ -920,7 +917,7 @@ class TestSharedStreamSetupRace:
 
     This is a registry-scope test covering the barrier mechanism; the
     end-to-end agent-instance behavior is exercised by the existing
-    TestSharedStreamSecondTaskActivate test and by the human-test §6.2
+    TestSharedStreamSecondTaskActivate test
     concurrent-task walkthrough.
     """
 

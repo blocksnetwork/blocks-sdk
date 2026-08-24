@@ -34,7 +34,7 @@
 
   // Render an artifact's bytes into outputEl based on its own mimeType.
   // Used for: (a) untagged artifacts (event.outputId may be undefined per
-  // SDK_CONTRACT §9.1), (b) outputId values that don't match any declared
+  // the SDK contract), (b) outputId values that don't match any declared
   // output, (c) the post-terminal listArtifacts() defensive fallback.
   function renderArtifactByMime(bytes, mimeType, outputEl) {
     const mt = mimeType || '';
@@ -196,7 +196,7 @@
         requestParts,
       });
       // Output rendering is dispatched via onArtifact, switching on
-      // event.outputId. outputId is OPTIONAL per SDK_CONTRACT §9.1, so
+      // event.outputId. outputId is OPTIONAL per the SDK contract, so
       // untagged or unknown artifacts fall to a mimeType-based renderer.
       session.onArtifact(async (event) => {
         if (renderedRefs.has(event.artifactRef)) return;

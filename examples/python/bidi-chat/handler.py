@@ -15,7 +15,7 @@ from blocks_network.types import StartTaskMessage, TaskContext
 def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[str, Any]:
     # A bidirectional chat needs a live stream. When streaming wasn't
     # negotiated (no ctx, or a request consumer opted out via stream=False →
-    # has_stream false, BLOCKS-181), there's nothing to stream — return an
+    # has_stream false), there's nothing to stream — return an
     # artifact instead of raising in create_stream().
     if ctx is None or not ctx.has_stream:
         return {"artifacts": [{"data": "no stream negotiated — nothing streamed", "mimeType": "text/plain"}]}

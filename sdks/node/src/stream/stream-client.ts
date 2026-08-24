@@ -345,7 +345,7 @@ export class StreamClient {
     // stream. Shared-affinity channels are broadcast by design; per-task
     // cleanup is refcount-internal, not a "broadcast is over" signal, so
     // we NEVER publish the marker on shared streams — producer OR
-    // consumer-writer. See SDK_CONTRACT §8.4.1a shared-affinity carve-out.
+    // consumer-writer. See the shared-affinity carve-out.
     if (
       this.direction !== 'bidirectional' &&
       this.bundle &&
@@ -505,7 +505,7 @@ export class StreamClient {
     };
     this.pubnub.addListener(this.messageListener);
     // timetoken: 1000 asks PubNub to replay everything still in the
-    // channel's in-memory cache (per SDK_CONTRACT §10.4.1a). On data-plane
+    // channel's in-memory cache (per the SDK contract). On data-plane
     // stream channels this is a short-term mitigation for the
     // publish-before-subscribe race; the reorder buffer's seq-based
     // dedup handles duplicate delivery from replay overlap. The durable

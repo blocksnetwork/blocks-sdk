@@ -44,7 +44,7 @@ prints the final artifact.
 ### Provider side (handler.ts)
 
 - Guarding on `ctx.hasStream` before streaming — request streaming is
-  consumer opt-in (BLOCKS-181), so the handler degrades to an
+  consumer opt-in, so the handler degrades to an
   artifact-only response when the consumer didn't opt in
 - `ctx.createStream()` to open an outbound stream
 - `stream.write()` for incremental chunk delivery

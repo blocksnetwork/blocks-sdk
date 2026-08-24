@@ -2,7 +2,7 @@
 /**
  * Tests for StreamClient reorder buffer.
  *
- * Covers the 11 IMPL-doc scenarios plus post-review additions:
+ * Covers the 11 planned scenarios plus post-review additions:
  * 1.  ordered passthrough
  * 2.  out-of-order reorder
  * 3.  adjacent swap

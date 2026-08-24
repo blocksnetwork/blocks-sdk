@@ -5,7 +5,6 @@
 // org) Blocks keys live in the profile store (internal/profiles, contexts.json). The
 // "blocks" namespace here is a transitional, read-only migration fallback drained by
 // internal/profiles on first profile load — no code writes a fresh Blocks key into it.
-// See dev_docs/initiative/06-10_blocks_enterprise/CLI_CREDENTIAL_STORE_PLAN.md.
 package auth
 
 import (

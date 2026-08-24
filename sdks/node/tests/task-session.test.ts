@@ -125,7 +125,7 @@ describe('TaskSession', () => {
       sdkOptions: { subscribeKey: 'sub-key', publishKey: 'pub-key' },
       // Keep the pre-Family-F 2s drain window for auto-drain tests so
       // existing `vi.advanceTimersByTime(2000)` assertions stay fast
-      // and explicit. The production default is 30000 ms (Family F);
+      // and explicit. The production default is 30000 ms;
       // see the "configurable drain window" describe block for
       // coverage of the new default and overrides.
       drainWindowMs: 2000,
@@ -134,7 +134,7 @@ describe('TaskSession', () => {
 
   it('subscribes to the task channel on creation with cache-replay timetoken', () => {
     // timetoken: 1000 asks PubNub to replay everything still in the channel's
-    // in-memory cache (SDK_CONTRACT §10.4.1a).
+    // in-memory cache.
     expect(mockPubNub.subscribe).toHaveBeenCalledWith({ channels: [channel], timetoken: 1000 });
     expect(mockPubNub.addListener).toHaveBeenCalled();
   });
@@ -875,7 +875,7 @@ describe('TaskSession', () => {
     });
   });
 
-  describe('configurable drain window (Family F)', () => {
+  describe('configurable drain window', () => {
     const streamStartedEvent = {
       type: 'progress',
       taskId,
@@ -1001,7 +1001,7 @@ describe('TaskSession', () => {
     });
   });
 
-  describe('openAllStreams (Family F)', () => {
+  describe('openAllStreams', () => {
     const twoStreamInbound = {
       type: 'progress',
       taskId,
@@ -1463,7 +1463,7 @@ describe('TaskSession', () => {
     });
   });
 
-  describe('subscribe cache-replay dedup (Family E)', () => {
+  describe('subscribe cache-replay dedup', () => {
     it('drops duplicate artifact events with the same timetoken', () => {
       const cb = vi.fn();
       session.onArtifact(cb);
