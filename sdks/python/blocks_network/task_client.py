@@ -245,11 +245,11 @@ def subscribe_to_task(
     Returns a :class:`TaskSubscription` with ``unsubscribe()`` for cleanup.
     """
     channel = task_channel(task_id, owner_id)
-    # BLOCKS-370 R7: per-subscription tracker so on_terminal fires at most
-    # once even if the wire delivers two terminals (scanner Phase-6
-    # force-cancel + agent's delayed terminal).
+    # Per-subscription tracker so on_terminal fires at most
+    # once even if the wire delivers two terminals (scanner force-cancel
+    # + agent's delayed terminal).
     terminal_tracker = TerminalDeliveryTracker()
-    # BLOCKS-370: cancel_requested fires zero-or-once per subscription.
+    # cancel_requested fires zero-or-once per subscription.
     # Tracked via a 1-element list (mutable closure-captured state without
     # the `nonlocal` boilerplate).
     cancel_requested_state: List[bool] = [False]
@@ -293,7 +293,7 @@ def subscribe_to_task(
 
     pubnub.add_listener(listener)
     # with_timetoken(1000) asks PubNub to replay everything still in the
-    # channel's in-memory cache (per SDK_CONTRACT §10.4.1a). Using 0 would
+    # channel's in-memory cache (per the SDK contract). Using 0 would
     # mean "initial subscribe, no catch-up" and leaves the
     # publish-before-subscribe race unfixed.
     #
@@ -364,8 +364,8 @@ def _dispatch_event(
         except Exception as err:
             _route_subscribe_error(err, "onArtifact", msg, on_error)
     elif msg_type == "terminal":
-        # BLOCKS-370 R7: dedup terminal — first-terminal-wins. A duplicate
-        # wire terminal (scanner Phase-6 force-cancel + agent's delayed
+        # Dedup terminal — first-terminal-wins. A duplicate
+        # wire terminal (scanner force-cancel + agent's delayed
         # terminal) is silently dropped before any callback fires.
         def _deliver_terminal(e: dict) -> None:
             if callbacks.on_terminal:
@@ -376,7 +376,7 @@ def _dispatch_event(
 
         terminal_tracker.try_deliver(msg, _deliver_terminal)
     elif msg_type == "cancel_requested":
-        # BLOCKS-370: backend acknowledgment of a cooperative cancel.
+        # Backend acknowledgment of a cooperative cancel.
         # Two suppression gates: terminal-already-delivered (causality)
         # and cancel_requested-already-delivered (duplicate wire emission,
         # e.g. PubNub cache replay).

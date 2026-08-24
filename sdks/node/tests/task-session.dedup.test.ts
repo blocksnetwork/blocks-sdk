@@ -62,7 +62,7 @@ vi.mock('../src/stream/index.js', async (importOriginal) => {
   };
 });
 
-describe('TaskSession terminal-event dedup (BLOCKS-370 R7)', () => {
+describe('TaskSession terminal-event dedup', () => {
   const taskId = 'task-1';
   const ownerId = 'alice';
   const agentName = 'echo';

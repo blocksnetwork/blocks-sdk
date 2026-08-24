@@ -46,7 +46,7 @@ vi.mock('../src/runtime/pubnub-client.js', () => ({
 }));
 
 /**
- * Agent Instance tests - updated for TASKS_IMPLEMENTATION_PLAN.md Step 1:
+ * Agent Instance tests:
  * - Agent instance no longer uses defaultTaskIndexStore (registry updates via fan-out Function)
  * - Agent instance no longer publishes to obs.{agentName}.log (obs fan-out via Function)
  * - Agent instance publishes ONLY to task channels (u.{ownerId}.{taskId})

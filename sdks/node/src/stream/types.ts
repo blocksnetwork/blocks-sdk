@@ -54,7 +54,7 @@ export interface StreamClientOptions {
   /**
    * Stream affinity — gates the `stream_end` publish on shared channels.
    * Shared streams never publish the end marker from either producer or
-   * consumer-writer paths (SDK_CONTRACT §8.4.1a shared-affinity carve-out).
+   * consumer-writer paths (shared-affinity carve-out).
    * Default: 'dedicated'.
    */
   affinity?: StreamAffinity;

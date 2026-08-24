@@ -433,8 +433,8 @@ async def _run_claude_session(
         bash_safety_enabled: Whether to monitor for dangerous bash commands.
         request_model: Model from request_parts (overrides CLAUDE_MODEL env var).
     """
-    # Stream only when negotiated (request streaming is consumer opt-in,
-    # BLOCKS-181); otherwise create_stream() would raise. The code below
+    # Stream only when negotiated (request streaming is consumer
+    # opt-in); otherwise create_stream() would raise. The code below
     # already treats stream as optional.
     stream = ctx.create_stream() if ctx and ctx.has_stream else None
 

@@ -136,7 +136,7 @@ describe('storage roundtrip', () => {
   });
 });
 
-describe('JWT-never-on-disk regression (C345-3-1)', () => {
+describe('JWT-never-on-disk regression', () => {
   beforeEach(() => {
     localStorage.clear();
   });

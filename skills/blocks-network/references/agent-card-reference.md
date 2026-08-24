@@ -98,7 +98,7 @@ required on each stream.
 
 **Affinity** (`affinity: "dedicated" | "shared"`, default `"dedicated"`):
 - **Dedicated** (default): each task gets its own per-task channel `stream.{agent}.{taskId}-{counter}`. Independent writer per task. Safe default.
-- **Shared**: all tasks that open this declared stream write to and read from one cross-task broadcast channel `stream.{agent}.{declaredKey}`. Ref-counted across tasks; SDK manages a single writer. Four lifecycle rules differ from dedicated streams (see `SDK_CONTRACT.md` §4.4.2, §4.4.3, §8.4.1a, §8.7.3a, §8.7.4):
+- **Shared**: all tasks that open this declared stream write to and read from one cross-task broadcast channel `stream.{agent}.{declaredKey}`. Ref-counted across tasks; SDK manages a single writer. Four lifecycle rules differ from dedicated streams (see the SDK contract):
   - **Pipe-only**: `createStream()` on a shared-affinity declared stream from a request-task handler throws at runtime. Request tasks are single-shot; cross-task broadcast is inherently a pipe-task concept. If your agent card includes `"request"` in `taskKinds`, don't declare a stream with `affinity: "shared"`.
   - **Not combinable with `external: true`**: shared affinity implies one SDK-managed writer with per-task ref-counting; external streams delegate the writer entirely. The SDK rejects the combination at runtime. Use `affinity: "dedicated"` with `external: true`, or `affinity: "shared"` without external.
   - **No per-task `stream_end` marker**: `stream.end()` on a shared stream releases only the current task's refcount; it does NOT publish a `stream_end` marker on the shared channel. Consumers drain via task-terminal / auto-drain rather than the marker.
@@ -120,7 +120,7 @@ required on each stream.
 `ctx.createStream()` throws `"Streaming was not negotiated for this task."`
 at runtime whenever `hasStream` is false — either the card lacks the `streams`
 block, or (for request tasks) the consumer did not opt in via
-`extensions.blocks.stream` (BLOCKS-181; the omitted-flag default is now off, so
+`extensions.blocks.stream` (the omitted-flag default is now off, so
 an omitted flag also yields `hasStream` false unless the consumer sends
 `stream: true`). Guard handler code on `ctx.hasStream` / `ctx.has_stream` before
 calling it.

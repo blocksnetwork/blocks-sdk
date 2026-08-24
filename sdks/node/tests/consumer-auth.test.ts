@@ -635,7 +635,7 @@ describe('ConsumerAuth', () => {
     });
 
     it('logs a warn on permanent proactive failure even when onAuthError is registered', async () => {
-      // SDK_CONTRACT.md §8.6.4 promises a warn-level log "either way" —
+      // the SDK contract promises a warn-level log "either way" —
       // registered callback or not. Without this, observability tooling
       // that scrapes the [ConsumerAuth] logger goes silent the moment a
       // consumer wires up onAuthError.

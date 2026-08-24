@@ -141,8 +141,7 @@ class TestStreamRegistry:
         entry = reg.force_remove("stream-1")
         assert entry is not None
         # task_ids preserved on the returned entry so fail_stream can
-        # fan out failed terminals to every ref-holder. See
-        # QUESTIONS.md R6 (shared_stream_lifecycle).
+        # fan out failed terminals to every ref-holder.
         assert entry.task_ids == {"task-1", "task-2"}
         assert entry.ref_count == 2
         assert reg.get("stream-1") is None

@@ -1,10 +1,10 @@
 /**
- * Popup orchestration for `@blocks-network/embed-auth` (impl_03 §R4.4).
+ * Popup orchestration for `@blocks-network/embed-auth`.
  *
  * Owns: state-nonce generation, popup-URL construction, `window.open`
  * wrapper, `message` listener with origin / schema / state correlation
  * defenses, set-equality + 1:1 UUID mapping checks on the success
- * envelope, the single-popup-in-flight policy (C345-3-3), and the
+ * envelope, the single-popup-in-flight policy, and the
  * 5-minute timeout fallback.
  *
  * Out of scope: the SDK token provider, refresh manager, storage, and
@@ -69,7 +69,7 @@ interface PopupRecord {
 
 /**
  * Module-local single-popup-in-flight registry, keyed by resolved
- * backend origin (per C345-3-3). A second concurrent call for the same
+ * backend origin. A second concurrent call for the same
  * key replaces the older record; the older promise rejects with
  * `POPUP_REPLACED` and its listener / timeout are torn down.
  */
@@ -128,8 +128,8 @@ function cleanup(record: PopupRecord): void {
  *  internal 1:1 agentIds↔agents[*].id invariant). The all-zero case
  *  is not reachable here — the backend short-circuits to an
  *  `AGENT_ARCHIVED` error envelope when zero agents are reachable
- *  (privacy-preserving reuse of the soft-delete code; the initiative
- *  deliberately did not introduce a separate `AGENT_NOT_REACHABLE`
+ *  (privacy-preserving reuse of the soft-delete code; there is
+ *  deliberately no separate `AGENT_NOT_REACHABLE`
  *  code so the popup is not an enumeration oracle).
  *
  *  Name comparison is case-sensitive — the backend validator
@@ -178,7 +178,7 @@ export async function openPopupAndAwaitEnvelope(
   const state = generateStateNonce();
   const url = buildPopupUrl(args, state);
 
-  // Replace any in-flight popup for the same backend origin (C345-3-3).
+  // Replace any in-flight popup for the same backend origin.
   const existing = inFlightPopups.get(backendOrigin);
   if (existing) {
     const replaceErr = new BlocksAuthError('POPUP_REPLACED');

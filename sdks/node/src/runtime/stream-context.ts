@@ -15,7 +15,7 @@
  * cache entry, releases the registry taskId, and — only when the last
  * ref-holder releases — tears down the underlying StreamClient. On shared
  * streams the teardown never publishes a `stream_end` marker (see
- * SDK_CONTRACT §8.4.1a shared-affinity carve-out).
+ * the shared-affinity carve-out).
  */
 
 import type { StreamClient, InboundMessage, StreamError } from '../stream/index.js';
@@ -38,7 +38,7 @@ export interface AgentInstanceHooks {
  *
  * The read/error/uuid surface mirrors the underlying `StreamClient` so
  * handlers and consumers see the same API. `onInboundDone` is intentionally
- * NOT forwarded — it's classified internal-only by SDK_CONTRACT §8.3.8.
+ * NOT forwarded — it's classified internal-only by the SDK contract
  * Handlers needing a "stream drained" signal should `await` the
  * for-await-of loop on `bytes()` / `events()` / `inbound`.
  */

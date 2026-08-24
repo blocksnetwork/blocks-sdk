@@ -475,7 +475,7 @@ export class ConsumerAuth implements AuthProvider {
       } else {
         // Permanent failure: always log a warning so consumers without an
         // onAuthError callback aren't silent (matches Python parity and
-        // SDK_CONTRACT.md §8.6.4 'either way' guarantee), then invoke the
+        // the SDK contract 'either way' guarantee), then invoke the
         // callback if registered.
         const error = err instanceof Error ? err : new Error(String(err));
         this._lastAuthError = new AuthRefreshFailedError(error);

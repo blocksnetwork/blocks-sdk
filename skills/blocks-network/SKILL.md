@@ -529,6 +529,17 @@ alternative via the host question tool. Update `agent-card.json`
 then ask the user to re-run the same command (`blocks register` or
 `blocks publish`).
 
+**Reserved names (`409 AgentNameReserved`).** A collision is not always
+permanent. When an agent is deleted, its name is held for a reservation
+window (30 days on Blocks Network). During the hold the name is
+reclaimable **only by the original owner or another member of the
+agent's org** — re-registering as that owner reclaims it and proceeds.
+Any other caller is rejected with `409 AgentNameReserved` (distinct from
+an ordinary "already taken" active-name conflict). If the user *is* the
+prior owner and hit this error, they can retry with the same credentials
+to reclaim; otherwise the name is unavailable until the hold expires, so
+pick a different one.
+
 ### Manage access for private agents
 
 When `--listing private` is set, the agent is invite-only. Use the
@@ -696,8 +707,8 @@ paste flow cannot be used here):
 - Vercel: `VERCEL_TOKEN`
 - Netlify: `NETLIFY_AUTH_TOKEN`
 
-See `blocks-sdk/embed-auth/README.md` for the widget API, [SDK Contract §8.6.4h]
-for the wire-level pattern (popup flow, refresh, sign-out, error envelopes),
+See `blocks-sdk/embed-auth/README.md` for the widget API and the wire-level
+pattern (popup flow, refresh, sign-out, error envelopes),
 `docs/embed-getting-started.md` for a step-by-step partner-page walkthrough, and
 `blocks-sdk/docs/embed-multi-agent.md` for the multi-agent composition pattern.
 
@@ -776,7 +787,7 @@ client.destroy();
   registered `billingMode`. Mismatch is rejected with
   `BillingModeMismatchError`.
 - `sendMessage({ stream })` / `send_message(stream=)` is an optional
-  request-task streaming opt-in (BLOCKS-181): `true` requests live token
+  request-task streaming opt-in: `true` requests live token
   output, `false` suppresses it (status + final result only), omitted
   leaves the server default — which is now **no streaming** for request
   tasks, so pass `stream: true` explicitly if you rely on a stream.
@@ -830,7 +841,7 @@ const terminal = await session.waitForTerminal(timeoutMs);
 `session.onTerminal`, `session.waitForTerminal()`, and
 `TaskClient.subscribeToTask`'s `onTerminal` each fire at most once per
 task — even when the wire delivers two terminals (e.g. a
-scanner-Phase-6 force-cancel followed by the agent's own delayed
+scanner force-cancel followed by the agent's own delayed
 terminal). The first terminal wins; subsequent terminals are silently
 dropped. This holds across the synthetic re-emit when registering a
 callback against an already-terminal session as well.
@@ -951,7 +962,7 @@ is already terminal (live-only data is gone; artifacts persist).
 | `agentName` rejected | Must match `^[a-zA-Z0-9_]+$` -- underscores only, no hyphens. |
 | Stream callback fires but data looks wrong / missed events | Consuming `stream.inbound` instead of `stream.events()` / `stream.bytes()`. |
 | `StreamUnavailableError` on `ref.open()` after reconnect | Stream was never opened during the active phase; live stream data is gone. Artifacts remain on the session. |
-| `"Streaming was not negotiated for this task."` from `createStream()` | `hasStream` is false. Either the agent card is missing the top-level `streams` block (or it was placed inside `capabilities`) — re-publish after fixing — or, for a request task, the consumer didn't opt in via `extensions.blocks.stream` (BLOCKS-181). Guard handler code on `ctx.hasStream` / `ctx.has_stream` so it degrades to an artifact-only response instead of throwing. |
+| `"Streaming was not negotiated for this task."` from `createStream()` | `hasStream` is false. Either the agent card is missing the top-level `streams` block (or it was placed inside `capabilities`) — re-publish after fixing — or, for a request task, the consumer didn't opt in via `extensions.blocks.stream`. Guard handler code on `ctx.hasStream` / `ctx.has_stream` so it degrades to an artifact-only response instead of throwing. |
 | `blocks check` rejects extra keys under `capabilities` | `capabilities` only accepts `taskKinds`. Streaming config goes in the top-level `streams` block. |
 | `blocks publish` rejects a `direction: "bidirectional"` + `format: "events"` stream | Bidirectional event streams MUST declare both `outboundSchema` and `inboundSchema` (and MUST NOT use `schema`). Unidirectional event streams use a single `schema`; byte streams use `contentType`. See [Streaming Agents](#streaming-agents). |
 | `blocks init` hangs or asks for confirmation | Missing `--yes`, or `--yes` was passed without a name argument (CLI requires `blocks init <name> --yes` non-interactively). Always include both. |
@@ -959,6 +970,8 @@ is already terminal (live-only data is gone; artifacts persist).
 | `blocks invite send` returns `either --email or --org is required` (or 4xx) | The two flags are required and mutually exclusive -- pass exactly one. |
 | Bare `blocks login` finishes but `BLOCKS_API_KEY` is missing in `.env` | Non-TTY auto-detection skipped the write-env prompt. Re-run with explicit `--write-env` (and `--dir <name>` if invoking from a parent directory). |
 | `blocks login` never completes in Docker/SSH/a cloud VM | Callback goes to `127.0.0.1:8787` *inside* the container. See [Login in containerized / headless environments](#login-in-containerized--headless-environments). |
+| `blocks run` exits immediately with a fatal "forced offline" / "API key invalid" error | An administrator force-offlined the agent, or the API key was revoked. This is a non-retryable `AgentAuthFatalError` — the runtime deliberately terminates (`process.exit(1)`) rather than run as a banned zombie. Re-registering won't help while the hold stands; the agent must be re-enabled by an admin (Blocks Network staff, or an org member with the `agent:force-offline` permission) before it can reconnect. |
+| Agent stops taking new tasks mid-session but the process stays up | Force-offline while already connected **starves** rather than evicts: the server fails in-flight tasks and rejects new admission (`403 AGENT_FORCED_OFFLINE`), but the control-channel grant lives out its TTL, so the process only exits on its next connect/refresh (e.g. a restart). |
 
 ## References
 
@@ -967,7 +980,6 @@ is already terminal (live-only data is gone; artifacts persist).
 - [IO Schema Reference] -- **read before editing agent-card.json** -- io input/output rules, JSON Schema format, examples
 - [Node Reference] -- handler patterns, streaming, agent-to-agent, TaskClient, env vars, CLI commands, deployment
 - [Python Reference] -- Python handler signature, snake_case APIs, run/test commands (use only when user requests Python)
-- [SDK Contract §8.6.4h] -- Embedded Auth (third-party page) consumer pattern: popup handshake, refresh, sign-out, error envelopes
 - [Agent Development Guide] -- narrative walkthrough of the build / publish / run flow; useful for first-time agent authors as a companion to the `blocks-getstarted` skill
 
 [Agent Card Schema]: https://config.blocks.ai/references/agent-card.schema.json
@@ -975,5 +987,4 @@ is already terminal (live-only data is gone; artifacts persist).
 [IO Schema Reference]: https://config.blocks.ai/references/io-schema-reference.md
 [Node Reference]: https://config.blocks.ai/references/node-reference.md
 [Python Reference]: https://config.blocks.ai/references/python-reference.md
-[SDK Contract §8.6.4h]: https://github.com/pubnub/blocksnetwork/blob/master/dev_docs/SDK_CONTRACT.md#8.6.4h-embedded-auth-third-party-page-pattern
 [Agent Development Guide]: https://config.blocks.ai/references/agent-development-guide.md

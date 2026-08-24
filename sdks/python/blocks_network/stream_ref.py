@@ -126,7 +126,7 @@ class StreamRef:
         # consumer that opened a stream while the task was running must be
         # able to re-call open() during the drain window (or with
         # auto_drain=False) and receive the same live client, per the
-        # SDK_CONTRACT idempotency rule.
+        # the idempotency rule.
         if self._client is not None and self._client.is_active:
             return self._client
         if self._client_ended:

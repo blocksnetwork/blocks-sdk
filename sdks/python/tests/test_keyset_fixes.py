@@ -197,7 +197,7 @@ class TestRegistrationUsesRegistryListing:
     ) -> None:
         """When agent is not in registry, ``start_agent_instance`` raises.
 
-        Updated under Billing Mode Contract IMPL §3 Python: registry GET
+        Registry GET
         is the authoritative source for billing_mode; without a registered
         agent the SDK has no value to forward into the connect payload.
         Previously this test asserted soft-fallback to ``options.listing``;

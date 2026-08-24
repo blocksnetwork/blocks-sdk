@@ -1,7 +1,7 @@
 /**
  * `@blocks-network/embed-auth` — public entry.
  *
- * Public API surface (impl_03 §R4.2):
+ * Public API surface:
  *   - `signInAndGetClient(opts)` — single-agent sign-in.
  *   - `signInAndGetClients(opts)` — multi-agent sign-in.
  *   - `signOut()` — best-effort revoke + local clear of every session on this page.

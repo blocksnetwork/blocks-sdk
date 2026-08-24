@@ -5,8 +5,7 @@
 //
 // Store boundary: contexts.json holds deployment profiles and their per-org Blocks
 // API keys (a Blocks key is meaningless outside a deployment target); account-global
-// partner tokens live in credentials.json (internal/auth). See
-// dev_docs/initiative/06-10_blocks_enterprise/CLI_CREDENTIAL_STORE_PLAN.md.
+// partner tokens live in credentials.json (internal/auth).
 package profiles
 
 import (

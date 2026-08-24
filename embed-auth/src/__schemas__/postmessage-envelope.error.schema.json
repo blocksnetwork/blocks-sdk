@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "version 2.0.0 — host_static_pages REMOVE_PER_ORIGIN_IMPL: code enum trimmed from eight values to seven (per-origin allowlisting gone). See schemas/README.md changelog for the dropped value.",
+  "$comment": "version 2.0.0 — per-origin removal: code enum trimmed from eight values to seven (per-origin allowlisting gone).",
   "title": "Embedded Auth — postMessage error envelope (v1)",
   "description": "Wire shape posted by the embed-auth popup back to its opener via `window.opener.postMessage(envelope, requestedOrigin)` when the auth flow fails. The seven error codes are stable and machine-readable. `agent` is populated only for per-agent failures (`AGENT_ARCHIVED`, `AGENT_DISABLED`, `AGENT_KILLED`); other codes MUST omit `agent` to avoid leaking existence information. v1 envelopes are intentionally exact (`additionalProperties: false`).",
   "type": "object",

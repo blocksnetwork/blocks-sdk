@@ -827,7 +827,7 @@ func TestClassifyContentType(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Friendly transport-class invariant translations
-// (mirrors the 8 cases in CLI_FRIENDLY_ERRORS_IMPL.md §3 + IMPL Part 9).
+// (mirrors the 8 transport-class invariant cases).
 // ---------------------------------------------------------------------------
 
 func findFriendly(t *testing.T, errs []string, want string) {

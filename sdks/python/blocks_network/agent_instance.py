@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -32,7 +33,7 @@ import os as _os_top
 
 logger = logging.getLogger(__name__)
 
-from .agent_auth import AgentAuth
+from .agent_auth import AgentAuth, AgentAuthFatalError
 from .auth_provider import StaticAuthProvider
 from .artifacts import build_artifact_ref, should_inline_artifact
 from .protocol_version import (
@@ -73,6 +74,36 @@ from .types import (
 
 
 _profile_received_at: dict[str, float] = {}
+
+
+def _exit_if_fatal_auth_error(err: BaseException, context: str) -> bool:
+    """Terminate the process when ``err`` is a fatal auth error.
+
+    A fatal auth error (forced offline / revoked API key) is logged and
+    never returns — ``os._exit`` ends the process. A non-fatal error
+    returns ``False`` so callers can fall through to their normal error
+    logging.
+
+    A fatal error can surface from any AgentAuth call, not just the initial
+    connect: ``authenticated_fetch`` refreshes on 401, and ``refresh()`` raises
+    ``AgentAuthFatalError`` on AGENT_FORCED_OFFLINE / API_KEY_INVALID. Those
+    calls run inside task handling, whose surrounding ``except`` merely logs —
+    so without this the process would linger as a banned zombie. Mirrors the
+    connect-path handler; ``os._exit`` (not ``sys.exit``) because control
+    handling runs in a daemon thread where ``sys.exit`` would only end the
+    thread. (BLOCKS-553.)
+    """
+    if not isinstance(err, AgentAuthFatalError):
+        return False
+    log_agent_instance_event(
+        "error",
+        f"Fatal auth error ({context}) — shutting down: {err}",
+        event="agent_auth_fatal",
+        context=context,
+        error=str(err),
+    )
+    sys.stderr.flush()
+    os._exit(1)
 
 
 def _extract_owner_id(
@@ -434,7 +465,7 @@ def start_agent_instance(
         )
 
     # Resolve environment from registry billing_mode (only when CDM config
-    # available). Per Billing Mode Contract IMPL §3 the boot-time registry
+    # available). The boot-time registry
     # GET is the AUTHORITATIVE source for the agent's own billing mode:
     # there is no provider-supplied override path. To change billing mode,
     # the provider updates the registry, restarts, and lets the new value
@@ -541,8 +572,7 @@ def start_agent_instance(
     max_pending_backlog: Optional[int] = options.max_pending_backlog
     # Single source of truth for max-running-time: reconcile opts with the
     # card's declared value at startup so the connect scaling payload and
-    # the per-task stream TTL derivation can't drift. See Fix B in
-    # dev_docs/initiative/t7c_token_lifecycle/T7C_TOKEN_LIFECYCLE_IMPL.md.
+    # the per-task stream TTL derivation can't drift.
     max_running_time_sec: Optional[int] = _resolve_max_running_time_sec(
         options.max_running_time_sec,
         _extract_card_max_running_time_sec(options.card),
@@ -576,7 +606,7 @@ def start_agent_instance(
     # Populated on the first successful `create_stream` for a shared stream
     # from a given task; consulted on repeat calls so the second acquire
     # returns the same StreamObject without re-publishing stream_setup
-    # (see IMPL Fix e). Evicted on every cleanup boundary (task terminal,
+    # (see Fix e). Evicted on every cleanup boundary (task terminal,
     # fail_stream, release_all_for_task, explicit StreamObject.end()).
     shared_stream_handles: Dict[str, Dict[str, Any]] = {}
     shared_stream_handles_lock = threading.Lock()
@@ -612,8 +642,7 @@ def start_agent_instance(
         Bundles the three operations that every cleanup boundary must
         pair -- handle-cache eviction, registry release, and last-ref
         ``stream_client.end()`` -- into a single call so a new cleanup
-        site cannot forget one leg. See QUESTIONS.md D4
-        (shared_stream_lifecycle).
+        site cannot forget one leg.
         """
         _evict_shared_handles_for_task(task_id)
         for entry in stream_registry.release_all_for_task(task_id):
@@ -692,7 +721,7 @@ def start_agent_instance(
     def release_stream(stream_id: str, task_id: str) -> None:
         """Task-scoped release hook invoked by ``StreamObject.end()``.
 
-        Implements IMPL fix (d):
+        Does three things:
         - Evicts the per-task shared-stream handle cache entry.
         - Releases the task's registry reference; when that drops the
           entry's ``task_ids`` set to empty the registry removes the
@@ -709,7 +738,7 @@ def start_agent_instance(
         # NOTE: get + release are NOT atomic under a single lock here.
         # A concurrent fail_stream can race this path and cause a
         # benign double-end() on the underlying StreamClient.
-        # Accepted as informational per QUESTIONS.md I3 — both SDKs'
+        # Accepted as informational: both SDKs'
         # StreamClient.end() early-return on already-ended clients, so
         # the practical outcome is a no-op. Do NOT "fix" this by
         # widening the registry lock: that would serialize all release
@@ -721,7 +750,6 @@ def start_agent_instance(
             # Distinguish last-ref teardown from non-last release for ops.
             # On shared-affinity streams StreamClient.end() suppresses the
             # marker publish; the teardown still closes the local writer.
-            # See QUESTIONS.md I1 (shared_stream_lifecycle).
             logger.info(
                 "stream_registry_last_ref_teardown",
                 extra={
@@ -792,10 +820,8 @@ def start_agent_instance(
         """Publish stream_setup to setup.{orgId}.{taskId} and extract T7a
         from the 403 response (request.abort(payload)).
 
-        ``affinity`` is a required wire-level field after the ssl-wire
-        phase (see ``schemas/internal/stream-setup.schema.json`` v5.5.0).
-        The Function rejects any payload missing it with
-        ``InvalidArgument``.
+        ``affinity`` is a required wire-level field: the Function rejects
+        any ``stream_setup`` payload missing it with ``InvalidArgument``.
 
         Returns the response payload dict containing the T7a token.
         """
@@ -1075,9 +1101,8 @@ def start_agent_instance(
             # single writer in the SDK's registry model -- each task
             # would hand its own T7a to a different external process,
             # all writing the same broadcast channel. Fail fast before
-            # the registry / handshake state gets touched. A future
-            # initiative can model external broadcast explicitly (see
-            # GitHub #516).
+            # the registry / handshake state gets touched. A future change
+            # can model external broadcast explicitly (see GitHub #516).
             if card_affinity == "shared" and external:
                 raise RuntimeError(
                     "Shared-affinity external streams are not supported. "
@@ -1368,8 +1393,7 @@ def start_agent_instance(
 
                 # Embedded stream -- single-phase handshake. Publish
                 # ``phase: 'embedded'`` explicitly so cross-SDK parity
-                # holds on the wire (Node publishes the same). See
-                # QUESTIONS.md D5 (shared_stream_lifecycle).
+                # holds on the wire (Node publishes the same).
                 response = _perform_setup_handshake(
                     event_pn,
                     task.task_id,
@@ -2025,6 +2049,14 @@ def start_agent_instance(
                         else:
                             on_start(task_msg, control_client)
                     except Exception as exc:
+                        # A fatal auth error (forced offline / revoked key) can
+                        # surface here when a handler makes an authenticated
+                        # call (RPC, file upload) whose 401-refresh raises
+                        # AgentAuthFatalError. Shut down before publishing a
+                        # failed terminal — otherwise a banned runtime keeps
+                        # handling tasks. os._exit terminates the whole process
+                        # even though this runs in an executor thread.
+                        _exit_if_fatal_auth_error(exc, "task-handler")
                         import traceback
                         traceback.print_exc()
                         err_msg = str(exc) or f"Agent instance error ({type(exc).__name__})"
@@ -2231,6 +2263,7 @@ def start_agent_instance(
                 try:
                     handle_control_message(msg, meta)
                 except Exception as exc:
+                    _exit_if_fatal_auth_error(exc, "control-message")
                     log_agent_instance_event(
                         "error",
                         f"Unhandled error in message handler: {exc}",
@@ -2274,7 +2307,14 @@ def start_agent_instance(
             meta = getattr(event, "user_metadata", None)
             if not isinstance(meta, dict):
                 meta = None
-            handle_control_message(msg, meta)
+            try:
+                handle_control_message(msg, meta)
+            except Exception as exc:
+                _exit_if_fatal_auth_error(exc, "control-message")
+                log_agent_instance_event(
+                    "error",
+                    f"Unhandled error in message handler: {exc}",
+                )
 
         listener = {"message": _dict_message_handler}
 
@@ -2354,6 +2394,22 @@ def start_agent_instance(
                 "warn",
                 "agent_registry module not available; skipping registration",
             )
+        except AgentAuthFatalError as fatal:
+            # Forced offline / revoked credential — the agent must NOT linger as a
+            # zombie. Mirrors Node's process.exit(1) on AgentAuthFatalError
+            # (agent-instance.ts). connect runs in a daemon thread, so sys.exit
+            # would only end this thread; os._exit terminates the process.
+            log_agent_instance_event(
+                "error",
+                f"Fatal: cannot register agent {agent_name}: {fatal}",
+                agentName=agent_name,
+                event="agent_registration_failed",
+                fatal=True,
+                error=str(fatal),
+                instanceId=instance_id,
+            )
+            sys.stderr.flush()
+            os._exit(1)
         except Exception as exc:
             log_agent_instance_event(
                 "warn",

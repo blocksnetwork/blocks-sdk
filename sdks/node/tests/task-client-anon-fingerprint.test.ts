@@ -1,6 +1,5 @@
 /**
- * TaskClient anonymous-fingerprint mode tests — IMPL §6 of
- * `dev_docs/initiative/04-30_anon_playground_artifacts`.
+ * TaskClient anonymous-fingerprint mode tests.
  *
  * Anonymous consumer mode:
  * - `TaskClient.create({ anonFingerprint, billingMode: 'free' })` builds a

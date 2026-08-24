@@ -1,4 +1,4 @@
-"""Unit tests for TerminalDeliveryTracker (BLOCKS-370 R7).
+"""Unit tests for TerminalDeliveryTracker.
 
 Mirror of blocks-sdk/sdks/node/tests/terminal-delivery-tracker.test.ts.
 """

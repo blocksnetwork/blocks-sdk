@@ -10,7 +10,7 @@ export default async function handler(
 ): Promise<HandlerResult> {
   // A bidirectional chat needs a live stream. When streaming wasn't
   // negotiated (no ctx, or a request consumer opted out via stream:false →
-  // hasStream false, BLOCKS-181), there's nothing to stream — return an
+  // hasStream false), there's nothing to stream — return an
   // artifact instead of throwing in createStream().
   if (!ctx || !ctx.hasStream) {
     return { artifacts: [{ data: 'no stream negotiated — nothing streamed', mimeType: 'text/plain' }] };

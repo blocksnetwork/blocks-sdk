@@ -188,7 +188,7 @@ describe('signInAndGetClients — input validation', () => {
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
-  it('rejects names with slashes (bare-agentName discipline per C345-2-1)', async () => {
+  it('rejects names with slashes (bare-agentName discipline)', async () => {
     await expect(
       signInAndGetClients({ agents: ['acme/translator'], backendBaseUrl: BACKEND }),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
@@ -660,7 +660,7 @@ describe('cdmUrl plumbing into TaskClient.create (refined Option A)', () => {
   // and forwards it to `TaskClient.create({ cdmUrl })` so the SDK fetches its
   // CDM (PubNub keys + api.baseUrl) from the local backend instead of the
   // production default. Plumbed via the explicit-option path so it's
-  // forward-compatible with BLOCKS-101's
+  // forward-compatible with the
   // `explicit option → CDM → default` resolver chain.
 
   afterEach(() => {

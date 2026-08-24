@@ -2,7 +2,7 @@
  * `localStorage` abstraction with try/catch fallback to in-memory storage
  * (Safari private mode + quota errors).
  *
- * **Storage discipline (impl_03 §R4.7 / C345-3-1).** JWTs are NEVER persisted
+ * **Storage discipline.** JWTs are NEVER persisted
  * on disk. The persisted shape is `SessionData` from `types.ts` — refresh
  * token, cached agent scope, and resume metadata only. The widget's in-
  * memory `EmbeddedAuthSessionManager` owns the JWT for the page lifetime;
@@ -34,7 +34,7 @@ export interface StorageBackend {
    * revocation), `userId`, and the rotated `refreshToken` (the submitted
    * token is dead server-side after a successful refresh; persisting the
    * new one is required for subsequent refreshes). MUST NOT write the
-   * JWT, expiresAt, or any in-memory-only field to disk (C345-3-1).
+   * JWT, expiresAt, or any in-memory-only field to disk.
    */
   updateScope(
     partitionKey: string,
@@ -80,8 +80,8 @@ function partitionedKey(partitionKey: string): string {
  * tuple. `agentNames` is case-sensitively sorted so `[A,B]` and `[B,A]`
  * collapse to the same hash (order independence is a correct invariant —
  * agent order shouldn't matter) but `[Foo]` and `[foo]` do NOT collapse.
- * The names are bare `agentName` values (`^[a-zA-Z0-9_]+$`) per C345-2-1
- * — no `<org>/<agent>` form anywhere in the embed surface.
+ * The names are bare `agentName` values (`^[a-zA-Z0-9_]+$`) — no
+ * `<org>/<agent>` form anywhere in the embed surface.
  *
  * **Case sensitivity (reviewer #B):** the backend agent-name validator
  * is `^[a-zA-Z0-9_]+$` and the DB unique index is on plain `text`, so
@@ -198,7 +198,7 @@ export function createStorageBackend(raw?: Storage): StorageBackend {
     setSession(partitionKey, data): void {
       // SessionData.refreshToken / agentIds / agents / orgId / userId /
       // pageOrigin / backendBaseUrl / cdmUrl only. NO token / jwt /
-      // expiresAt — those live in memory only (C345-3-1).
+      // expiresAt — those live in memory only.
       const sanitized: SessionData = {
         refreshToken: data.refreshToken,
         agentIds: [...data.agentIds],
@@ -250,7 +250,7 @@ export function createStorageBackend(raw?: Storage): StorageBackend {
       };
       // Re-route through setSession-like path WITHOUT touching the index.
       // (Index entry already exists for this partition.) DO NOT write the
-      // JWT or expiresAt to disk — C345-3-1 invariant. The refresh token
+      // JWT or expiresAt to disk — in-memory-only invariant. The refresh token
       // rotation IS persisted: the submitted refresh token is revoked
       // server-side, so the new one must replace it locally for the next
       // refresh call to succeed.

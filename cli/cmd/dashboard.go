@@ -55,7 +55,7 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 // win via resolveAppBaseURL; otherwise fall back to the deployment origin from
 // resolveBackendURL (BLOCKS_BACKEND_URL → active profile BaseURL → ldflag
 // default → CDM) so the dashboard opens on the active profile's deployment
-// rather than always stock https://app.blocks.ai (BLOCKS-563).
+// rather than always stock https://app.blocks.ai.
 func resolveDashboardURL() (string, error) {
 	if v := resolveAppBaseURL(); v != "" {
 		return v, nil

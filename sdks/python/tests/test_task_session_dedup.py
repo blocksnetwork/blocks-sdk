@@ -1,4 +1,4 @@
-"""BLOCKS-370: terminal-event dedup tests for Python TaskSession.
+"""Terminal-event dedup tests for Python TaskSession.
 
 Mirror of blocks-sdk/sdks/node/tests/task-session.dedup.test.ts.
 """

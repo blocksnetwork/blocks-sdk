@@ -1,6 +1,5 @@
 /**
- * Public API surface for `@blocks-network/embed-auth` (impl_03 §R4.2 / §R4.3
- * / §R4.5 / §R4.8).
+ * Public API surface for `@blocks-network/embed-auth`.
  *
  * Compose-only:
  *   - `popup.ts` owns popup orchestration.
@@ -165,7 +164,7 @@ export async function signInAndGetClients(
 
   const refreshUrl = `${backendBaseUrl}/api/v1/auth/embed/refresh`;
 
-  // Resume path (impl_03 §R4.3).
+  // Resume path.
   const existing = storage.getSession(partitionKey);
   if (existing) {
     // Reuse a manager already live for this partition. Two concurrent
@@ -199,7 +198,7 @@ export async function signInAndGetClients(
       const liveAgents = existing.agents.filter((a) => liveAgentIds.has(a.id));
 
       // The popup grants a reachable SUBSET — it intersects the requested
-      // agents with the set the user can actually reach (impl_06 §4.1). So a
+      // agents with the set the user can actually reach. So a
       // stored session that is legitimately narrower than the current request
       // MUST still resume silently. Forcing a re-popup just because the live
       // set is smaller breaks auto-resume (no user gesture → POPUP_BLOCKED) and
@@ -280,7 +279,7 @@ export async function signInAndGetClients(
 
 /**
  * Build the public `Record<string, TaskClient>` map. Dedupes the underlying
- * TaskClient by `billingMode` (impl_03 §R4.5 closing paragraph): one
+ * TaskClient by `billingMode`: one
  * underlying client per distinct billingMode the page uses, with the public
  * map aliasing by name. All clients share the single `manager.tokenProvider`
  * so multi-agent pages run one refresh loop.
@@ -292,7 +291,7 @@ async function buildClientMap(
     onAuthError?: SignInMultiOptions['onAuthError'];
     /**
      * Plumbs to `TaskClient.create({ cdmUrl })` — the explicit-option
-     * path BLOCKS-101's `explicit option → CDM → default` resolver
+     * path the `explicit option → CDM → default` resolver
      * preserves. Set when the dev shim or the page caller wants the SDK
      * to fetch CDM (PubNub keys + `api.baseUrl`) from a non-default
      * source — typically the local backend in `blocks dev`.
@@ -333,7 +332,7 @@ async function buildClientMap(
 /**
  * Sign the user out of every embedded-auth session on this page.
  *
- * Always argless — impl_07 follow-up #4 dropped the per-agent
+ * Always argless — a later revision dropped the per-agent
  * (`signOut({ agent })`) and per-set (`signOut({ agents })`) selectors.
  * If the page wants to drop one agent's session while keeping another
  * alive, it should call `signIn*` again with the desired narrower set;

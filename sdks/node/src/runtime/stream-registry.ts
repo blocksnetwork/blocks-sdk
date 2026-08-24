@@ -16,7 +16,7 @@
  *
  * `acquire()` is idempotent within a task: a second call with the same
  * `(streamId, taskId)` returns `{ isNew: false, isNewForTask: false }`
- * and does not grow the set. See SHARED_STREAM_LIFECYCLE_IMPL §Fix (e).
+ * and does not grow the set. See the shared-stream lifecycle work, Fix (e).
  */
 
 import type { StreamClient } from '../stream/index.js';
@@ -49,7 +49,7 @@ export interface StreamRegistryEntry {
   /**
    * Derived reference count. Kept as a getter so existing callers /
    * tests that inspect `entry.refCount` continue to work after the
-   * shape change (see SHARED_STREAM_LIFECYCLE_IMPL §Risk "Registry
+   * shape change (see the shared-stream lifecycle Risk note "Registry
    * shape change ripples").
    */
   readonly refCount: number;
@@ -107,7 +107,7 @@ export class StreamRegistry {
   /**
    * Get or create a registry entry for a stream.
    *
-   * Three-case matrix (per SHARED_STREAM_LIFECYCLE_IMPL §Fix (e)):
+   * Three-case matrix (per the shared-stream lifecycle Fix (e)):
    *   1. Entry doesn't exist  -> create, taskIds = {taskId}, isNew: true,  isNewForTask: true
    *   2. Entry exists + taskId already tracked -> idempotent no-op, isNew: false, isNewForTask: false
    *   3. Entry exists + taskId is new          -> add to set,       isNew: false, isNewForTask: true
@@ -210,8 +210,7 @@ export class StreamRegistry {
    * implementation silently broke that fan-out by clearing the set
    * before returning. The single reader lives at
    * `agent-instance.ts#failStreamImpl` — verify its loop still works
-   * before changing this behavior. See QUESTIONS.md R6
-   * (shared_stream_lifecycle).
+   * before changing this behavior.
    */
   forceRemove(streamId: string): StreamRegistryEntry | undefined {
     const entry = this.entries.get(streamId);

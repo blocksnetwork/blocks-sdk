@@ -1,24 +1,17 @@
 /**
  * @vitest-environment jsdom
  *
- * Browser execution test for Family A bugs (Consumer SDK Correctness
- * Omnibus, dev_docs/initiative/sdk_consumer_fixes). Exercises the SDK
- * paths that browser bundling alone cannot catch: runtime file-part
- * normalization, artifact base64 encoding, and the PubNub
- * `downloadFile` result classifier.
- *
- * This file is the RED BASELINE. It is expected to FAIL on master
- * against each Family A finding. The scf-browser agent's Family A
- * implementation turns the failures green; see
- * dev_docs/initiative/sdk_consumer_fixes/SDK_CONSUMER_FIXES_IMPL.md
- * (Family A) for the fix scope.
+ * Browser execution test for consumer-SDK correctness in a DOM
+ * environment. Exercises the SDK paths that browser bundling alone
+ * cannot catch: runtime file-part normalization, artifact base64
+ * encoding, and the PubNub `downloadFile` result classifier.
  *
  * -------------------------------------------------------------------
  * Why jsdom and not real-browser?
  * -------------------------------------------------------------------
  * jsdom gives the SDK a `Blob`/`File`/`FormData`/`atob` surface that
  * matches the browser, while still running on Node. Some of the
- * Family A bugs throw at runtime the moment the SDK receives a
+ * These bugs throw at runtime the moment the SDK receives a
  * browser-native value (e.g. `Buffer.from(new Blob(...))` throws a
  * `TypeError` synchronously). Others corrupt data silently (e.g.
  * `new Uint8Array([...]).toString('base64')` returns `"1,2,3"`, not
@@ -27,7 +20,7 @@
  *
  * Bundle-time checks (unresolved `node:fs`, etc.) live in the
  * sibling `browser-bundle.test.ts` and are NOT duplicated here --
- * that file intentionally remains as-is per Family B scope.
+ * that file intentionally remains as-is.
  *
  * -------------------------------------------------------------------
  * Empirical downloadFile return shape -- needs real-browser
@@ -45,12 +38,12 @@
  *   3. `PubNubFile` with `toArrayBuffer()` (and historically
  *      `toBuffer()` on older `@pubnub/file` objects).
  *
- * This test covers all three shapes so Family A retains parity on
+ * This test covers all three shapes so browser-native input support retains parity on
  * each branch. Empirical shape observed in Chromium 2026-04-19 via
- * Playwright MCP (UPDATED_HUMAN_TEST §4.2): `Uint8Array` for an
+ * Playwright MCP: `Uint8Array` for an
  * 82465-byte image/png input -- matches classifier branch #1 above.
  * Firefox observation still outstanding and deferred as a post-merge
- * one-off (UNRESOLVED.md §1.3). Keep all three branches regardless of
+ * one-off. Keep all three branches regardless of
  * which is observed: the classifier is cross-browser + cross-version
  * resilience, not just a mirror of today's runtime.
  */
@@ -172,7 +165,7 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------
-// Family A1 / A3 / A6 / A7 -- sendMessage with browser-native inputs
+// sendMessage with browser-native inputs
 // ---------------------------------------------------------------------
 // task-client.ts:653 runs
 //   const fileData = Buffer.isBuffer(part.file)
@@ -180,7 +173,7 @@ afterEach(() => {
 //     : Buffer.from(part.file);
 // On master, `Buffer.from(new Blob(...))` and `Buffer.from(new
 // File(...))` throw a TypeError. `Buffer.from(new Uint8Array(...))`
-// succeeds today and must keep succeeding after Family A lands.
+// succeeds today and must keep succeeding after browser-native input support lands.
 // ---------------------------------------------------------------------
 
 describe('browser execution: sendMessage with browser-native file inputs', () => {
@@ -191,7 +184,7 @@ describe('browser execution: sendMessage with browser-native file inputs', () =>
 
     const client = createTaskClient('http://mock-backend.test');
 
-    // Uint8Array should work today *and* after Family A.
+    // Uint8Array should work today *and* after browser-native input support.
     const u8 = new Uint8Array([1, 2, 3]);
     const session = await client.sendMessage({
       agentName: 'mock-agent',
@@ -277,11 +270,11 @@ describe('browser execution: sendMessage with browser-native file inputs', () =>
 });
 
 // ---------------------------------------------------------------------
-// Family A5 -- buildArtifactRef inline base64 encoding
+// buildArtifactRef inline base64 encoding
 // ---------------------------------------------------------------------
 // artifacts.ts:58 calls `input.data?.toString('base64')`. For Node
 // Buffer, this yields proper base64. For a raw Uint8Array (the
-// browser-native shape after Family A), `.toString('base64')` ignores
+// browser-native shape once supported), `.toString('base64')` ignores
 // the encoding argument and returns a comma-joined decimal string
 // (e.g. `[104,105]` -> `"104,105"`), corrupting the artifact.
 //
@@ -297,7 +290,7 @@ describe('browser execution: buildArtifactRef inline base64 encoding', () => {
     const original = new Uint8Array([104, 101, 108, 108, 111]); // "hello"
 
     // Cast: buildArtifactRef.BuildArtifactInput.data is typed `Buffer`
-    // today; Family A widens to `Uint8Array`. The runtime behavior is
+    // today; browser-native input support widens to `Uint8Array`. The runtime behavior is
     // what this test checks, not the type surface.
     const ref = buildArtifactRef({
       mimeType: 'text/plain',
@@ -320,13 +313,13 @@ describe('browser execution: buildArtifactRef inline base64 encoding', () => {
 });
 
 // ---------------------------------------------------------------------
-// Family A4 -- downloadArtifact classifier branches
+// downloadArtifact classifier branches
 // ---------------------------------------------------------------------
 // artifacts.ts:139 begins with
 //   if (file instanceof Uint8Array || Buffer.isBuffer(file)) { ... }
 // The OR-ordering works "by accident" today because Buffer.isBuffer
 // returns false for browser-native shapes, so the code falls through
-// to the Blob and PubNubFile branches. Family A rewrites this to
+// to the Blob and PubNubFile branches. Browser-native input support rewrites this to
 // drop the Buffer.isBuffer short-circuit and use a typeof-guarded
 // Blob check plus a duck-typed toArrayBuffer fallback.
 //
@@ -409,10 +402,10 @@ describe('browser execution: downloadArtifact classifier branches', () => {
 });
 
 // ---------------------------------------------------------------------
-// Family A regression guards -- decodeInlineArtifact
+// Regression guards -- decodeInlineArtifact
 // ---------------------------------------------------------------------
 // decodeInlineArtifact already uses atob()+Uint8Array and is browser-
-// safe. This test pins current behavior so Family A cannot silently
+// safe. This test pins current behavior so that work cannot silently
 // regress it.
 // ---------------------------------------------------------------------
 
@@ -464,7 +457,7 @@ describe('browser execution: fixture wiring for pre-closed TaskSession', () => {
 });
 
 // ---------------------------------------------------------------------
-// stream.bytes() browser-safety (see STREAM_BYTES_BROWSER_IMPL.md)
+// stream.bytes() browser-safety
 // ---------------------------------------------------------------------
 // stream.bytes() used to yield Node-only Buffer via Buffer.from().
 // After the fix, it yields Uint8Array via stream/bytes.ts helpers

@@ -73,7 +73,7 @@ export interface TerminalEvent {
  * audit). Fires zero or once per session: suppressed once a terminal has
  * been delivered (causality), and suppressed on duplicate wire emissions
  * of the event itself (e.g. PubNub cache replay before timetoken-dedup
- * catches it). See `schemas/SDK/task-events/cancel_requested.schema.json`.
+ * catches it).
  */
 export interface CancelRequestedEvent {
   type: 'cancel_requested';
@@ -132,19 +132,19 @@ export class TaskSession {
   private eventCallbacks: Array<(event: TaskEvent) => void> = [];
   private streamCallbacks: Array<(stream: StreamRef) => void> = [];
 
-  // BLOCKS-370 R7: shared first-terminal-wins tracker. Every public
+  // Shared first-terminal-wins tracker. Every public
   // terminal-delivery surface (handleEvent, onTerminal, waitForTerminal,
   // synthetic re-emit) routes through this so SDK consumers see at most
   // one terminal even when the wire delivers two (e.g. scanner Phase 6
   // force-canceled and the agent's own delayed terminal).
   private readonly terminalTracker = new TerminalDeliveryTracker();
 
-  // BLOCKS-370: cancel_requested fires zero-or-once per session.
+  // cancel_requested fires zero-or-once per session.
   // Suppressed once a terminal has been delivered (causality) AND
   // suppressed on duplicate wire emissions of the event itself (e.g.
   // PubNub cache replay before timetoken-dedup catches it).
   private cancelRequestedDelivered = false;
-  // BLOCKS-370: single-slot capture for sticky-replay. Mirrors
+  // Single-slot capture for sticky-replay. Mirrors
   // terminalTracker.peek() — a callback registered after the wire event
   // arrived gets the first event synthesized at registration time.
   private firstCancelRequested: CancelRequestedEvent | null = null;
@@ -188,7 +188,7 @@ export class TaskSession {
   private openStreamClients = new Set<StreamClient>();
 
   // Dedup: bounded seen-timetoken set to suppress duplicate dispatch when
-  // PubNub's cache replay overlaps live delivery (SDK_CONTRACT §10.4.1a).
+  // PubNub's cache replay overlaps live delivery.
   // Insertion order is preserved by JS Set; oldest entries are evicted
   // once size exceeds SEEN_TIMETOKENS_MAX.
   private readonly seenTimetokens: Set<string> = new Set();
@@ -339,7 +339,7 @@ export class TaskSession {
 
     pn.addListener(this.listener);
     // timetoken: 1000 asks PubNub to replay everything still in the
-    // channel's in-memory cache (per SDK_CONTRACT §10.4.1a). Using 0
+    // channel's in-memory cache (per the SDK contract). Using 0
     // would mean "initial subscribe, no catch-up" and leaves the
     // publish-before-subscribe race unfixed.
     pn.subscribe({ channels: [channel], timetoken: 1000 });
@@ -419,7 +419,7 @@ export class TaskSession {
         }
         break;
       case 'cancel_requested':
-        // BLOCKS-370: backend acknowledgment of a cooperative cancel.
+        // Backend acknowledgment of a cooperative cancel.
         // Two suppression gates:
         //   1. terminal already delivered — task is over from the
         //      consumer's perspective; a late cancel_requested would
@@ -440,8 +440,8 @@ export class TaskSession {
         }
         break;
       case 'terminal':
-        // BLOCKS-370 R7: route through the tracker so a duplicate wire
-        // terminal (e.g. scanner Phase-6 force-cancel + agent's delayed
+        // Route through the tracker so a duplicate wire
+        // terminal (e.g. scanner force-cancel + agent's delayed
         // terminal) is silently dropped before any callback fires.
         this.terminalTracker.tryDeliver(event as TerminalEvent, (e) => {
           // Update session state FIRST so callbacks (and any ref.open() calls
@@ -642,7 +642,7 @@ export class TaskSession {
 
   onTerminal(cb: (event: TerminalEvent) => void): Unsubscribe {
     this.terminalCallbacks.push(cb);
-    // BLOCKS-370 R7: hand the registering callback the first-delivered
+    // Hand the registering callback the first-delivered
     // terminal if one exists. peek() is the source of truth — it covers
     // both the wire-delivered case (tryDeliver in handleEvent) and the
     // synthetic case below.
@@ -673,7 +673,7 @@ export class TaskSession {
   }
 
   /**
-   * BLOCKS-370: subscribe to backend-published `cancel_requested` events.
+   * Subscribe to backend-published `cancel_requested` events.
    * Fires zero or once per session — suppressed once a terminal has been
    * delivered (causality) and suppressed on duplicate wire emissions of
    * the event itself. Carries `{ taskId, ts }`. No actor identity (the
@@ -681,7 +681,7 @@ export class TaskSession {
    */
   onCancelRequested(cb: (event: CancelRequestedEvent) => void): Unsubscribe {
     this.cancelRequestedCallbacks.push(cb);
-    // BLOCKS-370: sticky-replay. A consumer that registers after the wire
+    // sticky-replay. A consumer that registers after the wire
     // event arrived (e.g. after `client.connect()` resolves) gets the first
     // cancel_requested synthesized here — UNLESS a terminal has since been
     // delivered, in which case the task is over and replaying would invert
@@ -920,7 +920,7 @@ export class TaskSession {
    * @param timeoutMs Optional timeout in milliseconds. Rejects with Error on timeout.
    */
   async waitForTerminal(timeoutMs?: number): Promise<TerminalEvent> {
-    // BLOCKS-370 R7: peek() is the source of truth for "has a terminal
+    // peek() is the source of truth for "has a terminal
     // been delivered through this session?" — covers both wire-arrived
     // and synthetic terminals.
     const existing = this.terminalTracker.peek();

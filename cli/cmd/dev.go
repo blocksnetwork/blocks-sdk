@@ -37,7 +37,7 @@ func runDev(ctx context.Context) error {
 	// `blocks dev` does NOT require `blocks login` — the dev server is
 	// a static-file host with hot reload, the embed-auth popup it serves
 	// authenticates the end user directly against the backend, and the
-	// CLI's API key never reaches the dev server (impl_07 follow-up #8).
+	// CLI's API key never reaches the dev server.
 	cfgPath := filepath.Join(mustCwd(), "blocks.config.json")
 	blocksCfg, err := config.Load(cfgPath)
 	if err != nil {

@@ -459,7 +459,7 @@ func enterpriseBillingOverride(enterprise bool) *string {
 // resolvePublishApiKey resolves the API key from (in order): --api-key flag,
 // --api-key-stdin flag, BLOCKS_API_KEY env var, then stored credentials.
 // Does NOT trigger any browser/login flow — publish requires prior `blocks
-// login` per BLOCKS-321. The flag values are passed in so the same resolver
+// login`. The flag values are passed in so the same resolver
 // serves both `publish` and `register` (each binds its own flag variables).
 func resolvePublishApiKey(apiKeyFlag string, apiKeyStdin bool) (string, error) {
 	if apiKeyFlag != "" {
@@ -759,7 +759,7 @@ func publishedAgentURL(respBody []byte, agentName string, allowNetworkFallback b
 // (BLOCKS_BACKEND_URL → active profile BaseURL → ldflag default) → CDM. Routing
 // the fallback through the deployment origin is what keeps the "View" link on
 // the deployment the publish actually targeted instead of always stock
-// https://app.blocks.ai (BLOCKS-563). Only the CDM tier depends on the network,
+// https://app.blocks.ai. Only the CDM tier depends on the network,
 // so only it is gated behind allowNetworkFallback — a non-interactive publish
 // with BLOCKS_BACKEND_URL (or a profile / ldflag default) set still gets a View
 // link, while CI/offline environments avoid a potential 21s CDM timeout stall.

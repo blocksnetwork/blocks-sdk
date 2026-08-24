@@ -36,7 +36,7 @@ export const PROTECTED_RPC_HEADERS = new Set<string>([
   'authorization',
   'content-type',
   PROTOCOL_VERSION_HEADER.toLowerCase(),
-  'x-write-affinity', // SDK-managed routing state; §14b no-fabrication
+  'x-write-affinity', // SDK-managed routing state; no-fabrication
 ]);
 
 export function stripProtectedHeaders(h: Record<string, string>): void {
@@ -166,7 +166,7 @@ function isAuthRefreshRetryable(err: unknown): boolean {
 /**
  * Typed error for backend `BillingModeMismatch` responses.
  *
- * Backend wire shape (per Phase 1 `bmc-data` IMPL_REPORT):
+ * Backend wire shape (per Phase 1 `bmc-data` report):
  *
  *   {
  *     "jsonrpc": "2.0",

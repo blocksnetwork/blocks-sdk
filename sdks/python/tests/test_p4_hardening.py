@@ -268,8 +268,7 @@ class TestStreamRegistryHardening:
 
     def test_force_remove_preserves_task_ids(self):
         # task_ids on the returned entry is preserved so fail_stream can
-        # fan out failed terminals to every ref-holder. See QUESTIONS.md
-        # R6 (shared_stream_lifecycle).
+        # fan out failed terminals to every ref-holder.
         reg = StreamRegistry()
         reg.acquire("stream1", "task-1", direction="outbound", format="bytes", external=False)
         entry = reg.force_remove("stream1")

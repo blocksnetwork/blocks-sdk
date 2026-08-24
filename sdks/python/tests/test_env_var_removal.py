@@ -301,8 +301,8 @@ class TestConfigCleanup:
 
         Note: BLOCKS_MAX_UPLOAD_BYTES is intentionally present but is a
         plain platform-contract constant (NOT env-driven), so it does
-        not belong in this list. The env-var cleanup contract from the
-        sdk_remove_env_vars initiative is preserved."""
+        not belong in this list. The env-var cleanup contract is
+        preserved."""
         import blocks_network.config as cfg
         for removed in (
             "AGENT_NAME", "HANDLER", "CONCURRENCY", "EXPECTED_INSTANCES",

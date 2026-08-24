@@ -1,7 +1,7 @@
 /**
  * agent-instance bootstrap — billingMode resolution + connect payload.
  *
- * BMC §3 Node:
+ * Node-side billing-mode behavior:
  * - Bootstrap MUST call registry GET at boot to learn the agent's own
  *   billingMode. The registry is authoritative; no caller override.
  * - The resolved value is forwarded UNCONDITIONALLY into the connect

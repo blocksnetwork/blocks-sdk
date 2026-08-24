@@ -1,6 +1,6 @@
 /**
  * Cross-SDK parity test for the shared-affinity stream lifecycle work
- * (SHARED_STREAM_LIFECYCLE_IMPL Code Changes §11).
+ * (shared-stream lifecycle).
  *
  * Parity claim: every assertion here has a Python mirror in
  * `blocks-sdk/sdks/python/tests/test_shared_stream_parity.py`. Harness
@@ -25,8 +25,8 @@
  *     channel, a later consumer would not be forced to exit on a stale
  *     marker from any prior task's cleanup.
  *
- * The sibling tests at `shared-up-consumer-writer.test.ts` (§12a) and
- * `shared-stream-late-reader.test.ts` (§12b) cover the consumer-writer
+ * The sibling tests at `shared-up-consumer-writer.test.ts` and
+ * `shared-stream-late-reader.test.ts` cover the consumer-writer
  * and late-reader cases at the StreamClient / descriptor level.
  */
 
@@ -276,10 +276,10 @@ beforeEach(() => {
 });
 
 // ===========================================================================
-// §11 Cross-SDK parity: two concurrent pipe tasks on a shared stream
+// Cross-SDK parity: two concurrent pipe tasks on a shared stream
 // ===========================================================================
 
-describe('shared-stream parity (§11): two concurrent pipe tasks', () => {
+describe('shared-stream parity: two concurrent pipe tasks', () => {
   it('distinct T7c slots per task, no stream_end on shared channel, late reader finds no cached marker', async () => {
     const mockPn = createMockPubNub();
     const streamsReady = new Set<string>();

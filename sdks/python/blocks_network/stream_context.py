@@ -33,7 +33,7 @@ class StreamObject:
     ``end()`` delegates through ``release_stream`` (an ``AgentInstance``
     hook) so shared-affinity streams can be released task-scoped without
     tearing down the cross-task writer until the last ref-holder
-    releases. See IMPL fix (d).
+    releases. See fix (d).
     """
 
     def __init__(

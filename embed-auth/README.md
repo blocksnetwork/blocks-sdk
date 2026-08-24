@@ -7,11 +7,8 @@ ready `TaskClient` (or `Record<string, TaskClient>`) for one or more
 agents.
 
 This package is the public-facing surface for embedded auth; the
-backend-side popup, refresh, and revoke endpoints live in
-`afui_mvp_backend`. The implementation specification is
-[`dev_docs/initiative/host_static_pages/impl_03_widget.md`](../../dev_docs/initiative/host_static_pages/impl_03_widget.md);
-the security model is in
-[`dev_docs/SECURITY_ENGINEER.md`](../../dev_docs/SECURITY_ENGINEER.md).
+backend-side popup, refresh, and revoke endpoints are served by the
+Blocks backend.
 
 ## What it does, what it doesn't
 
@@ -157,8 +154,7 @@ Providers hosting on a partner origin are taking on that origin's XSS risk;
 this is the responsibility boundary of the static-page model. Partner apps
 that need stronger isolation should graduate to the customer-backend-proxy
 pattern (Mode 2 `tokenEndpoint`), where the refresh credential never reaches
-the browser. See `dev_docs/SECURITY_ENGINEER.md` "Embedded Auth
-(Third-Party Pages)" and `HOST_PAGES_PLAN.md` §6.2.
+the browser.
 
 **Popup message authentication.** The widget's `message` listener accepts an
 envelope only when (a) `event.origin` is the Blocks backend origin, (b)

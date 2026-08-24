@@ -217,7 +217,7 @@ describe.skipIf(liveGuard)('StreamObject forwarded surface (live)', () => {
   // live A2A error path.
   it.skip('handler-side onError fires with a StreamError on T7a-path PAM denial', async () => {
     // The handler-side StreamObject wraps a StreamClient built with T7a
-    // (agent-instance.ts:1417, SDK_CONTRACT §8.2.6). To exercise the
+    // (agent-instance.ts:1417, the SDK contract). To exercise the
     // forwarded onError, the test must drive a T7a-path error — either
     // T7a revocation mid-stream OR an agent-side PAM-denied channel.
     // T7c revocation only triggers the *consumer*-side StreamClient.onError.

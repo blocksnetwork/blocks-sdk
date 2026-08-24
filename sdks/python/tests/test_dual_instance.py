@@ -234,7 +234,7 @@ class TestRegistryEnvironmentSelection:
     ) -> None:
         """Missing billing_mode on the registry entry is now a fatal startup error.
 
-        Per Billing Mode Contract IMPL §3 the SDK does NOT guess from
+        The SDK does NOT guess from
         prices or keyset names — registry GET is the authoritative source
         and must return a valid ``free`` or ``paid`` value. The previous
         soft-fallback to playground would silently send connect requests
@@ -277,7 +277,7 @@ class TestRegistryEnvironmentSelection:
     ) -> None:
         """Unregistered agent at boot is a fatal startup error.
 
-        Per Billing Mode Contract IMPL §3 the registry GET is the
+        The registry GET is the
         authoritative source for billing_mode; without a registered
         agent the SDK cannot construct a valid connect payload.
         """

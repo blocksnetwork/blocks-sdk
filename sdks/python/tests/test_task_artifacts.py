@@ -1,5 +1,5 @@
 """
-Tests for task artifacts initiative changes.
+Tests for task artifacts.
 
 Covers:
 - RequestPart.artifact_ref round-trip

@@ -130,7 +130,7 @@ describe('signOut', () => {
   });
 
   it('signOut() revokes every partition on the origin (no per-agent selector exists)', async () => {
-    // impl_07 follow-up #4: per-agent and per-set selectors were
+    // Per-agent and per-set selectors were
     // removed. signOut is always whole-Blocks-on-this-page. This test
     // locks in the new contract by setting two partitions on the same
     // origin and asserting BOTH get revoked, not just one.

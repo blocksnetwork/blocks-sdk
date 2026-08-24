@@ -179,7 +179,7 @@ func TestLoadPlugins_RejectInvalidNameSlug(t *testing.T) {
 	}
 }
 
-// TestValidatePluginDeployedURL exercises the impl_07 F5 URL policy: the
+// TestValidatePluginDeployedURL exercises the URL policy: the
 // plugin's stdout URL must be https:// or http://(localhost|127.0.0.1|::1).
 // The post-deploy CLI prompt may persist this URL into an agent-card
 // identity.webApps[].url, which is validated by the same rule server-side;

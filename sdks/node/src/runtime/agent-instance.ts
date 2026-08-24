@@ -313,6 +313,29 @@ const log = (
 ): void => baseLog('[AgentInstance]', level, message, meta);
 
 /**
+ * If `err` is a fatal auth error (forced offline / revoked API key), log it and
+ * terminate the process. Returns true when it exited-path was taken (so callers
+ * can stop further handling), false otherwise.
+ *
+ * A fatal error can surface from any AgentAuth call, not just the initial
+ * connect: `authenticatedFetch` (used by RPC, file-upload, and registry
+ * deletes) refreshes on 401, and `refresh()` throws AgentAuthFatalError on
+ * AGENT_FORCED_OFFLINE / API_KEY_INVALID. Those calls run inside task handling,
+ * where the surrounding catch merely logs — so without this the process would
+ * keep running as a banned zombie. Centralizes the connect-path `process.exit`
+ * so every fatal-auth surface converges on the same shutdown. (BLOCKS-553.)
+ */
+function exitIfFatalAuthError(err: unknown, context: string): boolean {
+  if (!(err instanceof AgentAuthFatalError)) return false;
+  log('error', `Fatal auth error (${context}) — shutting down: ${err.message}`, {
+    event: 'agent_auth_fatal',
+    context,
+    error: err.message,
+  });
+  process.exit(1);
+}
+
+/**
  * Resolve the effective `maxRunningTimeSec` for an agent instance from its
  * two possible sources: the constructor option (`opts.maxRunningTimeSec`)
  * and the agent card's declared value (`card.runtime.maxRunningTimeSec`).
@@ -421,9 +444,9 @@ const publishOrUploadArtifact = async (
  * Perform the stream setup handshake by publishing to the setup channel
  * and extracting the T7a token from the 403 abort response.
  *
- * `affinity` is now required on the wire (see ssl-wire): every
- * stream_setup publish MUST carry it or the Function validator will
- * reject the message with `InvalidArgument`.
+ * `affinity` is required on the wire: every stream_setup publish MUST
+ * carry it or the Function validator will reject the message with
+ * `InvalidArgument`.
  */
 async function performStreamSetup(
   taskPubNub: PubNub,
@@ -856,8 +879,7 @@ export const startAgentInstance = async (
   const maxPendingBacklog = opts.maxPendingBacklog;
   // Single source of truth for max-running-time: reconcile opts with the
   // card's declared value at startup so the connect scaling payload and
-  // the per-task stream TTL derivation can't drift. See Fix B in
-  // dev_docs/initiative/t7c_token_lifecycle/T7C_TOKEN_LIFECYCLE_IMPL.md.
+  // the per-task stream TTL derivation can't drift.
   const effectiveMaxRunningTimeSec = resolveMaxRunningTimeSec(
     opts.maxRunningTimeSec,
     opts.card?.runtime?.maxRunningTimeSec,
@@ -916,7 +938,7 @@ export const startAgentInstance = async (
   // === Shared-stream handle cache helpers ===
   //
   // These helpers centralize cache-eviction at every cleanup boundary
-  // listed in IMPL §Fix (d). Keeping the mutations behind named helpers
+  // listed under Fix (d). Keeping the mutations behind named helpers
   // makes it easy to audit that every boundary maintains the invariant
   // "cache entry iff registry entry still holds the (streamId, taskId)".
   const evictSharedHandle = (streamId: string, taskId: string): void => {
@@ -942,8 +964,7 @@ export const startAgentInstance = async (
   // Atomic "release every stream this task holds" helper. Bundles the
   // three operations that every cleanup boundary must pair — handle-cache
   // eviction, registry release, and last-ref StreamClient.end() — into
-  // a single call so a new cleanup site cannot forget one leg. See
-  // QUESTIONS.md D4 (shared_stream_lifecycle).
+  // a single call so a new cleanup site cannot forget one leg.
   const releaseAllStreamsForTask = async (taskId: string): Promise<void> => {
     evictSharedHandlesForTask(taskId);
     const destroyed = streamRegistry.releaseAllForTask(taskId);
@@ -981,7 +1002,6 @@ export const startAgentInstance = async (
       // Distinguish last-ref teardown from non-last release for ops.
       // On shared-affinity streams StreamClient.end() suppresses the
       // marker publish; the teardown still closes the local writer.
-      // See QUESTIONS.md I1 (shared_stream_lifecycle).
       log('info', 'last-ref teardown', {
         event: 'stream_registry_last_ref_teardown',
         streamId,
@@ -1255,7 +1275,7 @@ export const startAgentInstance = async (
           throw new TypeError(
             'createStream expects an options object. The positional streamId ' +
               'argument was removed; move any declared-stream key into ' +
-              'CreateStreamOptions.declaredStream. See SDK_CONTRACT §8.2.1.',
+              'CreateStreamOptions.declaredStream. See the SDK contract.',
           );
         }
         if (!task.hasStream) {
@@ -1332,7 +1352,7 @@ export const startAgentInstance = async (
         // model — each task would hand its own T7a to a different
         // external process, all writing the same broadcast channel.
         // Fail fast before the registry / handshake state gets
-        // touched. A future initiative can model external broadcast
+        // touched. A future change can model external broadcast
         // explicitly (see GitHub #516). Rejects BOTH pipe and request
         // task kinds; the request-task reject below also catches the
         // request variant but throws with a different message — keep
@@ -2044,6 +2064,11 @@ export const startAgentInstance = async (
           await executeHandler(handlerTask as StartTaskMessage, taskPubNub, ownerId, orgId, controller);
         }
       } catch (e) {
+        // A fatal auth error (forced offline / revoked key) can surface here
+        // when a handler makes an authenticated call (RPC, file upload) whose
+        // 401-refresh throws AgentAuthFatalError. Shut down before publishing a
+        // failed terminal — otherwise a banned runtime keeps handling tasks.
+        if (exitIfFatalAuthError(e, 'task-handler')) return;
         const errMsg = (e as Error)?.message ?? 'Agent instance error';
         const errPubNub = taskPubNub ?? controlClient;
         // Release any streams this task acquired before we published
@@ -2250,6 +2275,7 @@ export const startAgentInstance = async (
           : undefined;
 
       handleControlMessage(msg, meta).catch((err) => {
+        if (exitIfFatalAuthError(err, 'control-message')) return;
         log('error', 'unhandled error in message handler', {
           event: 'message_handler_error',
           error: err instanceof Error ? err.message : String(err),
@@ -2327,9 +2353,7 @@ export const startAgentInstance = async (
         instanceId,
         error: message,
       });
-      if (err instanceof AgentAuthFatalError) {
-        process.exit(1);
-      }
+      exitIfFatalAuthError(err, 'connect');
     });
 
   log('info', `Agent instance ${instanceId} started (agent name: ${agentName})`, {

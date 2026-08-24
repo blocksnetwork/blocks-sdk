@@ -172,7 +172,7 @@ class StreamRegistry:
         DO NOT clear ``task_ids`` here "for hygiene": the single reader
         at ``agent_instance.py#fail_stream`` fans out failed terminals
         over ``entry.task_ids``; clearing the set silently breaks the
-        fan-out. See QUESTIONS.md R6 (shared_stream_lifecycle).
+        fan-out.
         """
         with self._lock:
             entry = self._entries.get(stream_id)

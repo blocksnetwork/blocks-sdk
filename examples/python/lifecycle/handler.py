@@ -12,9 +12,8 @@ first-class and ops a provider composes from primitives:
                                  build real work-suspension: read
                                  { "ctrl": "pause" | "resume" } on a bidi
                                  control stream and park the work loop.
-  - retry   (consumer-composed)  NOT done here — task state is in-memory only
-                                 (SDK_CONTRACT §17), so retry is a consumer
-                                 resubmit. This handler stays idempotent and
+  - retry   (consumer-composed)  NOT done here — task state is in-memory
+                                 only, so retry is a consumer resubmit. This handler stays idempotent and
                                  honors a ``failOnce`` flag so the consumer can
                                  drive a failed->completed retry.
 

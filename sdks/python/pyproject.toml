@@ -27,3 +27,9 @@ blocks_network = ["registry.json"]
 
 [project.scripts]
 blocks-run = "scripts.run_agent:main"
+
+[tool.bandit]
+# `assert` (B101) is the idiomatic pytest assertion mechanism and is only a
+# concern for production code run under `python -O`; tests never are. Exclude
+# the test tree so B101 stops firing on our test suite.
+exclude_dirs = ["tests"]

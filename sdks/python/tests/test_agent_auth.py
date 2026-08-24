@@ -16,6 +16,7 @@ import pytest
 from blocks_network.agent_auth import (
     AgentAuth,
     AgentAuthFatalError,
+    ERROR_CODE_AGENT_FORCED_OFFLINE,
     ERROR_CODE_API_KEY_INVALID,
     ERROR_CODE_REFRESH_TOKEN_INVALID,
 )
@@ -170,15 +171,34 @@ class TestAgentAuthExchange:
         assert captured_bodies[0] == payload
         assert captured_bodies[1] == payload
 
-    def test_init_raises_on_401(self) -> None:
+    def test_init_raises_fatal_on_api_key_invalid(self) -> None:
         """init() raises AgentAuthFatalError when the API key is invalid."""
         auth = AgentAuth(api_key="bk_invalid", base_url="http://localhost:8080")
         with patch(
             "urllib.request.urlopen",
-            side_effect=_mock_error_response(401, {"error": "API key invalid"}),
+            side_effect=_mock_error_response(
+                401,
+                {"error": "API key invalid", "code": ERROR_CODE_API_KEY_INVALID},
+            ),
         ):
-            with pytest.raises(AgentAuthFatalError, match="Agent connect failed"):
+            with pytest.raises(AgentAuthFatalError, match="API key invalid or revoked"):
                 auth.init(registration_payload={"agentName": "echo"})
+
+    def test_init_raises_non_fatal_on_transient_failure(self) -> None:
+        """A transient connect failure raises a plain RuntimeError.
+
+        A 5xx / no-fatal-code response must NOT raise AgentAuthFatalError,
+        so it stays non-blocking and the caller does not terminate the
+        process. BLOCKS-553.
+        """
+        auth = AgentAuth(api_key="bk_ok", base_url="http://localhost:8080")
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_mock_error_response(503, {"error": "Service Unavailable"}),
+        ):
+            with pytest.raises(RuntimeError, match="Agent connect failed") as exc_info:
+                auth.init(registration_payload={"agentName": "echo"})
+            assert not isinstance(exc_info.value, AgentAuthFatalError)
 
     def test_get_api_key(self) -> None:
         auth = AgentAuth(api_key="bk_mykey", base_url="http://localhost:8080")
@@ -294,6 +314,68 @@ class TestAgentAuthRefresh:
         ):
             with pytest.raises(AgentAuthFatalError, match="API key invalid or revoked"):
                 auth.refresh()
+
+    def test_refresh_raises_fatal_on_forced_offline_without_re_connection(self) -> None:
+        """When refresh returns AGENT_FORCED_OFFLINE, raises AgentAuthFatalError.
+
+        Must NOT fall back to re-connection via init() -- a re-register would
+        bypass the administrator ban.
+        """
+        auth = AgentAuth(api_key="bk_test", base_url="http://localhost:8080")
+        auth._access_token = "old-jwt"
+        auth._refresh_token = "old-rt"
+        auth._registration_payload = {"agentName": "echo", "instanceId": "AG-echo-1"}
+
+        captured_urls = []
+
+        def mock_urlopen(req, **kwargs):
+            captured_urls.append(req.full_url)
+            return _mock_error_response(
+                403,
+                {
+                    "error": "Agent has been forced offline by an administrator",
+                    "code": ERROR_CODE_AGENT_FORCED_OFFLINE,
+                },
+            )(req, **kwargs)
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            # The SDK owns the human sentence; it must NOT echo the backend's
+            # `error` (itself a full sentence) or it would double-render.
+            with pytest.raises(
+                AgentAuthFatalError,
+                match=(
+                    r"^Agent forced offline by an administrator\. "
+                    r"It must be re-enabled before it can reconnect\.$"
+                ),
+            ):
+                auth.refresh()
+
+        # Only the refresh endpoint was hit -- no re-connection to /connect.
+        assert len(captured_urls) == 1
+        assert "/auth/agent/refresh" in captured_urls[0]
+        assert not any("/auth/agent/connect" in u for u in captured_urls)
+
+    def test_init_raises_fatal_on_forced_offline(self) -> None:
+        """init() raises a forced-offline AgentAuthFatalError on AGENT_FORCED_OFFLINE."""
+        auth = AgentAuth(api_key="bk_test", base_url="http://localhost:8080")
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_mock_error_response(
+                403,
+                {
+                    "error": "Agent has been forced offline by an administrator",
+                    "code": ERROR_CODE_AGENT_FORCED_OFFLINE,
+                },
+            ),
+        ):
+            with pytest.raises(
+                AgentAuthFatalError,
+                match=(
+                    r"^Agent forced offline by an administrator\. "
+                    r"It must be re-enabled before it can reconnect\.$"
+                ),
+            ):
+                auth.init(registration_payload={"agentName": "echo"})
 
     def test_refresh_is_thread_safe(self) -> None:
         """Multiple threads calling refresh() do not cause races."""

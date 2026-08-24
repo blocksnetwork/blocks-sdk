@@ -181,7 +181,7 @@ class TaskSession:
         self._open_stream_clients: set = set()
 
         # Dedup: bounded seen-timetoken set to suppress duplicate dispatch when
-        # PubNub's cache replay overlaps live delivery (SDK_CONTRACT §10.4.1a).
+        # PubNub's cache replay overlaps live delivery.
         # Uses OrderedDict for guaranteed FIFO eviction -- a plain set's
         # iteration order is an implementation detail and not a public
         # contract across Python versions.
@@ -195,19 +195,19 @@ class TaskSession:
         self._event_cbs: List[Callable[[TaskEvent], None]] = []
         self._stream_cbs: List[Callable[[StreamRef], None]] = []
 
-        # BLOCKS-370 R7: shared first-terminal-wins tracker. Routes every
+        # Shared first-terminal-wins tracker. Routes every
         # public terminal-delivery surface (handle_event, on_terminal,
         # wait_for_terminal, synthetic re-emit) so SDK consumers see at
         # most one terminal even when the wire delivers two (scanner
-        # Phase-6 force-cancel + agent's own delayed terminal).
+        # scanner force-cancel + agent's own delayed terminal).
         self._terminal_tracker = TerminalDeliveryTracker()
 
-        # BLOCKS-370: cancel_requested fires zero-or-once per session.
+        # cancel_requested fires zero-or-once per session.
         # Suppressed once a terminal has been delivered (causality) AND
         # suppressed on duplicate wire emissions of the event itself
         # (e.g. PubNub cache replay before timetoken-dedup catches it).
         self._cancel_requested_delivered = False
-        # BLOCKS-370: sticky-replay slot. Captures the first cancel_requested
+        # Sticky-replay slot. Captures the first cancel_requested
         # so callbacks registered AFTER the wire event arrived still observe
         # it -- mirrors on_terminal's late-registration replay pattern.
         self._first_cancel_requested: Optional[TaskEvent] = None
@@ -343,7 +343,7 @@ class TaskSession:
         self._listener = _Listener()
         self._pubnub.add_listener(self._listener)
         # with_timetoken(1000) asks PubNub to replay everything still in the
-        # channel's in-memory cache (per SDK_CONTRACT §10.4.1a). Using 0
+        # channel's in-memory cache (per the SDK contract). Using 0
         # would mean "initial subscribe, no catch-up" and leaves the
         # publish-before-subscribe race unfixed.
         self._pubnub.subscribe().channels([channel]).with_timetoken(1000).execute()
@@ -424,7 +424,7 @@ class TaskSession:
                     self._route_callback_error(err, "onArtifact", event)
 
         elif event.type == "cancel_requested":
-            # BLOCKS-370: backend acknowledgment of a cooperative cancel.
+            # Backend acknowledgment of a cooperative cancel.
             # Two suppression gates:
             #   1. terminal already delivered -- task is over from the
             #      consumer's perspective; a late cancel_requested would
@@ -449,8 +449,8 @@ class TaskSession:
                     self._route_callback_error(err, "onCancelRequested", event)
 
         elif event.type == "terminal":
-            # BLOCKS-370 R7: route through the tracker so a duplicate wire
-            # terminal (e.g. scanner Phase-6 force-cancel + agent's delayed
+            # Route through the tracker so a duplicate wire
+            # terminal (e.g. scanner force-cancel + agent's delayed
             # terminal) is silently dropped before any callback fires.
             def _deliver_terminal(e: TaskEvent) -> None:
                 # Update session state FIRST so callbacks (and any
@@ -638,7 +638,7 @@ class TaskSession:
 
     def on_terminal(self, cb: Callable[[TaskEvent], None]) -> Unsubscribe:
         self._terminal_cbs.append(cb)
-        # BLOCKS-370 R7: hand the registering callback the first-delivered
+        # Hand the registering callback the first-delivered
         # terminal if one exists. peek() covers wire-arrived (recorded by
         # the tryDeliver path in handle_event) and synthetic cases below.
         existing = self._terminal_tracker.peek()
@@ -685,7 +685,7 @@ class TaskSession:
         Raises ``TimeoutError`` if no terminal event arrives within
         *timeout* seconds.
         """
-        # BLOCKS-370 R7: peek() is the source of truth for "has a terminal
+        # peek() is the source of truth for "has a terminal
         # been delivered through this session?" -- covers wire-arrived and
         # synthetic terminals.
         existing = self._terminal_tracker.peek()
@@ -728,7 +728,7 @@ class TaskSession:
     def on_cancel_requested(
         self, cb: Callable[[TaskEvent], None]
     ) -> Unsubscribe:
-        """BLOCKS-370: subscribe to backend-published ``cancel_requested``
+        """Subscribe to backend-published ``cancel_requested``
         events.
 
         Fires zero or once per session -- suppressed once a terminal has

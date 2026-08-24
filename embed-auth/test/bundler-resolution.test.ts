@@ -1,5 +1,5 @@
 /**
- * Bundler-resolution tests (C345-3-2 / impl_03 §R5.1).
+ * Bundler-resolution tests.
  *
  * Asserts that `import { signInAndGetClient } from '@blocks-network/embed-auth'`
  * resolves to `dist/index.mjs` — NOT to `dist/blocks-auth.iife.min.js` —

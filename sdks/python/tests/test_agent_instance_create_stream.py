@@ -3,7 +3,7 @@
 Mirrors the Node SDK suite at
 ``blocks-sdk/sdks/node/tests/agent-instance-create-stream.test.ts``.
 
-Covers IMPL ``STREAM_ID_ARG_REMOVAL_IMPL.md`` acceptance criteria 1, 3, 5:
+Covers acceptance criteria 1, 3, 5:
 - ``create_stream`` is keyword-only; no positional ``stream_id`` parameter.
 - Dedicated-affinity resolver auto-generates ``{task_id}-{counter}`` per task
   with a fresh counter for each task id.
@@ -311,7 +311,7 @@ class TestDedicatedAffinityCounter:
 
     def test_sequential_tasks_produce_different_channels_parity(self) -> None:
         """Cross-SDK parity: two sequential request tasks produce different
-        stream channels (the whole-initiative bug class being fixed).
+        stream channels.
 
         Mirrors the Node SDK parity assertion in
         ``agent-instance-create-stream.test.ts``.

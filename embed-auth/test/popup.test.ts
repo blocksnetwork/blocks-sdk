@@ -405,7 +405,7 @@ describe('manual close detection', () => {
   });
 });
 
-describe('single-popup-in-flight policy (C345-3-3)', () => {
+describe('single-popup-in-flight policy', () => {
   it('replaces the older popup, rejects the older promise with POPUP_REPLACED, and resolves the new one', async () => {
     const first = openPopupAndAwaitEnvelope(baseArgs());
     const beforeRemoves = removeEventSpy.mock.calls.length;

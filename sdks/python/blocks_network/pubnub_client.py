@@ -39,7 +39,7 @@ _TRANSPORT_LOGGER_NAMES = ("httpx", "httpcore")
 _PUBNUB_TRANSPORT_HOSTS = ("pndsn.com", "pubnub.com")
 
 # Matches the Node SDK's BLOCKS_DEBUG_INTERNAL=forward_transport opt-in
-# (SDK_CONTRACT.md §11.2). Default OFF; NOT implied by LOG_LEVEL=debug.
+#. Default OFF; NOT implied by LOG_LEVEL=debug.
 _FORWARD_TRANSPORT_SUBSYSTEM = "forward_transport"
 
 
@@ -356,8 +356,7 @@ def create_pubnub_client(
         ephemeral / per-stream call sites MUST pass
         ``subscribe_retry_unbounded=False`` explicitly to keep the
         fail-fast retry budget — a stuck task is preferable to a stuck
-        loop. See dev_docs/SDK_CONTRACT.md §Cross-SDK retry-budget
-        defaults for the contract.
+        loop.
     on_retry:
         Optional callback invoked with ``(category, message)``
         for each PubNub reconnection log line we forward. Categories:

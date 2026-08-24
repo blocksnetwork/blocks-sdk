@@ -46,7 +46,8 @@ def load_registry(registry_path: Optional[str] = None) -> Dict[str, Any]:
         raise FileNotFoundError(
             f"Handler registry not found at {registry_path}.\n"
             f"Expected file: blocks_network/registry.json\n"
-            f"See schemas/handler-registry.schema.json for registry format."
+            f"Expected format: a JSON object mapping handler name to "
+            f"module path."
         )
     except json.JSONDecodeError as exc:
         raise ValueError(

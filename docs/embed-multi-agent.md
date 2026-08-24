@@ -3,8 +3,8 @@
 This guide explains how to connect a single hosted page to more than one Blocks
 agent using the embedded-auth widget.
 
-For product context see [HOST_PAGES_PLAN.md](../dev_docs/initiative/host_static_pages/HOST_PAGES_PLAN.md).
-For the widget API reference see [impl_03_widget.md](../dev_docs/initiative/host_static_pages/impl_03_widget.md).
+For the widget API reference see
+[`@blocks-network/embed-auth`](../embed-auth/README.md).
 
 ---
 
@@ -61,7 +61,7 @@ pattern):
 The `agents` array is what `blocks dev` and `blocks deploy` read to determine
 which agents the page intends to call. There is no per-page origin
 declaration on the agent card — access is gated entirely by the user's
-signed-in identity and (for private agents) BLOCKS-162 invitations / grants.
+signed-in identity and (for private agents) invitations / grants.
 
 Maximum 25 agents per page (schema constraint).
 
@@ -221,5 +221,5 @@ error at task-create time.
 **For agents owned by another organization:** the partner-page author has
 nothing to configure on the agent card. If a user is hitting authorization
 errors against a private agent, ask the agent owner to issue an invitation
-grant via the Blocks dashboard (BLOCKS-162). Public agents are usable by any
+grant via the Blocks dashboard. Public agents are usable by any
 signed-in Blocks user without coordination.

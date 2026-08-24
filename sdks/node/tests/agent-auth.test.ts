@@ -86,11 +86,14 @@ describe('AgentAuth', () => {
       expect(result.pamToken).toBe('pam-token-1');
     });
 
-    it('throws AgentAuthFatalError on registration failure', async () => {
+    it('throws AgentAuthFatalError on API_KEY_INVALID', async () => {
       fetchSpy.mockResolvedValueOnce({
         ok: false,
         status: 401,
-        json: async () => ({ error: 'API key invalid, expired, or revoked' }),
+        json: async () => ({
+          error: 'API key invalid, expired, or revoked',
+          code: 'API_KEY_INVALID',
+        }),
       });
 
       const auth = new AgentAuth(TEST_API_KEY, TEST_BASE_URL);
@@ -100,8 +103,49 @@ describe('AgentAuth', () => {
         expect.unreachable('should have thrown');
       } catch (e) {
         expect(e).toBeInstanceOf(AgentAuthFatalError);
+        expect((e as Error).message).toContain('API key invalid or revoked');
+      }
+    });
+
+    it('throws a non-fatal Error (NOT AgentAuthFatalError) on a transient connect failure', async () => {
+      // A 5xx (or any failure without a fatal code) is retryable and MUST stay
+      // non-blocking — the caller only exits on AgentAuthFatalError. BLOCKS-553.
+      fetchSpy.mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: 'Service Unavailable' }),
+      });
+
+      const auth = new AgentAuth(TEST_API_KEY, TEST_BASE_URL);
+
+      try {
+        await auth.init(TEST_REGISTRATION_PAYLOAD);
+        expect.unreachable('should have thrown');
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect(e).not.toBeInstanceOf(AgentAuthFatalError);
         expect((e as Error).message).toContain('Agent registration failed');
       }
+    });
+
+    it('throws AgentAuthFatalError with a forced-offline message on AGENT_FORCED_OFFLINE', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({
+          error: 'Agent has been forced offline by an administrator',
+          code: 'AGENT_FORCED_OFFLINE',
+        }),
+      });
+
+      const auth = new AgentAuth(TEST_API_KEY, TEST_BASE_URL);
+
+      await expect(auth.init(TEST_REGISTRATION_PAYLOAD)).rejects.toThrow(AgentAuthFatalError);
+      // The SDK owns the human sentence; it must NOT echo the backend's `error`
+      // (which is itself a full sentence) or it would double-render.
+      await expect(auth.init(TEST_REGISTRATION_PAYLOAD)).rejects.toThrow(
+        'Agent forced offline by an administrator. It must be re-enabled before it can reconnect.',
+      );
     });
 
     it('strips trailing slash from baseUrl', async () => {
@@ -236,6 +280,40 @@ describe('AgentAuth', () => {
       // Verify the re-registration called /auth/agent/connect (not /agent/token)
       const [reRegUrl] = fetchSpy.mock.calls[2];
       expect(reRegUrl).toBe(`${TEST_BASE_URL}/api/v1/auth/agent/connect`);
+    });
+
+    it('throws AgentAuthFatalError on AGENT_FORCED_OFFLINE without re-registering', async () => {
+      // init (registration)
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        json: async () => registrationResponse(),
+      });
+
+      const auth = new AgentAuth(TEST_API_KEY, TEST_BASE_URL);
+      await auth.init(TEST_REGISTRATION_PAYLOAD);
+
+      // refresh fails with AGENT_FORCED_OFFLINE (403) — persistent so we can
+      // verify a second refresh still fails fatally and never re-registers.
+      fetchSpy.mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({
+          error: 'Agent has been forced offline by an administrator',
+          code: 'AGENT_FORCED_OFFLINE',
+        }),
+      });
+
+      await expect(auth.refresh()).rejects.toThrow(AgentAuthFatalError);
+      await expect(auth.refresh()).rejects.toThrow(
+        'Agent forced offline by an administrator. It must be re-enabled before it can reconnect.',
+      );
+
+      // Must NOT have re-registered: no call to /auth/agent/connect beyond
+      // the initial init (a re-init would bypass the ban).
+      const connectCalls = fetchSpy.mock.calls.filter(
+        ([url]) => url === `${TEST_BASE_URL}/api/v1/auth/agent/connect`,
+      );
+      expect(connectCalls).toHaveLength(1);
     });
 
     it('throws AgentAuthFatalError on API_KEY_INVALID', async () => {

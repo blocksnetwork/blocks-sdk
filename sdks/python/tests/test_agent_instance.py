@@ -853,3 +853,103 @@ class TestExtractOwnerId:
 
     def test_fallback_anonymous(self) -> None:
         assert _extract_owner_id() == "anonymous"
+
+
+class TestFatalConnectShutsDown:
+    def test_agent_auth_fatal_error_terminates_process(self, monkeypatch) -> None:
+        from blocks_network.agent_auth import AgentAuthFatalError
+
+        # Sentinel that stands in for the real process teardown: the fake
+        # os._exit records the code, signals the test, then raises so the
+        # connect thread unwinds immediately instead of falling through into
+        # the finally: block (subscribe + presence) as it would if the fake
+        # simply returned. Deterministic — the test waits on the Event rather
+        # than sleeping a fixed interval.
+        class _ExitSentinel(BaseException):
+            pass
+
+        exit_calls: list[int] = []
+        exited = threading.Event()
+
+        def _fake_exit(code: int) -> None:
+            exit_calls.append(code)
+            exited.set()
+            raise _ExitSentinel()
+
+        monkeypatch.setattr(
+            "blocks_network.agent_instance.os._exit", _fake_exit
+        )
+
+        def _raise_fatal(*_args, **_kwargs):
+            raise AgentAuthFatalError(
+                "Agent forced offline by an administrator. "
+                "It must be re-enabled before it can reconnect."
+            )
+
+        monkeypatch.setattr(
+            "blocks_network.agent_registry.connect_agent", _raise_fatal
+        )
+
+        pn = _make_mock_pubnub()
+        result = start_agent_instance(
+            AgentInstanceOptions(
+                card=minimal_card(),
+                pubnub=pn,
+                agent_name="acme_echo",
+            )
+        )
+        assert exited.wait(timeout=5.0), "connect thread never called os._exit(1)"
+        assert exit_calls == [1]
+        result["stop"]()
+
+
+class TestFatalDuringTaskHandlingShutsDown:
+    @patch("blocks_network.agent_instance.create_pubnub_client")
+    def test_handler_fatal_auth_error_terminates_process(
+        self, mock_create, monkeypatch
+    ) -> None:
+        """A fatal auth error inside a task handler must terminate the process.
+
+        E.g. an RPC or file-upload 401-refresh surfacing AGENT_FORCED_OFFLINE
+        must end the process, not be swallowed as an ordinary task failure.
+        """
+        from blocks_network.agent_auth import AgentAuthFatalError
+
+        exit_calls: list[int] = []
+        exited = threading.Event()
+
+        def _fake_exit(code: int) -> None:
+            exit_calls.append(code)
+            exited.set()
+
+        monkeypatch.setattr(
+            "blocks_network.agent_instance.os._exit", _fake_exit
+        )
+
+        pn = _make_mock_pubnub()
+        mock_create.return_value = _make_mock_pubnub()
+
+        def handler(task, ctx):
+            raise AgentAuthFatalError(
+                "Agent forced offline by an administrator."
+            )
+
+        result = start_agent_instance(
+            AgentInstanceOptions(
+                card=minimal_card(),
+                pubnub=pn,
+                agent_name="acme_echo",
+                handler=handler,
+            )
+        )
+        time.sleep(0.2)
+
+        _simulate_start_task(pn, {
+            "type": "StartTask", "taskId": "t1",
+            "agentName": "acme_echo", "ownerId": "alice",
+            "taskKind": "request", "hasStream": False,
+        }, {"instance": result["instance_id"]})
+
+        assert exited.wait(timeout=5.0), "handler never triggered os._exit(1)"
+        assert exit_calls == [1]
+        result["stop"]()

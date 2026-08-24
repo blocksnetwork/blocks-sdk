@@ -34,7 +34,7 @@
 
   // Render an artifact's bytes into outputEl based on its own mimeType.
   // Used for: (a) untagged artifacts (event.outputId may be undefined per
-  // SDK_CONTRACT §9.1), (b) outputId values that don't match any declared
+  // the SDK contract), (b) outputId values that don't match any declared
   // output, (c) the post-terminal listArtifacts() defensive fallback.
   function renderArtifactByMime(bytes, mimeType, outputEl) {
     const mt = mimeType || '';
@@ -177,7 +177,7 @@
       const client = clients["request_pipe"];
       const requestParts = [];
       // input "prompt" is text-class (text/plain) — wire shape is
-      // { partId, text: <raw string> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <raw string> } per the SDK contract
       const ta_0 = document.getElementById("input-request_pipe-prompt");
       requestParts.push({ partId: "prompt", text: ta_0.value });
       // TODO: agent did not declare a schema for input "prompt". Replace the
@@ -194,7 +194,7 @@
       const session = await client.sendMessage(message);
       // Card declares exactly 1 output — route every artifact here
       // regardless of event.outputId. outputId is OPTIONAL per
-      // SDK_CONTRACT §9.1; we don't gate on its presence.
+      // the SDK contract; we don't gate on its presence.
       session.onArtifact(async (event) => {
         if (renderedRefs.has(event.artifactRef)) return;
         renderedRefs.add(event.artifactRef);

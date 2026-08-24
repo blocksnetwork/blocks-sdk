@@ -1,5 +1,5 @@
 /**
- * Shared pre-signed URL upload helper for the task artifacts initiative.
+ * Shared pre-signed URL upload helper for task artifacts.
  *
  * Implements the three-step upload handshake:
  *   1. request-upload  -> Backend returns uploadUrl, formFields, uploadId

@@ -1,5 +1,5 @@
 """Consumer-writer split test for ``shared_up``
-(SHARED_STREAM_LIFECYCLE_IMPL Code Changes §12a, fix (f) coverage).
+(shared-stream lifecycle).
 
 On ``shared_up`` (``affinity: 'shared'``, ``agentDirection: 'inbound'``),
 consumer direction inverts to ``outbound`` — the consumer builds a
@@ -160,7 +160,7 @@ def _end_markers(published: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 class TestSharedUpConsumerWriter:
-    """§12a: two consumer-writers on shared_up end() without publishing
+    """Two consumer-writers on shared_up end() without publishing
     stream_end."""
 
     def test_two_consumer_writers_end_no_marker(self, pubnub_mock) -> None:
@@ -201,7 +201,7 @@ class TestSharedUpConsumerWriter:
         """Regression gate: the affinity gate is specific to ``shared``.
         A ``dedicated`` consumer-writer MUST still publish ``stream_end``
         — over-broad suppression would regress the dedicated-stream
-        contract (SDK_CONTRACT §8.4.1 marker emission on per-task cleanup).
+        contract (marker emission on per-task cleanup).
         """
         desc = _make_consumer_writer_descriptor(
             task_id="task-c3",

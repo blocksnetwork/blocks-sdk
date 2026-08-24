@@ -204,7 +204,7 @@ func currentIntendedBackendURL() (string, error) {
 // dashboard origin is stale and is skipped — the caller then falls back to
 // resolveBackendURL(), which honors BLOCKS_BACKEND_URL. Without this guard a
 // publish to deployment B via BLOCKS_BACKEND_URL would still open deployment
-// A's dashboard (BLOCKS-563).
+// A's dashboard.
 func resolveAppBaseURL() string {
 	if v := strings.TrimSpace(os.Getenv(blocksAppBaseURLEnv)); v != "" {
 		return v

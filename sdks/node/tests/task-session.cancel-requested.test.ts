@@ -62,7 +62,7 @@ vi.mock('../src/stream/index.js', async (importOriginal) => {
   };
 });
 
-describe('TaskSession.onCancelRequested (BLOCKS-370)', () => {
+describe('TaskSession.onCancelRequested', () => {
   const taskId = 'task-1';
   const ownerId = 'alice';
   const agentName = 'echo';

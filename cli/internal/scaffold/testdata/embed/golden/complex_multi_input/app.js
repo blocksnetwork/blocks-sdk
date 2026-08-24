@@ -35,7 +35,7 @@
 
   // Render an artifact's bytes into outputEl based on its own mimeType.
   // Used for: (a) untagged artifacts (event.outputId may be undefined per
-  // SDK_CONTRACT §9.1), (b) outputId values that don't match any declared
+  // the SDK contract), (b) outputId values that don't match any declared
   // output, (c) the post-terminal listArtifacts() defensive fallback.
   function renderArtifactByMime(bytes, mimeType, outputEl) {
     const mt = mimeType || '';
@@ -180,28 +180,28 @@
       const client = clients["complex_multi_input"];
       const requestParts = [];
       // input "in1" is form-class (application/json) — wire shape is
-      // { partId, text: <JSON-encoded value> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <JSON-encoded value> } per the SDK contract
       const ta_0 = document.getElementById("input-complex_multi_input-in1");
       try { JSON.parse(ta_0.value); } catch (e) { throw new Error('input ' + "in1" + ': invalid JSON: ' + e.message); }
       requestParts.push({ partId: "in1", text: ta_0.value });
       // input "in2" is text-class (text/plain) — wire shape is
-      // { partId, text: <raw string> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <raw string> } per the SDK contract
       const ta_1 = document.getElementById("input-complex_multi_input-in2");
       requestParts.push({ partId: "in2", text: ta_1.value });
       // TODO: agent did not declare a schema for input "in2". Replace the
       //       textarea default with whatever your handler accepts.
       // input "in3" is form-class (application/json) — wire shape is
-      // { partId, text: <JSON-encoded value> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <JSON-encoded value> } per the SDK contract
       const ta_2 = document.getElementById("input-complex_multi_input-in3");
       try { JSON.parse(ta_2.value); } catch (e) { throw new Error('input ' + "in3" + ': invalid JSON: ' + e.message); }
       requestParts.push({ partId: "in3", text: ta_2.value });
       // input "in4" is form-class (application/json) — wire shape is
-      // { partId, text: <JSON-encoded value> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <JSON-encoded value> } per the SDK contract
       const ta_3 = document.getElementById("input-complex_multi_input-in4");
       try { JSON.parse(ta_3.value); } catch (e) { throw new Error('input ' + "in4" + ': invalid JSON: ' + e.message); }
       requestParts.push({ partId: "in4", text: ta_3.value });
       // input "in5" is form-class (application/json) — wire shape is
-      // { partId, text: <JSON-encoded value> } per SDK_CONTRACT §8.6.2g.
+      // { partId, text: <JSON-encoded value> } per the SDK contract
       const ta_4 = document.getElementById("input-complex_multi_input-in5");
       try { JSON.parse(ta_4.value); } catch (e) { throw new Error('input ' + "in5" + ': invalid JSON: ' + e.message); }
       requestParts.push({ partId: "in5", text: ta_4.value });
@@ -214,7 +214,7 @@
         requestParts,
       });
       // Output rendering is dispatched via onArtifact, switching on
-      // event.outputId. outputId is OPTIONAL per SDK_CONTRACT §9.1, so
+      // event.outputId. outputId is OPTIONAL per the SDK contract, so
       // untagged or unknown artifacts fall to a mimeType-based renderer.
       session.onArtifact(async (event) => {
         if (renderedRefs.has(event.artifactRef)) return;
@@ -283,7 +283,7 @@
       // generated instance id and won't match the card key.
       // If declaredStream is undefined the agent didn't tag this stream
       // with a card key — the filter falls through and we ignore the stream.
-      // Note: shared-affinity stream — see SDK_CONTRACT §8.4.1a; do not
+      // Note: shared-affinity stream — see the SDK contract; do not
       //       call stream.end() on the inbound side.
       session.onStream(async (streamRef) => {
         if (streamRef.descriptor.declaredStream !== "events_b") return;

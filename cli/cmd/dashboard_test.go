@@ -24,7 +24,7 @@ func TestResolveDashboardURLPrefersAppBaseOverride(t *testing.T) {
 	}
 }
 
-// TestResolveDashboardURLFallsBackToBackendEnv covers BLOCKS-563: without a
+// TestResolveDashboardURLFallsBackToBackendEnv covers the case where, without a
 // dashboard override, the dashboard opens on the deployment origin
 // (BLOCKS_BACKEND_URL) rather than stock CDM / app.blocks.ai.
 func TestResolveDashboardURLFallsBackToBackendEnv(t *testing.T) {
@@ -43,7 +43,7 @@ func TestResolveDashboardURLFallsBackToBackendEnv(t *testing.T) {
 	}
 }
 
-// TestResolveDashboardURLFallsBackToActiveProfile covers BLOCKS-563: the active
+// TestResolveDashboardURLFallsBackToActiveProfile covers the case where the active
 // profile's BaseURL drives the dashboard origin when no override and no
 // BLOCKS_BACKEND_URL are set.
 func TestResolveDashboardURLFallsBackToActiveProfile(t *testing.T) {

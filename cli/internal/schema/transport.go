@@ -4,7 +4,7 @@ package schema
 // agent-card contentType three-way classification (file / text / form).
 //
 // Other CLI packages — the embed scaffold generator in particular — call
-// ClassifyContentType to pick wire shapes per SDK_CONTRACT §8.6.2g
+// ClassifyContentType to pick wire shapes per the SDK contract
 // without enumerating MIME types themselves. The classifier rules and
 // catalogs are owned by friendly.go's classifyContentType; this file is
 // only a thin export shim.

@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { startAgentInstance } from '../src/runtime/agent-instance.js';
 import type { StartTaskMessage } from '../src/runtime/agent-instance.js';
+import { AgentAuthFatalError } from '../src/runtime/agent-auth.js';
 import { makeTestCard, makePipeTestCard } from './helpers/test-card.js';
 
 // Mock the PubNub client
@@ -285,6 +286,57 @@ describe('Phase 3 Agent Instance Runtime', () => {
         }
       }
 
+      handle.stop();
+    });
+  });
+
+  describe('fatal auth error during task handling', () => {
+    it('exits the process when a handler throws AgentAuthFatalError', async () => {
+      const mockPn = createMockPubNub();
+      // Stub process.exit so the fatal path is observable without killing the
+      // test runner. Throw a sentinel so the inner catch unwinds instead of
+      // continuing to publish a failed terminal (mirrors real teardown).
+      class ExitSentinel extends Error {}
+      const exitSpy = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(((_code?: number) => {
+          throw new ExitSentinel();
+        }) as never);
+
+      const handle = await startAgentInstance({
+        agentName: 'echo',
+        card: makeTestCard(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pubnub: mockPn as any,
+        handler: async () => {
+          // Simulates an authenticated call (RPC / file upload) whose 401
+          // refresh raised the fatal error while the task was in flight.
+          throw new AgentAuthFatalError('Agent forced offline by an administrator.');
+        },
+      });
+
+      await new Promise<void>((resolve) => {
+        mockPn._simulateMessage('agent.echo.control', {
+          type: 'StartTask',
+          taskId: 'task-fatal',
+          ownerId: 'alice',
+          taskKind: 'request',
+          hasStream: false,
+          writeToken: 'wt-1',
+        } as StartTaskMessage, { instance: handle.instanceId });
+        setTimeout(resolve, 50);
+      });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      // The fatal path must short-circuit BEFORE the failed-terminal publish,
+      // so the runtime never masks a ban as an ordinary task failure.
+      const publishedTerminal = mockPn.publish.mock.calls.some(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c: any) => c[0]?.message?.state === 'failed',
+      );
+      expect(publishedTerminal).toBe(false);
+
+      exitSpy.mockRestore();
       handle.stop();
     });
   });

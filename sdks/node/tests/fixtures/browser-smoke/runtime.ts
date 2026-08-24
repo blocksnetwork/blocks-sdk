@@ -1,5 +1,5 @@
 /**
- * Browser execution fixture for the Family B runtime test.
+ * Browser execution fixture for the browser-runtime smoke test.
  *
  * This fixture is IMPORTED FROM `tests/browser-execution.test.ts` and
  * shares the test's hoisted `vi.mock('pubnub', ...)` binding -- the
@@ -9,7 +9,7 @@
  *
  * The fixture intentionally uses the `new TaskClient({...})` direct
  * constructor rather than `TaskClient.create({...})`: `create()` fires
- * a CDM HTTP fetch and ConsumerAuth setup that Family B does not need
+ * a CDM HTTP fetch and ConsumerAuth setup that the smoke test does not need
  * to exercise. The file-part processing path we want to gate lives in
  * `sendMessage()`, which only depends on the constructor surface.
  */
@@ -67,7 +67,7 @@ export function createPreClosedTaskSession(opts?: {
 /**
  * Exercise `sendMessage` with three inline-sized file inputs:
  * `Uint8Array`, `Blob`, and `File`. Each should succeed after
- * Family A lands. Today, the `Blob` and `File` calls throw because
+ * browser-native input support lands. Today, the `Blob` and `File` calls throw because
  * `task-client.ts:653` runs `Buffer.from(part.file)` on them.
  *
  * The caller is responsible for ensuring `globalThis.fetch` responds
@@ -104,7 +104,7 @@ export async function sendFileParts(client: TaskClient): Promise<{
   // "The first argument must be of type string or an instance of
   // Buffer, ArrayBuffer, or Array or an Array-like Object").
   // The SDK's SendMessageRequestPart type does not list Blob, so the
-  // cast below is intentional: Family A will widen the public type to
+  // cast below is intentional: browser-native input support will widen the public type to
   // accept Blob and File.
   const blobSession = await client.sendMessage({
     agentName: 'mock-agent',

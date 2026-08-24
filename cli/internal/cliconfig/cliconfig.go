@@ -15,9 +15,8 @@ import (
 )
 
 // Config is the non-secret discovery payload from GET /api/v1/cli-config.
-// JSON tags mirror the wire contract in
-// schemas/PNAF_REST/cli-config.response.schema.json byte-for-byte; absent
-// optional keys decode to "" (absent ≡ empty for the consumer).
+// JSON tags mirror the wire contract byte-for-byte; absent optional keys
+// decode to "" (absent ≡ empty for the consumer).
 type Config struct {
 	Enterprise       bool   `json:"enterprise"`
 	ProductName      string `json:"productName"`

@@ -2,7 +2,7 @@
  * `resolveBackendBaseUrl` — single source of truth for the Blocks backend
  * origin used by the widget.
  *
- * Resolution order (impl_03 §R4.2):
+ * Resolution order:
  *   1. `opts.backendBaseUrl` (explicit override).
  *   2. `globalThis.__BLOCKS_EMBED_DEV__?.backendBaseUrl` (set by the
  *      `blocks dev` injected `/__blocks_embed_dev.js` script — local-dev
@@ -86,7 +86,7 @@ export function resolveBackendBaseUrl(opts?: { backendBaseUrl?: string }): strin
  *      (`https://config.blocks.ai/config.json`).
  *
  * Returned as an explicit constructor option to `TaskClient.create`,
- * which is the path BLOCKS-101's `explicit option → CDM → default`
+ * which is the path the `explicit option → CDM → default`
  * resolver chain preserves. We never need an env var here.
  */
 export function resolveCdmUrl(opts?: { cdmUrl?: string }): string | undefined {

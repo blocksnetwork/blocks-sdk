@@ -274,7 +274,7 @@ describe('rpc-client', () => {
     // ========================================================================
 
     /**
-     * Backend wire shape (Phase 1 `bmc-data` IMPL_REPORT):
+     * Backend wire shape (Phase 1 `bmc-data` report):
      *   {
      *     "jsonrpc": "2.0",
      *     "error": {
@@ -353,7 +353,7 @@ describe('rpc-client', () => {
     });
 
     it('does NOT auto-retry on BillingModeMismatch — exactly one fetch call', async () => {
-      // BMC §6: SDK MUST NOT auto-retry or auto-correct the caller's
+      // SDK MUST NOT auto-retry or auto-correct the caller's
       // billing mode. Surface the typed error so the caller fixes their
       // code.
       fetchSpy.mockResolvedValueOnce({
@@ -484,7 +484,7 @@ describe('rpc-client', () => {
     });
 
     it('strips a caller-supplied X-Write-Affinity (fetch branch, case-insensitive)', async () => {
-      // §14b: X-Write-Affinity is SDK-managed routing state. A caller MUST NOT
+      // X-Write-Affinity is SDK-managed routing state. A caller MUST NOT
       // be able to smuggle it via rpcHeaders and force primary-DB routing.
       fetchSpy.mockResolvedValueOnce({
         ok: true,

@@ -1,6 +1,6 @@
 """Bootstrap-path billing_mode tests for ``start_agent_instance``.
 
-Phase 3 of the Billing Mode Contract initiative (IMPL §3 Python):
+Python-side billing-mode behavior:
 
 - ``start_agent_instance`` calls registry GET at boot (existing behavior).
 - The resolved ``billing_mode`` is forwarded UNCONDITIONALLY into the

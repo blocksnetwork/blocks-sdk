@@ -82,7 +82,7 @@ var (
 )
 
 // Register adds or replaces an adapter by name. Disk-source adapters override
-// built-in adapters of the same name (per impl_07 §5.5).
+// built-in adapters of the same name.
 func Register(a Adapter) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
