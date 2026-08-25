@@ -203,7 +203,8 @@ signatures and patterns, see [Node Reference] / [Python Reference].
 ## Step 6: Register (or Publish)
 
 The recommended first step is `blocks register`, which registers the
-agent **privately and free** — usable by you and any organizations you
+agent **privately and free** — usable by you, by other members of the
+organization it belongs to, and by any users or organizations you
 invite, with no public listing and no pricing. Test it privately first,
 then run `blocks publish` later to make it public or set pricing.
 

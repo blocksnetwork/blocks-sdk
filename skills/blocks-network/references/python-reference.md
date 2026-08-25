@@ -617,8 +617,9 @@ skipped so the link follows `BLOCKS_BACKEND_URL`.
 
 ### Manage private-agent grants (`blocks invite`)
 
-When an agent is published with `--listing private`, access is gated
-by per-user / per-org grants:
+When an agent is published with `--listing private`, its owner and the
+other members of the organization that owns it reach it already; for
+everyone else access is gated by per-user / per-org grants:
 
 ```bash
 blocks invite send <agentName> --email user@example.com   # invite a specific user
