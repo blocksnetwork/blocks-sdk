@@ -464,8 +464,9 @@ correctly). After the first promotion, prefer `blocks publish` for
 subsequent updates so the listing isn't silently demoted.
 
 The recommended first step is `blocks register`, which registers the
-agent **privately and free** (usable by the owner and invited
-organizations only, no public listing, no pricing). It has no
+agent **privately and free** (usable by the owner, other members of the
+organization that owns it, and the users and organizations they invite;
+no public listing, no pricing). It has no
 listing/billing/terms prompts or flags, so non-interactive and CI
 invocations succeed with no required flags. (Interactive runs may still
 prompt for an organization name on the first agent an org publishes —
@@ -542,8 +543,10 @@ pick a different one.
 
 ### Manage access for private agents
 
-When `--listing private` is set, the agent is invite-only. Use the
-`blocks invite` subcommand family to grant or revoke access:
+When `--listing private` is set, the agent is unlisted and reachable by
+its owner and by other members of the organization that owns it. Anyone
+outside that organization needs an invitation. Use the `blocks invite`
+subcommand family to grant or revoke access:
 
 | Command | Purpose |
 |---|---|
