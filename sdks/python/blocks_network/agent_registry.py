@@ -554,6 +554,7 @@ def fetch_agent_registry(
     limit: int = 100,
     cursor: Optional[str] = None,
     base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> AgentRegistryResult:
     """
     Fetch the agent registry (all agents).
@@ -562,6 +563,10 @@ def fetch_agent_registry(
         limit: Maximum number of agents to return (default 100).
         cursor: Pagination cursor for fetching next page.
         base_url: Optional base URL override.
+        api_key: Optional bearer credential, sent as
+            ``Authorization: Bearer <api_key>``. Optional on Blocks Network, where
+            the listing is world-readable; required on a Blocks Enterprise
+            deployment, which returns an empty page to an unauthenticated caller.
 
     Returns:
         AgentRegistryResult with the list of agents.
@@ -573,8 +578,9 @@ def fetch_agent_registry(
         query["cursor"] = cursor
 
     url = _registry_url(query, base_url=base_url)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
-    result = with_retry(lambda: _registry_fetch(url))
+    result = with_retry(lambda: _registry_fetch(url, headers=headers))
 
     if result is None:
         return AgentRegistryResult(agents=[], total_count=0)
@@ -592,6 +598,7 @@ def fetch_agents_by_tag(
     limit: int = 100,
     cursor: Optional[str] = None,
     base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> AgentRegistryResult:
     """
     Fetch agents filtered by tag.
@@ -601,6 +608,10 @@ def fetch_agents_by_tag(
         limit: Maximum number of agents to return (default 100).
         cursor: Pagination cursor for fetching next page.
         base_url: Optional base URL override.
+        api_key: Optional bearer credential, sent as
+            ``Authorization: Bearer <api_key>``. Optional on Blocks Network, where
+            the listing is world-readable; required on a Blocks Enterprise
+            deployment, which returns an empty page to an unauthenticated caller.
 
     Returns:
         AgentRegistryResult with matching agents.
@@ -613,7 +624,9 @@ def fetch_agents_by_tag(
 
     url = _registry_url(query, base_url=base_url)
 
-    result = with_retry(lambda: _registry_fetch(url))
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+
+    result = with_retry(lambda: _registry_fetch(url, headers=headers))
 
     if result is None:
         return AgentRegistryResult(agents=[], total_count=0)
@@ -631,6 +644,7 @@ def fetch_agents_by_listing(
     limit: int = 100,
     cursor: Optional[str] = None,
     base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> AgentRegistryResult:
     """
     Fetch agents filtered by listing type.
@@ -640,6 +654,10 @@ def fetch_agents_by_listing(
         limit: Maximum number of agents to return (default 100).
         cursor: Pagination cursor for fetching next page.
         base_url: Optional base URL override.
+        api_key: Optional bearer credential, sent as
+            ``Authorization: Bearer <api_key>``. Optional on Blocks Network, where
+            the listing is world-readable; required on a Blocks Enterprise
+            deployment, which returns an empty page to an unauthenticated caller.
 
     Returns:
         AgentRegistryResult with matching agents.
@@ -652,7 +670,9 @@ def fetch_agents_by_listing(
 
     url = _registry_url(query, base_url=base_url)
 
-    result = with_retry(lambda: _registry_fetch(url))
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+
+    result = with_retry(lambda: _registry_fetch(url, headers=headers))
 
     if result is None:
         return AgentRegistryResult(agents=[], total_count=0)

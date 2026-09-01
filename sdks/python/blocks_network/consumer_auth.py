@@ -46,12 +46,25 @@ _REFRESH_TTL_FRACTION = 0.80
 
 
 class AuthRefreshFailedError(RuntimeError):
-    """Raised by :meth:`TaskClient.send_message` and :meth:`TaskClient.connect`
-    when the underlying :class:`ConsumerAuth` is in a known-broken refresh
-    state (proactive refresh permanently failed after 3 retries).
+    """Consumer auth refresh has permanently failed.
+
+    Set when the underlying :class:`ConsumerAuth` enters a known-broken refresh
+    state -- proactive refresh permanently failed after 3 retries, or a reactive
+    refresh failed.
+
+    Raised by any authenticated call that runs the ``preflight_auth_or_raise``
+    gate: the RPC methods on :class:`TaskClient` and :class:`TaskSession`,
+    :meth:`TaskClient.connect`, and the file-upload helpers. Enumerating them
+    here would drift the moment one is added, so the rule is the gate rather
+    than a list.
+
+    Also raised by :meth:`TaskClient.get_agent_card`, for a different reason: it
+    cannot tell a rejected credential from a missing agent on its own, because
+    the registry read is on optional auth, so a stale bearer degrades to
+    anonymous and 404s rather than 401ing.
 
     The original failure is chained via PEP-3134 ``__cause__``. Cleared by a
-    subsequent successful reactive refresh.
+    subsequent successful token apply.
     """
 
     def __init__(self, cause: Exception) -> None:
@@ -192,12 +205,13 @@ class ConsumerAuth:
             return self._user_id
 
     def get_last_auth_error(self) -> Optional["AuthRefreshFailedError"]:
-        """Return the last permanent refresh failure, or None.
+        """Return the last refresh failure, or None.
 
-        Set when proactive refresh exhausts its 3 retries; cleared on a
-        successful reactive refresh. Callers (``TaskClient.send_message`` /
-        ``TaskClient.connect``) use this to fail fast before any
-        authenticated request.
+        Set when proactive refresh exhausts its 3 retries, and when a reactive
+        refresh fails; cleared atomically on the next successful token apply.
+        Callers (``TaskClient.send_message`` / ``TaskClient.connect``, and the
+        registry card lookup) use this to fail fast before, or instead of,
+        an authenticated request.
         """
         with self._lock:
             return self._last_auth_error
@@ -250,7 +264,26 @@ class ConsumerAuth:
             logger.warning(
                 "[ConsumerAuth] reactive refresh failed: %s", err,
             )
+            # Record it, not just log it. ``on_auth_failure()`` reports failure as
+            # a bare ``False``, which callers cannot tell apart from "this
+            # provider has no refresh capability" — a static-token provider
+            # returns the same thing without attempting anything. Leaving the
+            # error unrecorded meant the only signal of a real auth outage was a
+            # log line, so a caller acting on ``get_last_auth_error()`` saw a
+            # healthy provider: the registry card lookup reported a live outage
+            # as "no such agent".
+            #
+            # ``get_last_auth_error`` is documented as the provider's
+            # known-broken state, and a reactive refresh that failed is exactly
+            # that. Recovery is unaffected — ``_store_result`` clears it
+            # atomically on the next success, and ``preflight_auth_or_raise``
+            # retries once before raising, so a transient outage still self-heals
+            # on the following call.
+            permanent = AuthRefreshFailedError(err)
+            permanent.__cause__ = err
+            permanent.__suppress_context__ = True
             with self._lock:
+                self._last_auth_error = permanent
                 self._refresh_success = False
                 self._refreshing = False
                 evt = self._refresh_event

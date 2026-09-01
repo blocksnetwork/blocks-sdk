@@ -138,11 +138,34 @@ func runInviteSend(agentName string) error {
 		return handleErrorResponse(resp)
 	}
 
+	target := inviteSendEmail
 	if inviteSendOrg != "" {
-		fmt.Printf("Invitation sent to org %s\n", inviteSendOrg)
-	} else {
-		fmt.Printf("Invitation sent to %s\n", inviteSendEmail)
+		target = "org " + inviteSendOrg
 	}
+
+	// The invitation is created either way; `notified` says how many addresses were
+	// actually emailed. Absent means the server cannot report it, which is not the
+	// same as zero — an older server did email the invitation and had no field to
+	// say so — so only an explicit zero is reported as undelivered. The link is
+	// then the only way in, so it is printed rather than discarded.
+	var result struct {
+		Notified  *int   `json:"notified"`
+		InviteURL string `json:"inviteUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Printf("Invitation sent to %s\n", target)
+		return nil
+	}
+
+	if result.Notified != nil && *result.Notified == 0 {
+		fmt.Printf("Invitation created for %s, but it could not be emailed.\n", target)
+		if result.InviteURL != "" {
+			fmt.Printf("Share this link instead: %s\n", result.InviteURL)
+		}
+		return nil
+	}
+
+	fmt.Printf("Invitation sent to %s\n", target)
 	return nil
 }
 

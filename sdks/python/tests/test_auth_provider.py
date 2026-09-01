@@ -42,6 +42,24 @@ class TestAuthProviderProtocol:
         assert provider.get_auth_header() == "Bearer custom"
         assert provider.on_auth_failure() is True
 
+    def test_the_two_required_methods_are_enough(self):
+        # The protocol is @runtime_checkable, so anything declared on it is
+        # required by isinstance() too. ``ensure_ready`` was declared while the
+        # docstring described it as optional, which made this assertion false and
+        # locked out any provider written to the documented surface. Neither
+        # optional hook may be declared on the protocol for that reason.
+        class MinimalProvider:
+            def get_auth_header(self):
+                return "Bearer minimal"
+
+            def on_auth_failure(self):
+                return False
+
+        provider = MinimalProvider()
+        assert not hasattr(provider, "ensure_ready")
+        assert not hasattr(provider, "get_last_auth_error")
+        assert isinstance(provider, AuthProvider)
+
 
 # ============================================================================
 # RPC with AuthProvider

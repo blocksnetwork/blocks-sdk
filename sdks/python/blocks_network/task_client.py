@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
 
 from .agent_registry import get_agent
-from .auth_provider import AuthProvider
+from .auth_provider import AuthProvider, preflight_auth_or_raise
 from .channel_manager import task_channel
 from .pubnub_compat import patch_pubnub_file_message
 from .rpc_client import BillingModeMismatchError, call_rpc
@@ -680,15 +680,134 @@ class TaskClient:
             return self._consumer_auth.get_user_id()
         return None
 
+    def _bearer_credential(self) -> Optional[str]:
+        """The client's bearer credential, or ``None`` when it has none.
+
+        ``get_agent``'s ``api_key`` argument is sent verbatim as
+        ``Authorization: Bearer <value>``, so whatever bearer credential the
+        provider is holding works. In practice that is the consumer JWT in all
+        three ``ConsumerAuth`` modes: API-key mode exchanges the key for a JWT
+        during ``init()`` and never sends the raw key here. The provider owns
+        refresh, so the header is read per call rather than cached here, keeping a
+        rotated token from going stale.
+        """
+        provider = self._auth_provider or self._consumer_auth
+        # No provider does not mean no credential: ``agent_auth`` is the other
+        # supported way to construct an authenticated client, and the RPC and
+        # file-upload paths both honour it. Skipping it here would make an
+        # agent-side client's card lookup anonymous, so on Blocks Enterprise it
+        # would read ``None`` while every other call it makes is authenticated.
+        #
+        # Its access token is forwarded rather than routed through
+        # ``authenticated_fetch``: that method owns the whole request, and the
+        # registry read is on optional auth so it cannot 401 — there is no
+        # rejection for the wrapper's retry to act on. Because that 401 retry is
+        # ``AgentAuth``'s only refresh trigger and it has no proactive scheduler,
+        # ``get_agent_card`` drives ``refresh()`` itself off an empty result.
+        if provider is None:
+            if self._agent_auth is not None:
+                return self._agent_auth.get_access_token() or None
+            return None
+
+        # A configured provider that cannot produce a credential is an auth
+        # failure, not a missing agent. Swallowing it would report ``None`` —
+        # indistinguishable from "no such agent" — and would skip the refresh
+        # ``on_auth_failure`` performs, so an expired token would never recover.
+        # This is the same preflight the RPC path runs before an authenticated
+        # call.
+        #
+        # ``ensure_ready`` and ``get_last_auth_error`` are both optional and
+        # deliberately undeclared on the ``AuthProvider`` protocol -- see that
+        # protocol's docstring for why -- so both are discovered dynamically
+        # rather than called outright, as ``rpc_client.py`` and Node's
+        # ``ensureReady?.()`` also do. ``ensure_ready`` is idempotent, so the
+        # already-initialized case costs nothing.
+        preflight_auth_or_raise(provider)
+        if hasattr(provider, "ensure_ready"):
+            provider.ensure_ready()
+
+        header = provider.get_auth_header()
+        if not header:
+            return None
+        prefix = "Bearer "
+        return header[len(prefix):] if header.startswith(prefix) else header
+
     def get_agent_card(self, agent_name: str) -> Optional[Dict[str, Any]]:
         """Look up an agent's card from the registry.
 
         Delegates to :func:`~blocks_network.agent_registry.get_agent`
         and returns the ``card`` field from the registry entry, or
         ``None`` if the agent is not found or has no card.
+
+        Forwards the client's credential when it has one. The registry read is
+        mounted on optional auth, so this is not required on Blocks Network — but
+        a Blocks Enterprise deployment serves agent metadata to authenticated
+        callers only, and would answer an unauthenticated lookup with ``None``
+        even for a correctly configured client.
+
+        Raises ``AuthRefreshFailedError`` when a configured credential cannot be
+        produced. ``None`` means "no such agent, or no card"; it must not also
+        mean "your token expired", or an auth problem would read as a missing
+        agent.
         """
-        entry = get_agent(agent_name, base_url=self._base_url)
-        if entry is not None and hasattr(entry, "card") and entry.card is not None:
+        provider = self._auth_provider or self._consumer_auth
+
+        def _lookup() -> Any:
+            return get_agent(
+                agent_name,
+                base_url=self._base_url,
+                api_key=self._bearer_credential(),
+            )
+
+        entry = _lookup()
+
+        if entry is None and provider is None and self._agent_auth is not None:
+            # Empty result with an ``agent_auth`` credential and no auth provider.
+            # This is the one credential owner whose refresh the read cannot reach
+            # at all: ``AgentAuth.refresh()`` is driven solely from
+            # ``authenticated_fetch``'s 401 retry, and the registry read is on
+            # optional auth so it never 401s. There is no proactive scheduler
+            # behind it either, so without this the token is never renewed on this
+            # path and a card lookup keeps answering ``None`` for the client's
+            # lifetime.
+            #
+            # Refresh and retry once, letting a failure propagate — ``refresh()``
+            # raises ``AgentAuthFatalError`` on an invalid API key and reraises any
+            # other failure, which is the same "an auth failure is not a missing
+            # agent" guarantee the provider branch below gives.
+            self._agent_auth.refresh()
+            entry = _lookup()
+        elif entry is None and provider is not None:
+            # A rejected credential does not reach us as a 401. The registry read
+            # is mounted on optional auth, which degrades an expired, revoked or
+            # denied-jti bearer to *anonymous* rather than rejecting it — so on
+            # Blocks Enterprise the read then 404s and a stale token is
+            # indistinguishable from a missing agent. Nothing 401s, so the
+            # transport's reactive refresh never fires.
+            #
+            # ``preflight_auth_or_raise`` in ``_bearer_credential`` does not cover
+            # this: it only reacts to a failure the provider has already recorded.
+            # So drive the refresh from the one signal we do get — an empty result
+            # while holding a provider — and retry once. A genuinely absent agent
+            # costs one extra GET.
+            if provider.on_auth_failure():
+                entry = _lookup()
+            else:
+                # Refresh was not possible. Surface an auth failure only on
+                # evidence the provider actually has one — ``get_last_auth_error``
+                # is what ``preflight_auth_or_raise`` reads for the same purpose,
+                # and it is optional on the protocol, so it is probed the same way.
+                # A provider that merely cannot refresh gives no evidence the
+                # credential was the problem, and for it a genuinely absent agent
+                # must still be ``None`` rather than a raised auth error.
+                if not hasattr(provider, "get_last_auth_error"):
+                    return None
+                recorded = provider.get_last_auth_error()
+                if recorded is not None:
+                    raise recorded
+                return None
+
+        if entry is not None and getattr(entry, "card", None) is not None:
             return entry.card
         return None
 

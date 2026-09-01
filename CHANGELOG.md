@@ -168,6 +168,7 @@ validation.
 - `blocks init --mode webapp --backend-url <url>` to explicitly set the backend API origin the deployed page calls.
 
 #### Fixed
+- `blocks invite send` no longer reports "Invitation sent" when the invitation email could not be delivered. The invitation and its link are still created, so the command now says the invitation could not be emailed and prints the link for you to pass on yourself. Against an older instance that cannot report delivery, the output is unchanged.
 - `blocks publish` and `blocks dashboard` now open the "View" link on the deployment your active profile (or `BLOCKS_BACKEND_URL`) targets, instead of always opening `https://app.blocks.ai`. Set `BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` when your dashboard origin differs from the backend origin.
 - `blocks publish` now applies enterprise publishing behavior when you target an enterprise instance with `--api-key` before running `blocks login` for that instance, instead of falling back to Blocks Network prompts.
 - Publishing under a non-default organization now makes that organization the active one, so later `blocks run` and `blocks whoami` use it instead of the previously selected organization.

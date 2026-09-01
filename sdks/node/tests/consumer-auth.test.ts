@@ -525,6 +525,66 @@ describe('ConsumerAuth', () => {
       auth.destroy();
     });
 
+    // A failed reactive refresh used to log and return a bare `false`, which is
+    // indistinguishable from a provider that has no refresh capability at all —
+    // StaticAuthProvider returns the same thing without attempting anything. Any
+    // caller reading `getLastAuthError()` therefore saw a healthy provider during
+    // a live auth outage, and the registry card lookup reported it as "no such
+    // agent". The state is what `getLastAuthError` documents itself as holding.
+    it('records the failure so a reactive outage is not silent', async () => {
+      const provider = vi.fn<() => Promise<TokenResult>>()
+        .mockResolvedValueOnce({ token: 'jwt-1', expiresIn: 300 })
+        .mockRejectedValueOnce(new Error('token endpoint unreachable'));
+
+      const auth = new ConsumerAuth({ tokenProvider: provider });
+      await auth.init();
+      expect(auth.getLastAuthError()).toBeNull();
+
+      const refreshed = await auth.onAuthFailure();
+
+      expect(refreshed).toBe(false);
+      const err = auth.getLastAuthError();
+      expect(err).toBeInstanceOf(AuthRefreshFailedError);
+      expect((err?.cause as Error).message).toBe('token endpoint unreachable');
+
+      auth.destroy();
+    });
+
+    it('clears the recorded failure once a later reactive refresh succeeds', async () => {
+      const provider = vi.fn<() => Promise<TokenResult>>()
+        .mockResolvedValueOnce({ token: 'jwt-1', expiresIn: 300 })
+        .mockRejectedValueOnce(new Error('transient'))
+        .mockResolvedValueOnce({ token: 'jwt-2', expiresIn: 300 });
+
+      const auth = new ConsumerAuth({ tokenProvider: provider });
+      await auth.init();
+
+      await auth.onAuthFailure();
+      expect(auth.getLastAuthError()).not.toBeNull();
+
+      // Recovery must clear it, or one transient outage would wedge the client
+      // for its lifetime via the fail-fast preflight.
+      await auth.onAuthFailure();
+      expect(auth.getLastAuthError()).toBeNull();
+      expect(auth.getAuthHeader()).toBe('Bearer jwt-2');
+
+      auth.destroy();
+    });
+
+    it('does not record when the provider was already destroyed', async () => {
+      const provider = vi.fn<() => Promise<TokenResult>>()
+        .mockResolvedValueOnce({ token: 'jwt-1', expiresIn: 300 });
+
+      const auth = new ConsumerAuth({ tokenProvider: provider });
+      await auth.init();
+      auth.destroy();
+
+      // Teardown is not an auth failure — no refresh is attempted, so there is
+      // nothing to report and a shutting-down client must not start raising.
+      expect(await auth.onAuthFailure()).toBe(false);
+      expect(auth.getLastAuthError()).toBeNull();
+    });
+
     it('returns false after destroy', async () => {
       const provider = vi.fn<() => Promise<TokenResult>>()
         .mockResolvedValueOnce({ token: 'jwt-1', expiresIn: 300 });

@@ -807,7 +807,7 @@ client.destroy();
   proceeds normally, and if it fails the typed
   `AuthRefreshFailedError` is thrown/raised instead of an opaque 401.
   Register `onAuthError` (Node) / `on_auth_error` (Python) on
-  `TaskClient.create(...)` for a proactive hook; the preflight is the
+  `TaskClient.create(...)` for a proactive-path hook (it does not fire for reactive failures); the preflight is the
   safety net for callers who don't and the recovery path for transient
   outages. See [Node Reference] / [Python Reference] for re-auth
   patterns.
@@ -960,7 +960,7 @@ is already terminal (live-only data is gone; artifacts persist).
 |---|---|
 | User says "I want to build my first Blocks agent" | Wrong skill -- this one is for managing existing agents. Switch to the `blocks-getstarted` skill. |
 | `BillingModeMismatchError` on `sendMessage` | `TaskClient.create({ billingMode })` does not match the agent's registered billingMode. Read it from the registry: `(await getAgent(name)).billingMode`. |
-| `AuthRefreshFailedError` on the next `TaskClient` call | Background token refresh failed 3 times AND the per-call preflight's reactive-recovery attempt also failed (expired/revoked API key, broken token endpoint, persistent outage). Re-create the `TaskClient` with valid credentials, or register `onAuthError` for proactive re-auth UX. A transient outage that recovers before the preflight runs is handled silently and the call proceeds. |
+| `AuthRefreshFailedError` on the next `TaskClient` call | Background token refresh failed 3 times, or a reactive on-401 refresh failed, AND the per-call preflight's reactive-recovery attempt also failed (expired/revoked API key, broken token endpoint, persistent outage). Re-create the `TaskClient` with valid credentials, or register `onAuthError` for proactive re-auth UX. A transient outage that recovers before the preflight runs is handled silently and the call proceeds. |
 | Pipe task rejected at `sendMessage` | Missing `duration`, `duration` not an integer in `[1, 43200]` (minutes), or `duration` set on a non-pipe task. |
 | `agentName` rejected | Must match `^[a-zA-Z0-9_]+$` -- underscores only, no hyphens. |
 | Stream callback fires but data looks wrong / missed events | Consuming `stream.inbound` instead of `stream.events()` / `stream.bytes()`. |
