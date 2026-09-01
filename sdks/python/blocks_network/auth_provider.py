@@ -30,13 +30,29 @@ class AuthProvider(Protocol):
       transport calls this before issuing any authenticated request and
       raises the error directly so consumers see the typed
       ``AuthRefreshFailedError`` instead of an opaque downstream 401.
+    - ensure_ready(): bootstrap hook for providers that acquire their first
+      token lazily (ConsumerAuth's token exchange). Must be idempotent.
+
+    Neither optional method is declared below, and that is deliberate: this
+    Protocol is ``@runtime_checkable``, so a declared method is required by
+    ``isinstance()`` as well as by static checking. Declaring an optional hook
+    would make ``isinstance(p, AuthProvider)`` false for a provider written to
+    the two required methods, contradicting this docstring. ``ensure_ready`` was
+    declared here historically and has been removed for that reason; the change
+    only widens what satisfies the protocol, so every existing provider — the
+    bundled ones included — still passes.
+
+    Every transport probes both optional methods (``hasattr`` here,
+    ``ensureReady?.()`` / ``?.getLastAuthError`` in the Node SDK, which types
+    them optional) rather than calling them outright. Do not "simplify" a call
+    site to an unconditional call, and do not re-declare either method here:
+    both raise AttributeError for a provider built to the required surface
+    alone.
     """
 
     def get_auth_header(self) -> Optional[str]: ...
 
     def on_auth_failure(self) -> bool: ...
-
-    def ensure_ready(self) -> None: ...
 
 
 class StaticAuthProvider:

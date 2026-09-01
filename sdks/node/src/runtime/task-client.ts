@@ -643,12 +643,119 @@ export class TaskClient {
   /**
    * Look up an agent's card by name from the registry.
    * Returns null if the agent is not found or has no card.
+   *
+   * Forwards the client's credential when it has one. The registry read is
+   * mounted on optional auth, so this is not required on Blocks Network — but a
+   * Blocks Enterprise deployment serves agent metadata to authenticated callers
+   * only, and would answer an unauthenticated lookup with null even for a
+   * correctly configured client.
+   *
+   * Throws `AuthRefreshFailedError` when a configured credential cannot be
+   * produced. `null` means "no such agent, or no card"; it must not also mean
+   * "your token expired", or an auth problem would read as a missing agent.
    */
   async getAgentCard(agentName: string): Promise<AgentCard | null> {
-    const entry = await getAgent(agentName, {
-      baseUrl: this.config.baseUrl,
-    });
-    return entry?.card ?? null;
+    const provider = this.config.authProvider;
+    const lookup = async () =>
+      getAgent(agentName, {
+        baseUrl: this.config.baseUrl,
+        apiKey: await this.bearerCredential(),
+      });
+
+    const entry = await lookup();
+    if (entry) return entry.card ?? null;
+
+    // Empty result with an `agentAuth` credential and no `authProvider`. This is
+    // the one credential owner whose refresh the read cannot reach at all:
+    // `AgentAuth.refresh()` is driven solely from `authenticatedFetch`'s 401
+    // retry, and the registry read is on optional auth so it never 401s. There
+    // is no proactive scheduler behind it either, so without this the token is
+    // never renewed on this path and a card lookup keeps answering `null` for
+    // the client's lifetime.
+    //
+    // Refresh and retry once, and let a failure propagate — `refresh()` raises
+    // `AgentAuthFatalError` on an invalid API key and rethrows any other
+    // failure, which is the same "an auth failure is not a missing agent"
+    // guarantee the `authProvider` branch below gives.
+    const agentAuth = this.config.agentAuth;
+    if (!provider && agentAuth) {
+      await agentAuth.refresh();
+      const retried = await lookup();
+      return retried?.card ?? null;
+    }
+
+    if (!provider) return null;
+
+    // A rejected credential does not reach us as a 401. The registry read is
+    // mounted on optional auth, which degrades an expired, revoked or
+    // denied-jti bearer to *anonymous* rather than rejecting it — so on Blocks
+    // Enterprise the read then 404s and a stale token is indistinguishable from
+    // a missing agent. Nothing 401s, so the transport's reactive refresh never
+    // fires and the token stays stale for the client's lifetime.
+    //
+    // `preflightAuthOrThrow` in `bearerCredential` does not cover this: it only
+    // reacts to a failure the provider has already recorded. So drive the refresh
+    // from the one signal we do get — an empty result while holding a provider —
+    // and retry once. A genuinely absent agent costs one extra GET.
+    if (await provider.onAuthFailure()) {
+      const retried = await lookup();
+      return retried?.card ?? null;
+    }
+
+    // Refresh was not possible. Surface an auth failure only on evidence the
+    // provider actually has one: `getLastAuthError` is what the transport's
+    // preflight reads for the same purpose. A provider that merely cannot refresh
+    // — a static token, say, whose `onAuthFailure` always returns false — gives no
+    // evidence the credential was the problem, and for it a genuinely absent agent
+    // must still be `null` rather than a thrown auth error. Throwing on every
+    // failed refresh would break `AgentCard | null` for the ordinary
+    // agent-does-not-exist case.
+    const recorded = provider.getLastAuthError?.();
+    if (recorded) throw recorded;
+    return null;
+  }
+
+  /**
+   * The client's bearer credential, or undefined when it has none.
+   *
+   * `getAgent`'s `apiKey` option is sent verbatim as `Authorization: Bearer
+   * <value>`, so whatever bearer credential the provider is holding works. In
+   * practice that is the consumer JWT in all three `ConsumerAuth` modes: API-key
+   * mode exchanges the key for a JWT during `init()` and never sends the raw key
+   * here. The provider owns refresh, so reading the header per call rather than
+   * caching it here keeps a rotated token from going stale.
+   */
+  private async bearerCredential(): Promise<string | undefined> {
+    const provider = this.config.authProvider;
+    // No `authProvider` does not mean no credential: `agentAuth` is the other
+    // supported way to construct an authenticated client, and the RPC and
+    // file-upload paths both honour it. Skipping it here would make an
+    // agent-side client's card lookup anonymous, so on Blocks Enterprise it
+    // would read `null` while every other call it makes is authenticated.
+    //
+    // Its access token is forwarded rather than routed through
+    // `authenticatedFetch`: that method owns the whole request, and the registry
+    // read is on optional auth so it cannot 401 — there is no rejection for the
+    // wrapper's retry to act on. Because that 401 retry is `AgentAuth`'s only
+    // refresh trigger and it has no proactive scheduler, `getAgentCard` drives
+    // `refresh()` itself off an empty result.
+    if (!provider) {
+      return this.config.agentAuth?.getAccessToken() ?? undefined;
+    }
+
+    // A configured provider that cannot produce a credential is an auth failure,
+    // not a missing agent. Swallowing it would report `null` — indistinguishable
+    // from "no such agent" — and would skip the refresh that `onAuthFailure`
+    // performs, so an expired token would never recover. This is the same
+    // preflight the RPC path runs before an authenticated call, so a broken
+    // provider surfaces the typed `AuthRefreshFailedError` here too.
+    await preflightAuthOrThrow(provider);
+    await provider.ensureReady?.();
+
+    const header = provider.getAuthHeader();
+    if (!header) return undefined;
+    const prefix = 'Bearer ';
+    return header.startsWith(prefix) ? header.slice(prefix.length) : header;
   }
 
   /**

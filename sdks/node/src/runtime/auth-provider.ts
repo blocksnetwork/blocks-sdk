@@ -42,9 +42,9 @@ export interface AuthProvider {
   ensureReady?(): Promise<void>;
 
   /**
-   * Returns the recorded permanent-refresh error when the provider is in
-   * a known-broken state (e.g. proactive refresh exhausted its retries),
-   * or null otherwise. The transport calls this before issuing any
+   * Returns the recorded refresh error when the provider is in a
+   * known-broken state — proactive refresh exhausted its retries, or a
+   * reactive refresh failed — or null otherwise. The transport calls this before issuing any
    * authenticated request and throws the error directly so consumers see
    * the typed `AuthRefreshFailedError` instead of an opaque downstream
    * 401. Implementations without proactive refresh return null / omit.

@@ -560,6 +560,53 @@ class TestReactiveRefresh:
         assert auth.get_auth_header() == "Bearer jwt-init"
         auth.destroy()
 
+    def test_on_auth_failure_records_the_failure(self):
+        # A failed reactive refresh used to log and return a bare False, which is
+        # indistinguishable from a provider with no refresh capability at all —
+        # StaticAuthProvider returns the same thing without attempting anything.
+        # Any caller reading get_last_auth_error() therefore saw a healthy
+        # provider during a live auth outage, and the registry card lookup
+        # reported it as "no such agent".
+        call_count = [0]
+
+        def provider_fn():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return TokenResult(token="jwt-init", expires_in=300)
+            raise RuntimeError("token endpoint unreachable")
+
+        auth = ConsumerAuth(token_provider=provider_fn)
+        auth.init()
+        assert auth.get_last_auth_error() is None
+
+        assert auth.on_auth_failure() is False
+
+        recorded = auth.get_last_auth_error()
+        assert isinstance(recorded, AuthRefreshFailedError)
+        assert "token endpoint unreachable" in str(recorded)
+        auth.destroy()
+
+    def test_recorded_failure_clears_on_a_later_successful_refresh(self):
+        call_count = [0]
+
+        def provider_fn():
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise RuntimeError("transient")
+            return TokenResult(token=f"jwt-{call_count[0]}", expires_in=300)
+
+        auth = ConsumerAuth(token_provider=provider_fn)
+        auth.init()
+
+        assert auth.on_auth_failure() is False
+        assert auth.get_last_auth_error() is not None
+
+        # Recovery must clear it, or one transient outage would wedge the client
+        # for its lifetime via the fail-fast preflight.
+        assert auth.on_auth_failure() is True
+        assert auth.get_last_auth_error() is None
+        auth.destroy()
+
     def test_on_auth_failure_returns_false_after_destroy(self):
         auth = ConsumerAuth(
             token_provider=lambda: TokenResult(token="jwt", expires_in=300)
@@ -568,6 +615,9 @@ class TestReactiveRefresh:
         auth.destroy()
 
         assert auth.on_auth_failure() is False
+        # Teardown is not an auth failure — no refresh is attempted, so there is
+        # nothing to report and a shutting-down client must not start raising.
+        assert auth.get_last_auth_error() is None
 
 
 # ============================================================================

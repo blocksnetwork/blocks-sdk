@@ -91,10 +91,22 @@ interface ErrorResponse {
 // ============================================================================
 
 /**
- * Thrown by `TaskClient.sendMessage()` and `TaskClient.connect()` when the
- * underlying `ConsumerAuth` is in a known-broken refresh state (proactive
- * refresh permanently failed after 3 retries). Carries the original failure
- * as `.cause`. Cleared by a subsequent successful reactive refresh.
+ * Set when the underlying `ConsumerAuth` enters a known-broken refresh state —
+ * proactive refresh permanently failed after 3 retries, or a reactive refresh
+ * failed.
+ *
+ * Thrown by any authenticated call that runs the `preflightAuthOrThrow` gate:
+ * the RPC methods on `TaskClient` and `TaskSession`, `connect()`, and the
+ * file-upload helpers. Enumerating them here would drift the moment one is
+ * added, so the rule is the gate rather than a list.
+ *
+ * Also thrown by `getAgentCard()`, for a different reason: it cannot tell a
+ * rejected credential from a missing agent on its own, because the registry read
+ * is on optional auth, so a stale bearer degrades to anonymous and 404s rather
+ * than 401ing.
+ *
+ * Carries the original failure as `.cause`. Cleared by a subsequent successful
+ * token apply.
  */
 export class AuthRefreshFailedError extends Error {
   readonly cause: Error;
@@ -162,8 +174,9 @@ export class ConsumerAuth implements AuthProvider {
   }
 
   /**
-   * Returns the last permanent refresh failure, or null. Set when proactive
-   * refresh exhausts its 3 retries; cleared on a successful reactive refresh.
+   * Returns the last refresh failure, or null. Set when proactive refresh
+   * exhausts its 3 retries, and when a reactive refresh fails; cleared
+   * atomically on the next successful token apply.
    * Callers (TaskClient.sendMessage / connect) use this to fail fast before
    * making any authenticated request.
    */
@@ -422,6 +435,20 @@ export class ConsumerAuth implements AuthProvider {
       })
       .catch((err) => {
         const error = err instanceof Error ? err : new Error(String(err));
+        // Record it, not just log it. `onAuthFailure()` reports failure as a
+        // bare `false`, which callers cannot tell apart from "this provider has
+        // no refresh capability" — a static-token provider returns the same
+        // thing without attempting anything. Leaving the error unrecorded meant
+        // the only signal of a real auth outage was a log line, so a caller
+        // acting on `getLastAuthError()` saw a healthy provider: the registry
+        // card lookup reported a live outage as "no such agent".
+        //
+        // `getLastAuthError` is documented as the provider's known-broken state,
+        // and a reactive refresh that failed is exactly that. Recovery is
+        // unaffected — `_applyTokenResult` clears it atomically on the next
+        // success, and `preflightAuthOrThrow` retries once before raising, so a
+        // transient outage still self-heals on the following call.
+        this._lastAuthError = new AuthRefreshFailedError(error);
         log('warn', 'reactive refresh failed', {
           event: 'consumer_auth_reactive_refresh_failed',
           error: error.message,

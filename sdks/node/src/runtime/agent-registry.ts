@@ -492,20 +492,48 @@ export async function getAgent(
   return mapServerAgentToEntry(result.data.agent);
 }
 
+/** Shared options for the exported registry list helpers. */
+interface ListOptions {
+  limit?: number;
+  cursor?: string;
+  baseUrl?: string;
+  /** Bearer credential, sent as `Authorization: Bearer <apiKey>`. Optional on
+   *  Blocks Network, where the listing is world-readable; required on a Blocks
+   *  Enterprise deployment, which returns an empty page to an unauthenticated
+   *  caller. */
+  apiKey?: string;
+}
+
 /**
- * Fetch the agent registry (all agents).
+ * The one request path behind every registry list helper: build the URL, attach
+ * the credential when there is one, retry, map.
+ *
+ * Extracted because the three exported helpers differed only in the query they
+ * start from. Keeping the request in one place is what stops a newly added helper
+ * from shipping without credential support — which on a Blocks Enterprise
+ * deployment means an empty list and no error, the least debuggable failure this
+ * surface has.
  */
-export async function fetchAgentRegistry(
-  options?: { limit?: number; cursor?: string; baseUrl?: string },
+async function fetchAgentList(
+  base: Record<string, string>,
+  options?: ListOptions,
 ): Promise<AgentRegistryResult> {
-  const query: Record<string, string> = { include: 'full' };
+  const query = { ...base };
   if (options?.limit) query.limit = String(options.limit);
   if (options?.cursor) query.cursor = options.cursor;
 
   const url = registryUrl(query, options?.baseUrl);
 
+  const init: RequestInit | undefined = options?.apiKey
+    ? { headers: { Authorization: `Bearer ${options.apiKey}` } }
+    : undefined;
+
   const result = await withRetry(async () =>
-    registryFetch<{ agents: ServerAgent[]; next?: string | null; totalCount?: number }>(url),
+    registryFetch<{
+      agents: ServerAgent[];
+      next?: string | null;
+      totalCount?: number;
+    }>(url, init),
   );
 
   if (!result) return { agents: [], totalCount: 0 };
@@ -515,6 +543,15 @@ export async function fetchAgentRegistry(
     next: result.data.next ?? undefined,
     totalCount: result.data.totalCount,
   };
+}
+
+/**
+ * Fetch the agent registry (all agents).
+ */
+export async function fetchAgentRegistry(
+  options?: ListOptions,
+): Promise<AgentRegistryResult> {
+  return fetchAgentList({ include: 'full' }, options);
 }
 
 /**
@@ -522,25 +559,9 @@ export async function fetchAgentRegistry(
  */
 export async function fetchAgentsByTag(
   tag: string,
-  options?: { limit?: number; cursor?: string; baseUrl?: string },
+  options?: ListOptions,
 ): Promise<AgentRegistryResult> {
-  const query: Record<string, string> = { include: 'full', tag };
-  if (options?.limit) query.limit = String(options.limit);
-  if (options?.cursor) query.cursor = options.cursor;
-
-  const url = registryUrl(query, options?.baseUrl);
-
-  const result = await withRetry(async () =>
-    registryFetch<{ agents: ServerAgent[]; next?: string | null; totalCount?: number }>(url),
-  );
-
-  if (!result) return { agents: [], totalCount: 0 };
-
-  return {
-    agents: result.data.agents.map(mapServerAgentToEntry),
-    next: result.data.next ?? undefined,
-    totalCount: result.data.totalCount,
-  };
+  return fetchAgentList({ include: 'full', tag }, options);
 }
 
 /**
@@ -548,25 +569,9 @@ export async function fetchAgentsByTag(
  */
 export async function fetchAgentsByListing(
   listing: 'private' | 'public',
-  options?: { limit?: number; cursor?: string; baseUrl?: string },
+  options?: ListOptions,
 ): Promise<AgentRegistryResult> {
-  const query: Record<string, string> = { include: 'full', listing };
-  if (options?.limit) query.limit = String(options.limit);
-  if (options?.cursor) query.cursor = options.cursor;
-
-  const url = registryUrl(query, options?.baseUrl);
-
-  const result = await withRetry(async () =>
-    registryFetch<{ agents: ServerAgent[]; next?: string | null; totalCount?: number }>(url),
-  );
-
-  if (!result) return { agents: [], totalCount: 0 };
-
-  return {
-    agents: result.data.agents.map(mapServerAgentToEntry),
-    next: result.data.next ?? undefined,
-    totalCount: result.data.totalCount,
-  };
+  return fetchAgentList({ include: 'full', listing }, options);
 }
 
 /**

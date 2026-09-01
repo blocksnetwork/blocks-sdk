@@ -135,6 +135,71 @@ func TestInviteSendSuccess(t *testing.T) {
 	}
 }
 
+// The invitation exists and its link works; only the email failed. Reporting
+// "sent" and dropping the link would leave the invitee with no way in at all.
+func TestInviteSendReportsAnInvitationNobodyWasEmailed(t *testing.T) {
+	cleanup := setupFakeCredentials(t)
+	defer cleanup()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"invitation": {"id": "inv-1"}, "notified": 0, "inviteUrl": "https://app.example.com/agent-invite?token=t"}`))
+	}))
+	defer ts.Close()
+
+	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+	resetInviteFlags()
+
+	output := captureStdout(func() {
+		rootCmd.SetArgs([]string{"invite", "send", "my_agent", "--email", "user@example.com"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("invite send failed: %v", err)
+		}
+	})
+
+	if strings.Contains(output, "Invitation sent") {
+		t.Errorf("output claims the invitation was sent:\n%s", output)
+	}
+	if !strings.Contains(output, "could not be emailed") {
+		t.Errorf("output = %q, want 'could not be emailed'", output)
+	}
+	if !strings.Contains(output, "https://app.example.com/agent-invite?token=t") {
+		t.Errorf("output missing the invitation link:\n%s", output)
+	}
+}
+
+// A server older than the `notified` contract answers without the field. It did
+// email the invitation, so its silence must not be read as nobody.
+func TestInviteSendTreatsAMissingNotifiedCountAsEmailed(t *testing.T) {
+	cleanup := setupFakeCredentials(t)
+	defer cleanup()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"invitation": {"id": "inv-1"}}`))
+	}))
+	defer ts.Close()
+
+	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+	resetInviteFlags()
+
+	output := captureStdout(func() {
+		rootCmd.SetArgs([]string{"invite", "send", "my_agent", "--org", "acme-corp"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("invite send failed: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Invitation sent to org acme-corp") {
+		t.Errorf("output = %q, want 'Invitation sent to org acme-corp'", output)
+	}
+	if strings.Contains(output, "could not be emailed") {
+		t.Errorf("output warns about delivery the server never reported:\n%s", output)
+	}
+}
+
 func TestInviteListHelpDescribesUnacceptedInvitations(t *testing.T) {
 	const want = "List unaccepted invitations for a private agent"
 	if got := inviteListCmd.Short; got != want {
