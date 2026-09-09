@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
 )
@@ -18,24 +18,79 @@ import (
 var defaultBackendURL = ""
 var defaultCliClientID = ""
 
+// defaultInstanceDomain is the DNS suffix for Blocks Enterprise deployments
+// provisioned under the default scheme, `<customer>.blocks.ai`. Customers may
+// instead use an agreed custom domain. It lets `blocks login umbrella`
+// stand in for the full URL without any central tenant directory. Customers on
+// an agreed custom domain pass a full URL or host instead, which
+// resolveInstanceArg handles ahead of this expansion. Overridable at build time
+// via -X github.com/pubnub/blocks-sdk/cli/cmd.defaultInstanceDomain=... (the
+// release pipelines drive that from BLOCKS_INSTANCE_DOMAIN).
+//
+// Read it through instanceDomain(), never directly: the raw value arrives from
+// outside the source tree and is concatenated into a URL the login sends a
+// credential to.
+var defaultInstanceDomain = "blocks.ai"
+
+// instanceDomainEnv names the build-time variable defaultInstanceDomain is
+// injected from, so the error a bad injection produces can point at the thing an
+// operator has to fix.
+const instanceDomainEnv = "BLOCKS_INSTANCE_DOMAIN"
+
+// instanceDomain returns the DNS suffix a short name expands under, or an error
+// when the value this binary was built with is not one.
+//
+// The value is validated here rather than at startup because a build that cannot
+// expand short names is still a working CLI for every other form: a full-URL
+// login, an already-stored profile, `whoami`, `profile list`. Refusing to start
+// would turn a typo in one release variable into a bricked binary. Refusing the
+// expansion, loudly, at the moment it is attempted keeps the failure proportional
+// and points at the defect — a malformed suffix is a defect in the build, not in
+// what the user typed, so the message names the variable and the value it carries
+// instead of blaming the argument.
+func instanceDomain() (string, error) {
+	if !isDNSSuffix(defaultInstanceDomain) {
+		return "", fmt.Errorf(
+			"this build cannot expand short names: it was built with %s=%q, which is not a DNS suffix — pass the deployment's full URL (https://blocks.acme.com) instead, and report the bad build",
+			instanceDomainEnv, defaultInstanceDomain)
+	}
+	return defaultInstanceDomain, nil
+}
+
 const (
 	blocksAppBaseURLEnv   = "BLOCKS_APP_BASE_URL"
 	blocksDashboardURLEnv = "BLOCKS_DASHBOARD_URL"
+	blocksBackendURLEnv   = "BLOCKS_BACKEND_URL"
+	blocksAPIKeyEnv       = "BLOCKS_API_KEY"
 )
 
+// resolveBackendURL is the backend origin a command sends its request to:
+// BLOCKS_BACKEND_URL → active profile BaseURL → ldflag default → the api.baseUrl the
+// CDM payload carries.
+//
+// Every tier of that precedence, the remote one included, lives in clictx and is
+// resolved once for the whole invocation. This function adds none of its own — it used
+// to add the CDM tier here, and that was the defect: the deployment the request
+// reached could then differ from the one the resolver had already matched the profile
+// against, chosen the credential for, decided the enterprise verdict for and named in
+// the context banner. A stock Blocks Network profile plus a CDM endpoint naming an
+// enterprise deployment sent that profile's Network key to the enterprise deployment
+// while every line the operator read said Network.
+//
+// The fetch is deferred and memoized inside clictx, so resolving it here costs a
+// round-trip only for the commands that reach a backend, and only the first time.
+//
+// A failure is reported rather than returned because every caller treats an
+// unresolvable origin the same way — as an empty origin, which the request layer then
+// rejects — while a user needs to know the reason was a remote-config fetch and not
+// their own configuration.
 func resolveBackendURL() string {
-	if v := resolveBackendURLOffline(); v != "" {
-		return v
-	}
-	cfg, err := cdm.Get()
+	url, err := clictx.EffectiveBackendURL()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to fetch remote config: %v\n", err)
 		return ""
 	}
-	if cfg.Api.BaseURL != "" {
-		return cfg.Api.BaseURL
-	}
-	return ""
+	return url
 }
 
 // resolveBackendURLOffline resolves the backend origin from the tiers that need
@@ -43,17 +98,12 @@ func resolveBackendURL() string {
 // default. Returns "" when none is set, leaving the (network-dependent) CDM
 // fetch to resolveBackendURL. Split out so callers that must not stall on a CDM
 // fetch (e.g. non-interactive publish) can still use the offline tiers.
+//
+// The precedence itself lives in clictx, resolved once for the whole invocation,
+// so the origin a command posts to, the origin the context banner names, and the
+// origin login pins into .env cannot disagree.
 func resolveBackendURLOffline() string {
-	if v := os.Getenv("BLOCKS_BACKEND_URL"); v != "" {
-		return v
-	}
-	if _, p, err := profiles.Active(); err == nil && p.BaseURL != "" {
-		return p.BaseURL
-	}
-	if defaultBackendURL != "" {
-		return defaultBackendURL
-	}
-	return ""
+	return clictx.BackendURL()
 }
 
 // resolveWebappBackendURL picks the backend API origin baked into a webapp
@@ -111,8 +161,8 @@ func resolveWebappBackend(flagVal, assetBaseURL string) (string, backendSource, 
 	switch {
 	case strings.TrimSpace(flagVal) != "":
 		raw, src = strings.TrimSpace(flagVal), backendFromFlag
-	case strings.TrimSpace(os.Getenv("BLOCKS_BACKEND_URL")) != "":
-		raw, src = strings.TrimSpace(os.Getenv("BLOCKS_BACKEND_URL")), backendFromEnv
+	case strings.TrimSpace(os.Getenv(blocksBackendURLEnv)) != "":
+		raw, src = strings.TrimSpace(os.Getenv(blocksBackendURLEnv)), backendFromEnv
 	default:
 		// profiles.Active never returns a benign "no active profile" error: the
 		// stock profile is always ensured, and an existing profile with an empty
@@ -197,14 +247,14 @@ func currentIntendedBackendURL() (string, error) {
 // resolveAppBaseURL resolves an explicit dashboard origin (empty if none).
 // Precedence: BLOCKS_APP_BASE_URL → BLOCKS_DASHBOARD_URL → active profile
 // DashboardBaseURL. The two env vars are the caller's direct intent and always
-// win. The profile's stored DashboardBaseURL is trusted only when it still
-// describes the deployment being targeted: if BLOCKS_BACKEND_URL is set and
-// diverges from the profile's own BaseURL, the caller is publishing to a
-// different backend than the one the profile was logged into, so the saved
-// dashboard origin is stale and is skipped — the caller then falls back to
-// resolveBackendURL(), which honors BLOCKS_BACKEND_URL. Without this guard a
-// publish to deployment B via BLOCKS_BACKEND_URL would still open deployment
-// A's dashboard.
+// win. The profile's stored DashboardBaseURL is trusted only while the profile is
+// still the deployment being targeted: once an ambient backend URL points
+// somewhere else, the caller is publishing to a different backend than the one
+// the profile was logged into, so the saved dashboard origin is stale and is
+// skipped — the caller then falls back to resolveBackendURL(). Without this guard
+// a publish to deployment B via BLOCKS_BACKEND_URL would still open deployment
+// A's dashboard. Whether the profile is still the target is answered by clictx,
+// so this cannot drift from the banner's view of the same question.
 func resolveAppBaseURL() string {
 	if v := strings.TrimSpace(os.Getenv(blocksAppBaseURLEnv)); v != "" {
 		return v
@@ -212,51 +262,10 @@ func resolveAppBaseURL() string {
 	if v := strings.TrimSpace(os.Getenv(blocksDashboardURLEnv)); v != "" {
 		return v
 	}
-	if _, p, err := profiles.Active(); err == nil && p.DashboardBaseURL != "" && !backendOverrideDivergesFromProfile(p) {
+	if _, p, err := profiles.Active(); err == nil && p.DashboardBaseURL != "" && clictx.ProfileIsTarget() {
 		return p.DashboardBaseURL
 	}
 	return ""
-}
-
-// backendOverrideDivergesFromProfile reports whether BLOCKS_BACKEND_URL is set
-// to a different deployment than the profile's own BaseURL. When it does, the
-// profile's cached dashboard origin no longer describes the targeted backend.
-// An unset override, or one whose normalized base URL matches the profile's
-// BaseURL, is not a divergence. Comparison normalizes scheme/host case,
-// default ports (:443/:80), and trailing slashes, but KEEPS the path: the CLI
-// uses BaseURL as a full request prefix (`BaseURL + "/api/v1/..."`), so
-// same-host path-prefixed deployments (e.g. `https://host/tenant-a` vs
-// `/tenant-b`) are distinct. An override that fails to parse is treated as a
-// divergence (fail safe toward the backend fallback).
-func backendOverrideDivergesFromProfile(p *profiles.Profile) bool {
-	override := strings.TrimSpace(os.Getenv("BLOCKS_BACKEND_URL"))
-	if override == "" {
-		return false
-	}
-	ov := normalizedBaseURL(override)
-	return ov == "" || ov != normalizedBaseURL(p.BaseURL)
-}
-
-// normalizedBaseURL parses raw into a comparable "scheme://host[:port][/path]"
-// base URL: scheme/host lowercased, the scheme's default port (443 for https,
-// 80 for http) dropped, and any trailing slash on the path trimmed. The path is
-// retained so path-prefixed multi-tenant deployments compare as distinct.
-// Returns "" when raw has no parseable host.
-func normalizedBaseURL(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Hostname() == "" {
-		return ""
-	}
-	scheme := strings.ToLower(u.Scheme)
-	host := strings.ToLower(u.Hostname())
-	port := u.Port()
-	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
-		port = ""
-	}
-	if port != "" {
-		host += ":" + port
-	}
-	return scheme + "://" + host + strings.TrimRight(u.EscapedPath(), "/")
 }
 
 func resolveClientID() string {
@@ -284,50 +293,99 @@ func openBrowser(rawURL string) error {
 	return openBrowserFunc(rawURL)
 }
 
-// activeProfileAPIKey returns the active profile's default-org API key, if a
-// usable (non-empty, unexpired) one exists.
-func activeProfileAPIKey() (string, bool) {
-	_, p, err := profiles.Active()
-	if err != nil {
-		return "", false
+// readAPIKeyFromStdin consumes the single line --api-key-stdin supplies. It is a
+// var so tests can observe how often it runs: stdin is consumable, so the
+// invariant that it runs at most once per invocation is a correctness property,
+// not an optimization. Commands never call it — it is wired into clictx, which
+// performs the read once and shares the result with every consumer.
+var readAPIKeyFromStdin = func() (string, error) {
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return "", fmt.Errorf("--api-key-stdin: no input received on stdin")
 	}
-	if k, ok := p.DefaultOrgKey(); ok && k.ApiKey != "" && !k.IsExpired() {
-		return k.ApiKey, true
+	key := scanner.Text()
+	if key == "" {
+		return "", fmt.Errorf("--api-key-stdin: empty API key received")
 	}
-	return "", false
+	return key, nil
 }
 
-// loadCredentials loads credentials and returns the API key or an error.
-// API keys are long-lived and do not require refresh. The active profile is
-// preferred; the legacy credentials.json remains a fallback for one migration
-// cycle.
-func loadCredentials() (string, error) {
-	if key, ok := activeProfileAPIKey(); ok {
-		return key, nil
-	}
-
+// loadStoredCredential reads the legacy credentials.json — the last tier of the
+// credential precedence, kept for one migration cycle. It reports the key,
+// whether a stored credential exists but has expired, and whether the file could
+// not be read at all, and decides nothing: the ordering lives in clictx.
+func loadStoredCredential() (string, bool, error) {
 	creds, err := auth.Load()
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if creds.IsExpired() {
+		return "", true, nil
+	}
+	return creds.ApiKey, false, nil
+}
+
+// loadCredentials returns the API key this invocation will send, or an error.
+// API keys are long-lived and do not require refresh.
+//
+// The key comes from clictx, which resolved it once for the whole invocation, so
+// a command cannot send one credential while the context banner describes
+// another. Only the error wording belongs here.
+//
+// StoreErr is reported rather than folded into "not logged in", and the arm order
+// matches resolvePublishApiKey so the two mappers cannot disagree about the same
+// Credential. A credential store that cannot be read is not an absent login: the
+// caller may well be logged in, and telling them to log in again invites them to
+// mint a second key against a store that will fail to record it. It sits after Key
+// because a credential resolved from a higher tier makes the unreadable store
+// irrelevant, and before Expired because an unreadable store is why expiry could
+// not be determined at all.
+func loadCredentials() (string, error) {
+	c := clictx.EffectiveCredential()
+	switch {
+	case c.Err != nil:
+		return "", c.Err
+	case c.Key != "":
+		return c.Key, nil
+	case c.StoreErr != nil:
+		return "", fmt.Errorf("failed to load credentials: %w", c.StoreErr)
+	case c.Expired:
+		return "", fmt.Errorf("API key has expired — run 'blocks login' to create a new one")
+	default:
 		return "", fmt.Errorf("not logged in — run 'blocks login' first")
 	}
-
-	if creds.IsExpired() {
-		return "", fmt.Errorf("API key has expired — run 'blocks login' to create a new one")
-	}
-
-	return creds.ApiKey, nil
 }
 
-// optionalCredentials returns the stored API key when a valid, unexpired
-// credential exists, or an empty string otherwise (anonymous access). Unlike
-// loadCredentials it never errors — callers use it when the operation can
-// proceed against public-only resources without a login.
-func optionalCredentials() string {
-	creds, err := auth.Load()
-	if err != nil || creds.IsExpired() {
-		return ""
+// externalCredential returns the API key supplied for this invocation from
+// outside the credential store (--api-key or --api-key-stdin) and whether one was
+// supplied at all. Commands ask this instead of re-reading their own flags so
+// there is one answer to "did the caller hand us a key", and so a piped key is
+// consumed by the single resolver rather than a second time here.
+func externalCredential() (key string, supplied bool, err error) {
+	c := clictx.EffectiveCredential()
+	if !c.Source.External() {
+		return "", false, nil
 	}
-	return creds.ApiKey
+	return c.Key, true, c.Err
+}
+
+// credentialSupplied reports whether a key was handed to this invocation from
+// outside the credential store.
+func credentialSupplied() bool {
+	_, supplied, _ := externalCredential()
+	return supplied
+}
+
+// interactiveSession reports whether this invocation may prompt at all. Being
+// attached to a terminal is necessary but not sufficient: --no-input is an
+// explicit request not to be asked, so a command that keys its prompts off TTY
+// state alone will still prompt for a caller who asked it never to. Every prompt
+// decision that is allowed to depend on interactivity must go through here.
+func interactiveSession() bool {
+	return isInteractive() && !noInputMode
 }
 
 // confirmYesNo prints prompt to stdout and reads one line from in. It returns

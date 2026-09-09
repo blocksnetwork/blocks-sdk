@@ -104,7 +104,7 @@ func TestPromotionInputBillingModeInJSON(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestPromotionInputFreeBillingModeInJSON(t *testing.T) {
 		AcceptTerms: true,
 	}
 
-	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits(), nil)
+	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -328,3 +328,108 @@ func TestOrgKeyIsExpired(t *testing.T) {
 		t.Fatalf("future ExpiresAt must not be expired")
 	}
 }
+
+func TestSameBaseURL(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical", "https://blocks.acme.com", "https://blocks.acme.com", true},
+		{"trailing slash ignored", "https://blocks.acme.com/", "https://blocks.acme.com", true},
+		{"host case ignored", "https://Blocks.Acme.COM", "https://blocks.acme.com", true},
+		{"default https port dropped", "https://blocks.acme.com:443", "https://blocks.acme.com", true},
+		{"default http port dropped", "http://localhost:80", "http://localhost", true},
+		{"explicit non-default port kept", "http://localhost:3001", "http://localhost:3002", false},
+		{"scheme matters", "http://blocks.acme.com", "https://blocks.acme.com", false},
+		{"path kept: tenants are distinct deployments", "https://host/tenant-a", "https://host/tenant-b", false},
+		{"path kept: same tenant matches", "https://host/tenant-a/", "https://host/tenant-a", true},
+		{"empty is never the same", "", "", false},
+		{"empty vs set", "", "https://blocks.acme.com", false},
+		{"unparseable host is never the same", "not a url", "not a url", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SameBaseURL(tc.a, tc.b); got != tc.want {
+				t.Fatalf("SameBaseURL(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeBaseURL(t *testing.T) {
+	if got := NormalizeBaseURL("HTTPS://Umbrella.Blocks.AI:443/tenant/"); got != "https://umbrella.blocks.ai/tenant" {
+		t.Fatalf("NormalizeBaseURL = %q", got)
+	}
+	if got := NormalizeBaseURL("  https://umbrella.blocks.ai  "); got != "https://umbrella.blocks.ai" {
+		t.Fatalf("NormalizeBaseURL should trim surrounding space, got %q", got)
+	}
+	if got := NormalizeBaseURL("umbrella.blocks.ai"); got != "" {
+		t.Fatalf("a schemeless value has no parseable host, got %q", got)
+	}
+}
+
+// RecordsCompletedLogin separates "logged in to stock Blocks Network" from "never logged
+// in". Both shapes have an empty BaseURL, so the origin cannot tell them apart, and the
+// empty case is not hypothetical: ensureDefault materializes exactly that profile on
+// first run. A predicate that answered yes for it would suppress the deployment question
+// for every genuine first run.
+func TestRecordsCompletedLogin(t *testing.T) {
+	fresh := Profile{Orgs: map[string]OrgKey{}}
+	if fresh.RecordsCompletedLogin() {
+		t.Error("the profile first run materializes records no login")
+	}
+	if (&Profile{}).RecordsCompletedLogin() {
+		t.Error("a profile with a nil Orgs map records no login")
+	}
+
+	network := Profile{DefaultOrgID: "org_1", Orgs: map[string]OrgKey{"org_1": {ApiKey: "bk_k"}}}
+	if !network.RecordsCompletedLogin() {
+		t.Error("a completed stock Network login is recorded by its cached organization")
+	}
+	if network.BaseURL != "" {
+		t.Fatal("premise: the stock Network shape names no origin")
+	}
+
+	// Either half is enough on its own: a cached key with no default org still evidences a
+	// finished login, and so does a recorded default whose key was dropped.
+	if !(&Profile{Orgs: map[string]OrgKey{"org_2": {ApiKey: "bk_k"}}}).RecordsCompletedLogin() {
+		t.Error("a cached organization alone records a login")
+	}
+	if !(&Profile{DefaultOrgID: "org_3", Orgs: map[string]OrgKey{}}).RecordsCompletedLogin() {
+		t.Error("a recorded default organization alone records a login")
+	}
+}
+
+// A persisted active name that no longer resolves used to survive Load(), so Active()
+// returned an error and every consumer of the resolved context read that as "no profile"
+// — the invocation then fell through to the ambient URL, the legacy store or a CDM
+// default and acted on a deployment nobody selected. It is repaired to the default now.
+func TestADanglingActiveProfileNameIsRepaired(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "contexts.json")
+	orig := ContextsPathFunc
+	ContextsPathFunc = func() (string, error) { return path, nil }
+	t.Cleanup(func() { ContextsPathFunc = orig })
+
+	// A store naming an active profile it does not contain.
+	if err := os.WriteFile(path, []byte(`{"schema_version":3,"active":"deleted-one","profiles":{}}`), 0600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Active != DefaultProfile {
+		t.Errorf("Active = %q, want it repaired to %q", c.Active, DefaultProfile)
+	}
+
+	name, p, err := Active()
+	if err != nil {
+		t.Fatalf("Active() must resolve after the repair, got %v", err)
+	}
+	if name != DefaultProfile || p == nil {
+		t.Errorf("Active() = %q/%v, want the default profile", name, p)
+	}
+}

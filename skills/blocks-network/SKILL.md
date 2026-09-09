@@ -58,11 +58,11 @@ guidance) and [IO Schema Reference] (input/output rules).
 ## Section Index
 
 - [Required Reading: the Agent Card Schema](#required-reading-the-agent-card-schema) -- **read first** -- canonical, enforced `agent-card.json` structure
-- [CLI Reference](#cli-reference) -- install, login (+ headless), whoami, run, check, dashboard, env overrides
+- [CLI Reference](#cli-reference) -- install, login (deployment targeting, headless), whoami, run, check, dashboard, env overrides
 - [Agent Card Reference](#agent-card-reference) -- runtime config, optional fields
 - [IO Schema Rules](#io-schema-rules) -- transport classes, examples, drafting from a handler
 - [Streaming Agents](#streaming-agents) -- direction/format matrix, handler I/O, consumer I/O
-- [Registering & Publishing](#registering--publishing) -- register private/free first, promote to public/paid later, non-interactive flags, name conflicts, invite management
+- [Registering & Publishing](#registering--publishing) -- register private/free first, promote to public/paid later, non-interactive flags, removing an agent, name conflicts, invite management
 - [Modifying an Existing Agent](#modifying-an-existing-agent) -- edit-and-republish recipe
 - [Deploying Code You've Already Written](#deploying-code-youve-already-written) -- locate, draft missing card, publish
 - [Consumer Projects & Trigger / Client Code](#consumer-projects--trigger--client-code) -- calling agents from scripts/apps
@@ -104,19 +104,69 @@ blocks upgrade
 
 ### `blocks login`
 
-Always pass an explicit `--write-env` or `--no-write-env`. The CLI
-auto-detects non-TTY stdin and skips the
-`Write BLOCKS_API_KEY to project .env? (Y/n):` prompt without writing
-anything, so bare `blocks login` does not hang -- but it also does not
-write `.env`. Pass the flag explicitly so the outcome is deterministic:
+In an interactive terminal `blocks login` asks which deployment to target
+(skipped once the question is settled — by any completed login, including one
+to Blocks Network, which stores no deployment URL of its own; or by a
+deployment this invocation resolves, from the active profile,
+`BLOCKS_BACKEND_URL`, or a project `.env` pinning a deployment the user has a
+profile for. A bare `blocks login` there returns to that deployment without
+prompting, and only a genuine first run is asked), then — if the answer
+is Enterprise — for that instance's URL or short name, and finally whether
+to write credentials to the project `.env`. With no `--no-input`, the CLI
+auto-detects non-TTY stdin and skips them without writing anything, so bare
+`blocks login` does not hang -- but it also does not write `.env`. Under
+`--no-input` those two questions are errors rather than silent defaults.
+Pass the answers as flags so the outcome is deterministic either way:
 
-- `--write-env` opts in (recommended for the agent flow). Stores creds
-  in `~/.config/blocks/credentials.json` and writes `BLOCKS_API_KEY` to
-  the project `.env`.
+- `--network` targets Blocks Network with no deployment prompt. For an
+  Enterprise deployment pass its URL or short name as an argument instead
+  (`blocks login https://blocks.acme.com`, or `blocks login acme` for
+  `https://acme.blocks.ai`); an argument that matches an existing profile
+  name reuses that profile's deployment as saved, so custom domains keep
+  working — that form is not an address and the checks below do not apply to
+  it, because the profile only exists because a login already reached that
+  deployment. `--network` and an instance argument are mutually exclusive. An
+  argument that spells out an address
+  is validated before anything is sent: `https://` is required except for
+  `localhost` / `127.0.0.1` / `[::1]`, the authority must be a host with an
+  optional port in 1–65535 (not `user@host`), a path prefix is allowed but
+  a query string or a fragment is not, and a short name must be a single DNS
+  label whose expanded hostname fits the 253-character DNS limit. A refused
+  argument is an error naming the accepted forms; nothing is sent.
+- `--write-env` opts in (recommended for the agent flow). The key is always
+  stored in the deployment's profile in `~/.config/blocks/contexts.json`;
+  `--write-env` additionally writes `BLOCKS_API_KEY` to the project `.env`
+  -- plus the deployment's own `BLOCKS_BACKEND_URL` and `BLOCKS_CDM_URL`
+  when the login targeted a specific deployment rather than stock Blocks
+  Network, so a script launched directly (not via `blocks run`) reaches both
+  the REST API and the real-time keysets of the deployment the key was
+  minted at. A `--network` login needs neither, writes neither, and removes
+  stale values left by an earlier login. All three are applied as one edit,
+  so an interrupted login does not leave a new key beside another
+  deployment's URLs. See [Env vars for directly-launched
+  scripts](#env-vars-for-directly-launched-scripts).
 - `--no-write-env` opts out (use when you must not touch the project
   `.env`).
 - `--dir <name>` points `--write-env` at the named project's `.env`
   when invoking from a parent directory.
+- `--no-input` (global, accepted by any command) asks the CLI not to read
+  stdin: where it is honoured, a prompt that would still be required becomes
+  an error naming the flag — or the environment variable — that answers it,
+  whether or not stdin is a terminal. It covers the three questions above —
+  so pair it with `--network` (or an instance argument) and `--write-env` /
+  `--no-write-env`, since a key in `BLOCKS_API_KEY` does not answer them,
+  while `--api-key` / `--api-key-stdin` does. It does **not** cover the
+  organization picker the browser login shows when the account belongs to
+  more than one organization — pass `--api-key` / `--api-key-stdin` to skip
+  the browser flow and that picker — nor the token paste prompt of
+  `blocks login --provider cloudflare|vercel|netlify`, which is that
+  command's whole purpose. Those two are the only gaps: `blocks deploy` reads
+  no stdin under the flag. Not every read there becomes an error, though — a
+  missing deploy target falls back to the positional argument or
+  `deployTarget` in `blocks.config.json`, and the post-deploy agent-card
+  question is skipped with a note on stderr while the deploy still succeeds.
+  The flag's own help text (`blocks --help`) is the current
+  list rather than a formality.
 
 ### Login in containerized / headless environments
 
@@ -129,9 +179,11 @@ unreachable from the user's browser, so login hangs, then times out.
 authorize URL is printed *before* the browser-open attempt, so it is
 usable even where no browser exists.
 
-1. Inside the container: `blocks login --write-env --dir <project> &`
-   (`blocks: command not found` after `npm i -g` means the install dir
-   is off `PATH` -- `export PATH="$HOME/.blocks/bin:$PATH"` first.)
+1. Inside the container: `blocks login --network --write-env --dir <project> &`
+   -- name the instance instead of `--network` for an Enterprise
+   deployment. (`blocks: command not found` after `npm i -g` means the
+   install dir is off `PATH` -- `export PATH="$HOME/.blocks/bin:$PATH"`
+   first.)
 2. Open the printed `.../api/auth/oauth2/authorize?...` URL (default
    deployment: `https://app.blocks.ai/...`) and authenticate.
 3. The redirect to `http://127.0.0.1:8787/callback?code=...` fails to
@@ -160,7 +212,7 @@ work on `blocks register` / `blocks publish`.
 |---|---|
 | `blocks whoami` | Print the current org, key id, and expiry. Errors with `not logged in` if no creds. |
 | `blocks whoami --json` | Same, structured for programmatic checks (`org_name`, `org_id`, `key_id`, `expires_at`, `days_remaining`, `expired`). |
-| `blocks logout` | Delete `~/.config/blocks/credentials.json` and remove `BLOCKS_API_KEY` from the project `.env`. |
+| `blocks logout` | Clear the active profile's cached org keys in `~/.config/blocks/contexts.json` and remove `BLOCKS_API_KEY` from the project `.env`. It **keeps the deployment target** — it prints that `blocks login` will return to the same deployment, and names `blocks profile remove <name>` for forgetting it entirely. It does not revoke the key on the server. |
 | `blocks version` | Print the installed CLI version. |
 
 ### `blocks check`
@@ -178,7 +230,11 @@ fast pre-flight, not a gate the user must clear before publishing.
 ### `blocks run`
 
 Starts the agent locally. Reads `agent-card.json`, imports the handler,
-and uses `BLOCKS_API_KEY` from `.env`. Don't run on the user's behalf
+and supplies `BLOCKS_API_KEY` to the agent process. That key is whichever
+one the invocation resolved — a `.env` value, an exported variable, or the
+active profile's stored key — so a `.env` without a key still works when
+the user is logged in. It is supplied as a default: a non-empty
+`BLOCKS_API_KEY` already in the child's environment wins. Don't run on the user's behalf
 -- instruct the user to run `cd <your-agent-name> && blocks run`
 themselves so they own the live process.
 
@@ -191,6 +247,100 @@ cd <your-agent-name>
   pip install -e . && pip install blocks-network --upgrade
 cd ..
 ```
+
+### Env vars for directly-launched scripts
+
+An SDK process resolves two things independently: the REST API origin
+(`BLOCKS_BACKEND_URL`) and the real-time keysets, which come from a CDM
+config endpoint named by `BLOCKS_CDM_URL`. With `BLOCKS_CDM_URL` unset the
+SDKs use a hardcoded default that serves **Blocks Network** keysets;
+`BLOCKS_BACKEND_URL` does not change it.
+
+`blocks run` sets both for the delegated process whenever the invocation
+targets a named deployment, so an agent started that way needs neither in
+`.env`. The injection is a default rather than an override: a value the
+environment already carries non-empty wins over it, so an explicitly-set
+`BLOCKS_CDM_URL` that disagrees with the target is what the delegated
+process reads. Stock Blocks Network needs no injection -- the SDK's own
+default already resolves it.
+
+A script you launch yourself -- a trigger or consumer run with `npx tsx`
+/ `python` -- gets no such injection, so it reads them from the project
+`.env`. `blocks login --write-env` puts all three there for you:
+`BLOCKS_API_KEY` plus the deployment's `BLOCKS_BACKEND_URL` and
+`BLOCKS_CDM_URL`. Every deployment serves its CDM payload on the same
+path, so the value it writes is just the deployment's origin plus
+`/api/v1/cdm`:
+
+```bash
+BLOCKS_BACKEND_URL=https://blocks.acme.com
+BLOCKS_CDM_URL=https://blocks.acme.com/api/v1/cdm
+```
+
+Setting them by hand also works, with two related rules to know. Both apply
+only to a value a project `.env` supplied — a value exported in the shell or
+the CI job wins at both of these gates and is left alone by them, with one
+thing above even an export: naming a target on the `blocks login` command
+line, described after this list — and both apply to every command, not just
+`blocks login`:
+
+- **`BLOCKS_BACKEND_URL`** is honoured when **any saved profile** describes
+  the deployment it names, i.e. the user has logged in to that deployment at
+  some point. It does not have to agree with the *active* profile —
+  disagreeing with it is what a project-local pin is for.
+- **`BLOCKS_CDM_URL`** is honoured only when it is the CDM endpoint of the
+  deployment the command is actually targeting. Stock Blocks Network has no
+  such origin to compare against, so a file-supplied value is declined there.
+
+Anything else is dropped with a note on stderr, because a `.env` arrives
+with a cloned repository and must not be able to redirect a command, or a
+credential, at a deployment nobody named. To use such a value deliberately,
+log in to that deployment (or pin the deployment that serves that CDM
+endpoint), or export the value in the shell. This does not bite a project
+`blocks login --write-env` was run in: that login creates the profile for
+the deployment it signed in to and writes that deployment's own URLs.
+
+A login that names its target explicitly additionally unsets an ambient
+`BLOCKS_CDM_URL` for that login, whatever supplied it, because the payload
+behind it names both an API origin and an OAuth client id and would otherwise
+redefine the deployment just named. `--network` (or picking Blocks Network at
+the prompt) drops any such value, since Blocks Network's configuration is the
+CLI's own default; an instance argument drops any value that is not that
+instance's own CDM endpoint. Both say so on stderr. These drops are the one
+place an exported value does not win: unlike the two gates above they do not
+weigh provenance, because a choice made on this invocation outranks ambient
+configuration. They affect that login process only.
+
+A project `.env` configures the **agent**, and can also retarget the CLI through a
+fixed list. The CLI imports the seven settings it consumes itself — `BLOCKS_API_KEY`, `BLOCKS_BACKEND_URL`,
+`BLOCKS_CDM_URL`, `BLOCKS_PROFILE`, `BLOCKS_APP_BASE_URL`,
+`BLOCKS_DASHBOARD_URL`, `BLOCKS_CLI_CLIENT_ID` — and everything else in the file
+is left out of the CLI's own process while still being merged into the
+environment of the agent process `blocks run` starts. So the agent's own
+configuration keeps arriving from `.env` unchanged, and nothing a cloned
+repository ships can change the transport the CLI uses, which certificates
+it trusts, where it keeps credentials, or what it executes. Being a `BLOCKS_*`
+name is not the test: `BLOCKS_INSTALL_DIR`, which points `blocks upgrade` at an
+install directory, is not on the list.
+
+Four of the seven — `BLOCKS_BACKEND_URL`, `BLOCKS_CDM_URL`, `BLOCKS_PROFILE`,
+`BLOCKS_APP_BASE_URL` — do change where the CLI points, so a cloned `.env` is not
+inert. A file-supplied pin naming a deployment no saved profile describes is
+therefore dropped rather than obeyed, with a note naming the file, the variable
+and the deployment used instead; the withdrawal covers the delegated agent too.
+
+Names people often put in a `.env` and would be puzzled to see ignored get an
+explanatory note on stderr — the proxy and certificate settings (`HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
+`GODEBUG`), the state-location ones (`XDG_CONFIG_HOME`, `HOME`, `USERPROFILE`),
+the hosting-provider tokens (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+`VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `NETLIFY_AUTH_TOKEN`) and
+`BLOCKS_INSTALL_DIR`. The note decides nothing; it names the variable and the
+file, and says to export it in the shell instead. Matching is case-insensitive
+throughout. The practical consequence is the hosting-provider tokens: `blocks
+deploy` reads them from the environment, so one placed in a project `.env` is
+not used — export it, as [Step 11](#step-11-ship-a-web-ui-optional) already
+requires.
 
 ### `blocks dashboard`
 
@@ -457,20 +607,21 @@ republish) whenever the agent card or handler shape changes — running
 description, and tags the same way re-running `blocks publish` does.
 
 **Caveat once you've promoted with `blocks publish`:** `blocks register`
-always sends `listing=private` + `billingMode=free`, so re-running it
-on an agent that was promoted to public/paid will reset the visibility
-and pricing back to private+free (card content still updates
-correctly). After the first promotion, prefer `blocks publish` for
-subsequent updates so the listing isn't silently demoted.
+exposes no listing or billing flags, so it sends `listing=private` +
+`billingMode=free`, and re-running it on an agent that was promoted to
+public/paid will reset the visibility and pricing back to private+free (card
+content still updates correctly). After the first promotion, prefer `blocks
+publish` for subsequent updates so the listing isn't silently demoted.
 
 The recommended first step is `blocks register`, which registers the
 agent **privately and free** (usable by the owner, other members of the
 organization that owns it, and the users and organizations they invite;
 no public listing, no pricing). It has no
 listing/billing/terms prompts or flags, so non-interactive and CI
-invocations succeed with no required flags. (Interactive runs may still
-prompt for an organization name on the first agent an org publishes —
-the same prompt `blocks publish` shows.) `blocks publish` is the path to
+invocations succeed with no required flags. (Interactive runs may still prompt for an organization name on the first agent an org
+registers or publishes — the same prompt `blocks publish` shows, and Blocks Network
+only: an Enterprise deployment pre-seeds organizations, so it skips both that prompt
+and `--org-name`.) `blocks publish` is the path to
 go **public** and/or **paid**; it can also promote an already-registered
 agent — running it later on the same agent updates the listing.
 
@@ -479,8 +630,8 @@ behalf.** Instruct the user to run it themselves:
 
 > ```bash
 > cd <your-agent-name>
-> blocks login --write-env   # first time only
-> blocks register            # private + free, the recommended first step
+> blocks login --network --write-env   # first time only (name the instance instead of --network for Enterprise)
+> blocks register                      # private + free, the recommended first step
 > # ...or, to go public / set pricing:
 > blocks publish
 > ```
@@ -490,13 +641,16 @@ behalf.** Instruct the user to run it themselves:
 Bare `blocks publish` is fine in a TTY -- the CLI walks the user
 through listing visibility, billing mode, pricing, and terms
 acceptance. In a non-interactive shell (CI, headless containers,
-agent-driven sessions), the same prompts surface as a hang. Always
-include the relevant flags in the recipe you give the user, derived
-from the agent card's `billingMode`:
+agent-driven sessions) it does not prompt at all: required values must
+come from flags, and a missing one is an immediate error naming the flag
+that supplies it -- `--billing-mode` first. That is a fast failure, not a
+hang, but it is still a failed publish. Always include the relevant flags
+in the recipe you give the user, derived from the agent card's
+`billingMode`:
 
 | Flag | Purpose |
 |---|---|
-| `--billing-mode {free\|paid}` | Required (mirrors `agent-card.json` billing mode). |
+| `--billing-mode {free\|paid}` | Required (mirrors `agent-card.json` billing mode). On a deployment with no marketplace, billing is off and `paid` is **rejected** with an error naming the value that works — publish free there (omit the flag, or pass `free`). Blocks Network accepts both. |
 | `--listing {public\|private}` | Visibility in the registry. |
 | `--price <usd>` | Price for single-kind agents (auto-mapped to per-task or per-minute). |
 | `--price-per-task <usd>` | Per-task price for dual-kind (request + pipe) agents. |
@@ -504,7 +658,7 @@ from the agent card's `billingMode`:
 | `--free-units <n>` | Free trial units per consumer org (auto-mapped from taskKinds). |
 | `--free-tasks <n>` / `--free-minutes <n>` | Per-kind free trial counts for dual-kind agents. |
 | `--accept-terms` | Accept legal attestations non-interactively. |
-| `--org-name <name>` | Set the organization name on first publish (otherwise prompted). |
+| `--org-name <name>` | Set the organization name on first publish (otherwise prompted). **Blocks Network only** — inert on an Enterprise deployment, whose organizations are pre-seeded by its admin. |
 | `--api-key <key>` / `--api-key-stdin` | Skip `blocks login` and authenticate inline. |
 
 Two common recipes:
@@ -517,6 +671,35 @@ blocks publish --billing-mode free --listing public --accept-terms
 blocks publish --billing-mode paid --listing private \
   --price-per-task 0.05 --accept-terms
 ```
+
+### Removing an agent (`blocks unregister`)
+
+`blocks unregister` is the inverse of `blocks register`: it removes the
+agent from the deployment you are currently targeting.
+
+```bash
+blocks unregister                               # name read from ./agent-card.json
+blocks unregister <agentName>                   # remove an agent from anywhere
+blocks unregister <agentName> --yes             # skip the confirmation prompt
+blocks unregister <agentName> --api-key "$KEY"  # inline auth (also --api-key-stdin)
+```
+
+With no argument the name comes from `identity.agentName` in
+`agent-card.json` in the current directory. The command prints the
+deployment it is about to act on before removing anything -- check that
+line if the agent may have been registered somewhere unintended. It
+deliberately does **not** name an organization: the deployment authorizes
+the removal by the caller's rights over this agent, so a multi-organization
+user can remove an agent owned by an organization other than the one the key
+was minted for, and the confirmation prompt one line below names the agent
+instead. The removal **cannot be undone**; the agent has to
+be registered again to restore it, and its name is held for a
+reservation window afterwards (see [Name conflicts](#name-conflicts)).
+
+An interactive run asks `This cannot be undone. (y/N):`. A
+non-interactive session (CI, headless container, agent-driven shell)
+refuses to remove anything without `--yes`, and `--no-input` turns the
+confirmation into an error naming `--yes` rather than a read from stdin.
 
 ### Name conflicts
 
@@ -560,6 +743,16 @@ subcommand family to grant or revoke access:
 
 All commands require `blocks login` first. They are safe to run on the
 user's behalf when the agent already exists in the registry.
+
+`invite send` and `invite revoke` print a context line before acting that
+names the deployment and what they are about to change —
+`[deployment / agent <name> → <grantee>]`. `invite accept` names the
+deployment alone, since the only subject it has before the request is the
+token, which is a secret; the agent is named in the success line. None of
+them names an organization: access is granted and revoked by the caller's
+ownership of the named agent, and accepted by being the invitation's
+recipient, so the organization the key belongs to decides nothing here.
+`register` and `publish` do name it, because the agent is created under one.
 
 ## Modifying an Existing Agent
 
@@ -611,7 +804,8 @@ don't assume they want to edit the handler.
      the drafted card to the user before writing the file.**
 4. **Ask the user: deploy as-is, or make changes first?**
    - **As-is:** Skip handler edits. Authenticate (`blocks login
-     --write-env` if needed), then `blocks register` (private + free,
+     --network --write-env` if needed, or name the Enterprise instance
+     instead of `--network`), then `blocks register` (private + free,
      the recommended first step) per
      [Registering & Publishing](#registering--publishing). Use
      `blocks publish` instead if the user explicitly wants public/paid.
@@ -701,14 +895,31 @@ control (minutes, range 1..43200): pipe-only agents always send it; mixed
 request+pipe agents send it only when the "run as a pipe session" box is
 checked.
 
-**Deploy credentials (non-interactive).** `blocks deploy <partner>` needs a
-partner API token. This skill runs with no TTY, so export the matching env
-var BEFORE deploying (the CLI's interactive `blocks login --provider <partner>`
-paste flow cannot be used here):
+**Deploy credentials (non-interactive).** `blocks deploy <partner>` takes its
+target as a positional argument (there is no `--target` flag) and needs a partner
+API token. This skill runs with no TTY, so **export** the matching variable
+BEFORE deploying (the CLI's interactive `blocks login --provider <partner>` paste
+flow cannot be used here):
 
 - Cloudflare Pages: `CLOUDFLARE_API_TOKEN`
 - Vercel: `VERCEL_TOKEN`
 - Netlify: `NETLIFY_AUTH_TOKEN`
+
+Export is the only way: these are read from the environment, and a value placed
+in a project `.env` is not used (see [Env vars for directly-launched
+scripts](#env-vars-for-directly-launched-scripts)). Under `--no-input`, a missing
+token is an error naming the variable rather than a hang. The post-deploy
+agent-card prompt is different: it is skipped, not refused — the card is left
+unchanged, a note on stderr names the agent and `--no-card-update`, and the
+deploy still exits `0`, because that question comes after the upload and cannot
+be allowed to report a live deployment as a failure. Pass `--no-card-update` to
+state that intent and silence the note. A malformed `--card-path <agent>=<path>`
+*is* refused, before anything is uploaded. One `blocks deploy` refusal
+has no answer: if `web/` was baked at `blocks init` time for a backend other than
+the one now being targeted, `--no-input` makes that a hard failure with no
+override — re-scaffold with `blocks init --mode webapp --agent <agent>
+--backend-url <the backend you are targeting>`, or target the backend the bundle
+was built for.
 
 See `blocks-sdk/embed-auth/README.md` for the widget API and the wire-level
 pattern (popup flow, refresh, sign-out, error envelopes),
@@ -750,8 +961,12 @@ A consumer project produces:
 
 After scaffolding:
 
-1. Set `BLOCKS_API_KEY` in `.env` (or run `blocks login --write-env`
-   from the consumer directory).
+1. Set `BLOCKS_API_KEY` in `.env` (or run `blocks login --network
+   --write-env` from the consumer directory -- name the enterprise
+   instance instead of `--network` to also write that deployment's
+   `BLOCKS_BACKEND_URL` and `BLOCKS_CDM_URL`, which a consumer script needs
+   in `.env` because it is not launched by `blocks run`: see [Env vars for
+   directly-launched scripts](#env-vars-for-directly-launched-scripts)).
 2. Edit the script and set the target agent name on `sendMessage` /
    `send_message`.
 3. Run with `npm run start` (Node) or `python main.py` (Python).
@@ -968,11 +1183,14 @@ is already terminal (live-only data is gone; artifacts persist).
 | `"Streaming was not negotiated for this task."` from `createStream()` | `hasStream` is false. Either the agent card is missing the top-level `streams` block (or it was placed inside `capabilities`) — re-publish after fixing — or, for a request task, the consumer didn't opt in via `extensions.blocks.stream`. Guard handler code on `ctx.hasStream` / `ctx.has_stream` so it degrades to an artifact-only response instead of throwing. |
 | `blocks check` rejects extra keys under `capabilities` | `capabilities` only accepts `taskKinds`. Streaming config goes in the top-level `streams` block. |
 | `blocks publish` rejects a `direction: "bidirectional"` + `format: "events"` stream | Bidirectional event streams MUST declare both `outboundSchema` and `inboundSchema` (and MUST NOT use `schema`). Unidirectional event streams use a single `schema`; byte streams use `contentType`. See [Streaming Agents](#streaming-agents). |
-| `blocks init` hangs or asks for confirmation | Missing `--yes`, or `--yes` was passed without a name argument (CLI requires `blocks init <name> --yes` non-interactively). Always include both. |
-| `blocks publish` hangs after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. See [Registering & Publishing → Non-interactive publish flags](#non-interactive-publish-flags). |
+| `blocks init` exits with "agent name is required in non-interactive mode" | The name was omitted. A non-TTY stdin already implies non-interactive, so `--yes` is not what is missing — pass the name: `blocks init <name>`. Use `--yes` to force non-interactive behaviour when stdin *is* a terminal. |
+| `blocks publish` exits right after the `[OK]` validation lines | Missing one of `--billing-mode`, `--listing`, or `--accept-terms` in a non-interactive shell. The error names the flag; it does not hang waiting. See [Registering & Publishing → Non-interactive publish flags](#non-interactive-publish-flags). |
 | `blocks invite send` returns `either --email or --org is required` (or 4xx) | The two flags are required and mutually exclusive -- pass exactly one. |
 | Bare `blocks login` finishes but `BLOCKS_API_KEY` is missing in `.env` | Non-TTY auto-detection skipped the write-env prompt. Re-run with explicit `--write-env` (and `--dir <name>` if invoking from a parent directory). |
+| `blocks login` asks "Which deployment?" in a terminal | Expected: no instance argument was given and this invocation resolves no deployment at all (no profile, no `BLOCKS_BACKEND_URL`, no honoured `.env` pin). Pass `--network` for Blocks Network, or the instance URL / short name for an Enterprise deployment. |
+| A script run directly (not via `blocks run`) reaches Blocks Network after an enterprise login | `BLOCKS_BACKEND_URL` and/or `BLOCKS_CDM_URL` are missing from its environment, or the CLI declined one it found. `blocks login --write-env` writes both for the deployment it signed in to; re-run it in the script's own directory (add `--dir <name>` from a parent). If the CLI printed that it was not using a value from `.env`, that value named a deployment no saved profile describes — log in to that deployment, or export the value in your shell. See [Env vars for directly-launched scripts](#env-vars-for-directly-launched-scripts). |
 | `blocks login` never completes in Docker/SSH/a cloud VM | Callback goes to `127.0.0.1:8787` *inside* the container. See [Login in containerized / headless environments](#login-in-containerized--headless-environments). |
+| `blocks deploy --no-input` prints "the deploy is complete, but ...'s agent card was NOT updated" | Expected, and not a failure — the exit code is `0` and the site is live. `--no-input` withdrew the confirmation that would have added the deployed URL to a local `agent-card.json`, so the card was left alone. Add the printed `identity.webApps` entry by hand and `blocks publish` from that agent's directory, or pass `--no-card-update` to state the intent and silence the note. |
 | `blocks run` exits immediately with a fatal "forced offline" / "API key invalid" error | An administrator force-offlined the agent, or the API key was revoked. This is a non-retryable `AgentAuthFatalError` — the runtime deliberately terminates (`process.exit(1)`) rather than run as a banned zombie. Re-registering won't help while the hold stands; the agent must be re-enabled by an admin (Blocks Network staff, or an org member with the `agent:force-offline` permission) before it can reconnect. |
 | Agent stops taking new tasks mid-session but the process stays up | Force-offline while already connected **starves** rather than evicts: the server fails in-flight tasks and rejects new admission (`403 AGENT_FORCED_OFFLINE`), but the control-channel grant lives out its TTL, so the process only exits on its next connect/refresh (e.g. a restart). |
 

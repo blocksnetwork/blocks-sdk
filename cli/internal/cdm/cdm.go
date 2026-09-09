@@ -7,11 +7,24 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
 const DefaultCDMURL = "https://config.blocks.ai/config.json"
+
+// URLEnv names the environment variable that points the CLI — and every SDK
+// runtime the CLI delegates to — at a specific CDM endpoint instead of the
+// public default.
+const URLEnv = "BLOCKS_CDM_URL"
+
+// endpointPath is the route a deployment serves its own CDM payload on. It is
+// written here once: the answer to "given this backend origin, which CDM
+// endpoint does a runtime have to call" must be the same for the agent process
+// the CLI delegates to and for the browser payload the dev server injects, and
+// two spellings of the path is how those drift apart.
+const endpointPath = "/api/v1/cdm"
 
 const cacheTTL = 7 * 24 * time.Hour
 
@@ -36,6 +49,18 @@ var (
 	cachedErr error
 	once      sync.Once
 )
+
+// EndpointFor returns the CDM endpoint hosted by the deployment at backendURL —
+// the URL a runtime must fetch to resolve that deployment's keysets and its own
+// api.baseUrl. It returns "" when no origin is given, so callers can treat "no
+// deployment was named" and "no endpoint to inject" as the same case.
+func EndpointFor(backendURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(backendURL), "/")
+	if base == "" {
+		return ""
+	}
+	return base + endpointPath
+}
 
 // Get returns the CDM config, fetching it on first call and caching the result.
 func Get() (*Config, error) {
@@ -102,7 +127,7 @@ func saveLocal(cfg *Config) error {
 }
 
 func fetch() (*Config, error) {
-	url := os.Getenv("BLOCKS_CDM_URL")
+	url := os.Getenv(URLEnv)
 	if url == "" {
 		if cfg, err := loadLocal(); err == nil {
 			return cfg, nil

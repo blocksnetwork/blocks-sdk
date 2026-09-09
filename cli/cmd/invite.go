@@ -6,11 +6,30 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"text/tabwriter"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
+	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
+	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 	"github.com/spf13/cobra"
 )
+
+// Every value these commands print comes from outside the CLI — an address or slug
+// the caller typed, or a name, email, slug, link or error message the deployment
+// returned — and one of them shares a screen with the removal these commands
+// perform. termsafe.Text is applied at each print site so no such value can emit a
+// control sequence that rewrites the surrounding output; the request payloads and
+// URLs keep using the raw values. The one exception is the context banner's subject,
+// which is handed over raw because clictx escapes every half of that line itself.
+//
+// None of these commands is scoped by the organization the credential belongs to:
+// the deployment authorizes a send or a revoke by ownership of the named agent, and
+// an accept by being the invitation's recipient. So the banner names the subject
+// authorization turns on — this agent, this grantee — rather than an organization
+// that decides nothing about which agent can be shared or unshared. See
+// clictx.Banner.
 
 var inviteSendEmail string
 var inviteSendOrg string
@@ -40,10 +59,34 @@ var inviteCmd = &cobra.Command{
 	Long:  "Send, list, accept, and revoke access invitations for private agents.",
 }
 
+// agentNameArg accepts exactly one argument and requires it to be a bare registry
+// agent name. Every command that takes one uses it, because each of them puts that
+// argument straight into a request path — and a name carrying '/', '?' or '#'
+// silently changes which endpoint is called. For `send` and `revoke` that is worse
+// than a bad request: the safety banner describes the name as supplied, so the
+// operator would read a confirmation for one agent while the request went somewhere
+// else. It is an Args validator rather than a check inside RunE so it runs before
+// the banner is printed, and so the two can never disagree.
+//
+// The pattern is wizard.ValidateAgentName's — the registry's own — so there is one
+// spelling of what an agent name is rather than a second one here that could drift
+// from it. Validation is the defence; agentPathSegment is the belt.
+func agentNameArg(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+		return err
+	}
+	return wizard.ValidateAgentName(args[0])
+}
+
+// agentPathSegment renders a value for use as a single path segment. It backs up
+// agentNameArg for the agent name, and is the only defence for a grant id, which
+// comes from the deployment's own response rather than from a validated argument.
+func agentPathSegment(v string) string { return url.PathEscape(v) }
+
 var inviteSendCmd = &cobra.Command{
 	Use:   "send <agentName>",
 	Short: "Send an invitation to access a private agent",
-	Args:  cobra.ExactArgs(1),
+	Args:  agentNameArg,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if inviteSendEmail == "" && inviteSendOrg == "" {
 			return fmt.Errorf("either --email or --org is required")
@@ -51,6 +94,7 @@ var inviteSendCmd = &cobra.Command{
 		if inviteSendEmail != "" && inviteSendOrg != "" {
 			return fmt.Errorf("--email and --org are mutually exclusive")
 		}
+		clictx.PrintBanner(clictx.ActsOn(inviteSubject(args[0], inviteSendEmail, inviteSendOrg)))
 		return runInviteSend(args[0])
 	},
 }
@@ -58,7 +102,7 @@ var inviteSendCmd = &cobra.Command{
 var inviteListCmd = &cobra.Command{
 	Use:   "list <agentName>",
 	Short: "List unaccepted invitations for a private agent",
-	Args:  cobra.ExactArgs(1),
+	Args:  agentNameArg,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInviteList(args[0])
 	},
@@ -69,6 +113,12 @@ var inviteAcceptCmd = &cobra.Command{
 	Short: "Accept an agent invitation",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Accepting is authorized by being the invitation's recipient, and the only
+		// subject available before the request is the token the caller just typed —
+		// printing it back adds nothing and it is a secret. So the banner states the
+		// deployment alone, and the agent the invitation was for is named in the
+		// success line, which is the first point at which the CLI knows it.
+		clictx.PrintBanner(clictx.OrgIsNotTheScope())
 		return runInviteAccept(args[0])
 	},
 }
@@ -76,7 +126,7 @@ var inviteAcceptCmd = &cobra.Command{
 var inviteRevokeCmd = &cobra.Command{
 	Use:   "revoke <agentName>",
 	Short: "Revoke access to a private agent",
-	Args:  cobra.ExactArgs(1),
+	Args:  agentNameArg,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if inviteRevokeEmail == "" && inviteRevokeOrg == "" {
 			return fmt.Errorf("either --email or --org is required")
@@ -84,14 +134,30 @@ var inviteRevokeCmd = &cobra.Command{
 		if inviteRevokeEmail != "" && inviteRevokeOrg != "" {
 			return fmt.Errorf("--email and --org are mutually exclusive")
 		}
+		clictx.PrintBanner(clictx.ActsOn(inviteSubject(args[0], inviteRevokeEmail, inviteRevokeOrg)))
 		return runInviteRevoke(args[0])
 	},
+}
+
+// inviteSubject names what a send or a revoke acts on: the agent whose ownership
+// authorizes the change, and the grantee whose access it changes. Both commands
+// share one shape because both turn on exactly that pair — the verb is already on
+// the command line the operator typed. Values are returned raw for the banner to
+// escape.
+func inviteSubject(agentName, email, org string) string {
+	switch {
+	case email != "":
+		return "agent " + agentName + " → " + email
+	case org != "":
+		return "agent " + agentName + " → org " + org
+	}
+	return "agent " + agentName
 }
 
 var inviteGrantsCmd = &cobra.Command{
 	Use:   "grants <agentName>",
 	Short: "List active grants for a private agent",
-	Args:  cobra.ExactArgs(1),
+	Args:  agentNameArg,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInviteGrants(args[0])
 	},
@@ -120,8 +186,8 @@ func runInviteSend(agentName string) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/invitations", backendURL, agentName)
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	sendURL := fmt.Sprintf("%s/api/v1/agents/%s/invitations", backendURL, agentPathSegment(agentName))
+	req, err := http.NewRequest("POST", sendURL, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -138,9 +204,9 @@ func runInviteSend(agentName string) error {
 		return handleErrorResponse(resp)
 	}
 
-	target := inviteSendEmail
+	target := termsafe.Text(inviteSendEmail)
 	if inviteSendOrg != "" {
-		target = "org " + inviteSendOrg
+		target = "org " + termsafe.Text(inviteSendOrg)
 	}
 
 	// The invitation is created either way; `notified` says how many addresses were
@@ -160,7 +226,7 @@ func runInviteSend(agentName string) error {
 	if result.Notified != nil && *result.Notified == 0 {
 		fmt.Printf("Invitation created for %s, but it could not be emailed.\n", target)
 		if result.InviteURL != "" {
-			fmt.Printf("Share this link instead: %s\n", result.InviteURL)
+			fmt.Printf("Share this link instead: %s\n", termsafe.Text(result.InviteURL))
 		}
 		return nil
 	}
@@ -179,8 +245,8 @@ func runInviteList(agentName string) error {
 		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/invitations", backendURL, agentName)
-	req, err := http.NewRequest("GET", url, nil)
+	listURL := fmt.Sprintf("%s/api/v1/agents/%s/invitations", backendURL, agentPathSegment(agentName))
+	req, err := http.NewRequest("GET", listURL, nil)
 	if err != nil {
 		return err
 	}
@@ -218,7 +284,8 @@ func runInviteList(agentName string) error {
 	fmt.Fprintln(w, "ID\tEMAIL\tSCOPE\tCREATED\tEXPIRES")
 	for _, inv := range result.Invitations {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			inv.ID, inv.Email, inv.Scope, inv.CreatedAt, inv.ExpiresAt)
+			termsafe.Text(inv.ID), termsafe.Text(inv.Email), termsafe.Text(inv.Scope),
+			termsafe.Text(inv.CreatedAt), termsafe.Text(inv.ExpiresAt))
 	}
 	w.Flush()
 	return nil
@@ -240,8 +307,8 @@ func runInviteAccept(token string) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agent-invitations/accept", backendURL)
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	acceptURL := fmt.Sprintf("%s/api/v1/agent-invitations/accept", backendURL)
+	req, err := http.NewRequest("POST", acceptURL, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -265,7 +332,7 @@ func runInviteAccept(token string) error {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	fmt.Printf("Access granted to %s\n", result.AgentName)
+	fmt.Printf("Access granted to %s\n", termsafe.Text(result.AgentName))
 	return nil
 }
 
@@ -280,7 +347,7 @@ func runInviteRevoke(agentName string) error {
 	}
 
 	// First list grants to find the one matching the email/org
-	grantsURL := fmt.Sprintf("%s/api/v1/agents/%s/grants", backendURL, agentName)
+	grantsURL := fmt.Sprintf("%s/api/v1/agents/%s/grants", backendURL, agentPathSegment(agentName))
 	req, err := http.NewRequest("GET", grantsURL, nil)
 	if err != nil {
 		return err
@@ -329,13 +396,13 @@ func runInviteRevoke(agentName string) error {
 
 	if grantID == "" {
 		if inviteRevokeEmail != "" {
-			return fmt.Errorf("no active grant found for email %s", inviteRevokeEmail)
+			return fmt.Errorf("no active grant found for email %s", termsafe.Text(inviteRevokeEmail))
 		}
-		return fmt.Errorf("no active grant found for org %s", inviteRevokeOrg)
+		return fmt.Errorf("no active grant found for org %s", termsafe.Text(inviteRevokeOrg))
 	}
 
 	// Delete the grant
-	deleteURL := fmt.Sprintf("%s/api/v1/agents/%s/grants/%s", backendURL, agentName, grantID)
+	deleteURL := fmt.Sprintf("%s/api/v1/agents/%s/grants/%s", backendURL, agentPathSegment(agentName), agentPathSegment(grantID))
 	delReq, err := http.NewRequest("DELETE", deleteURL, nil)
 	if err != nil {
 		return err
@@ -353,9 +420,9 @@ func runInviteRevoke(agentName string) error {
 	}
 
 	if inviteRevokeEmail != "" {
-		fmt.Printf("Access revoked for %s\n", inviteRevokeEmail)
+		fmt.Printf("Access revoked for %s\n", termsafe.Text(inviteRevokeEmail))
 	} else {
-		fmt.Printf("Access revoked for org %s\n", inviteRevokeOrg)
+		fmt.Printf("Access revoked for org %s\n", termsafe.Text(inviteRevokeOrg))
 	}
 	return nil
 }
@@ -370,8 +437,8 @@ func runInviteGrants(agentName string) error {
 		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/agents/%s/grants", backendURL, agentName)
-	req, err := http.NewRequest("GET", url, nil)
+	grantsURL := fmt.Sprintf("%s/api/v1/agents/%s/grants", backendURL, agentPathSegment(agentName))
+	req, err := http.NewRequest("GET", grantsURL, nil)
 	if err != nil {
 		return err
 	}
@@ -420,7 +487,8 @@ func runInviteGrants(agentName string) error {
 		} else if g.GranteeOrg != nil {
 			grantee = g.GranteeOrg.Slug
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", g.ID, g.Scope, grantee, g.CreatedAt)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			termsafe.Text(g.ID), termsafe.Text(g.Scope), termsafe.Text(grantee), termsafe.Text(g.CreatedAt))
 	}
 	w.Flush()
 	return nil
@@ -438,7 +506,7 @@ func handleErrorResponse(resp *http.Response) error {
 			msg = errResp.Message
 		}
 		if msg != "" {
-			return fmt.Errorf("request failed (HTTP %d): %s", resp.StatusCode, msg)
+			return fmt.Errorf("request failed (HTTP %d): %s", resp.StatusCode, termsafe.Text(msg))
 		}
 	}
 	return fmt.Errorf("request failed: HTTP %d", resp.StatusCode)

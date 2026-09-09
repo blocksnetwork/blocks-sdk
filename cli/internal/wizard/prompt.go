@@ -1,12 +1,64 @@
 package wizard
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"golang.org/x/term"
 )
+
+// noInputMode tracks whether --no-input is set. When true, InteractiveSelect
+// must fail with an actionable error instead of prompting.
+var noInputMode bool
+
+// SetNoInputMode is called from cmd/root.go to propagate the --no-input flag
+// state to the wizard package.
+func SetNoInputMode(enabled bool) {
+	noInputMode = enabled
+}
+
+// readRequiredLine prompts until the answer passes validate. Unlike readLine
+// there is no default to fall back on, so a blank answer re-prompts and EOF is
+// an error rather than a silent accept — a value the caller cannot proceed
+// without must never be invented, and a loop that keeps re-prompting a closed
+// stdin would spin. flagHint names what supplies the value without a terminal,
+// so both the --no-input refusal and the EOF error say how to answer.
+//
+// It lives beside the --no-input gate so every prompt that reads a line is
+// gated by construction; a call site that reads stdin directly is the hole this
+// primitive exists to close.
+func readRequiredLine(r *bufio.Reader, label, flagHint, helpText string, validate func(string) error) (string, error) {
+	if noInputMode {
+		return "", fmt.Errorf("cannot ask %q with --no-input — pass %s", label, flagHint)
+	}
+	for {
+		fmt.Printf("%s (? for help): ", label)
+		line, err := r.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				return "", fmt.Errorf("%s is required — pass %s", label, flagHint)
+			}
+			return "", err
+		}
+		answer := strings.TrimSpace(line)
+		switch {
+		case answer == "?":
+			fmt.Println(helpText)
+			fmt.Println()
+		case answer == "":
+			fmt.Printf("  %s is required.\n", label)
+		default:
+			if err := validate(answer); err != nil {
+				fmt.Printf("  Invalid: %v\n", err)
+				continue
+			}
+			return answer, nil
+		}
+	}
+}
 
 // readKey reads a single keypress from stdin (must be in raw mode).
 func readKey() (string, error) {
@@ -58,6 +110,9 @@ func physicalLines(visibleLen, termWidth int) int {
 // InteractiveSelect shows a single-select list navigable with arrow keys.
 // Returns the index of the selected option. helpText is printed when the user presses ?.
 func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText string) (int, error) {
+	if noInputMode {
+		return 0, fmt.Errorf("cannot ask %q with --no-input", prompt)
+	}
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
 		return defaultIdx, nil
@@ -144,4 +199,3 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText
 		render()
 	}
 }
-

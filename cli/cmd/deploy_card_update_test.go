@@ -29,6 +29,10 @@ func writeAgentCard(t *testing.T, path string, identity map[string]any) {
 
 // runCardUpdateFromCwd is a test harness that runs the post-deploy card flow
 // from `cwd` so resolveLocalCardPath's sibling fallback resolves predictably.
+//
+// There is no error-returning variant any more, and there cannot be: the card walk
+// runs after a non-idempotent upload, so it reports what it skipped and never hands a
+// failure back to the deploy. Its outcomes are read off stdout and stderr.
 func runCardUpdateFromCwd(t *testing.T, cwd string, cfg *config.BlocksConfig, deployedURL string, overrides map[string]string, stdinText string) (string, string) {
 	t.Helper()
 	oldDir, _ := os.Getwd()
@@ -40,6 +44,172 @@ func runCardUpdateFromCwd(t *testing.T, cwd string, cfg *config.BlocksConfig, de
 	var stdout, stderr bytes.Buffer
 	maybeUpdateLocalAgentCards(cfg, deployedURL, overrides, strings.NewReader(stdinText), &stdout, &stderr)
 	return stdout.String(), stderr.String()
+}
+
+// TestCardUpdate_NoInputNamesTheFlag covers the post-deploy card confirmation:
+// --no-input must not read stdin, must leave the card untouched, and must name both
+// the flag that withdrew the question and the flag that answers it.
+//
+// The premise changed with the exit code. This case used to require the skip to be
+// returned as an error, which the deploy then reported — turning a completed upload
+// and a written config into a failed command. Everything it asserted still holds
+// (nothing read, nothing written, both flags named); what it no longer accepts is the
+// error, because a note is the only form a post-upload skip may take.
+func TestCardUpdate_NoInputNamesTheFlag(t *testing.T) {
+	parent := t.TempDir()
+	project := filepath.Join(parent, "myapp")
+	agentDir := filepath.Join(parent, "echo")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cardPath := filepath.Join(agentDir, "agent-card.json")
+	writeAgentCard(t, cardPath, map[string]any{"agentName": "echo"})
+	before, _ := os.ReadFile(cardPath)
+
+	setNoInputMode(true)
+	t.Cleanup(func() { setNoInputMode(false) })
+
+	cfg := &config.BlocksConfig{Agents: []string{"echo"}}
+	// "y\n" would accept the prompt if one were still read.
+	stdout, stderr := runCardUpdateFromCwd(t, project, cfg, "https://myapp.pages.dev", nil, "y\n")
+	if strings.Contains(stdout, "[Y/n]") {
+		t.Errorf("no confirmation may be printed under --no-input; stdout=%s", stdout)
+	}
+	if !strings.Contains(stderr, "--no-input") || !strings.Contains(stderr, "--no-card-update") {
+		t.Errorf("the note %q should name --no-input and the flag that answers it (--no-card-update)", stderr)
+	}
+	if !strings.Contains(stderr, "NOT updated") {
+		t.Errorf("the note must say the card was not updated; got %q", stderr)
+	}
+	after, _ := os.ReadFile(cardPath)
+	if !bytes.Equal(before, after) {
+		t.Errorf("card must not be written under --no-input:\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
+// TestCardUpdate_NoInputSkippedByFlag is the other half of the contract: passing
+// the flag the refusal names makes the invocation succeed, because --no-card-update
+// suppresses the prompt before the updater is ever called.
+func TestCardUpdate_NoInputSkippedByFlag(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"echo"}, "")
+	defer cleanup()
+
+	uploaded := recordingAdapter(t, "cloudflare", "https://myapp.pages.dev")
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-input", "--no-card-update")
+	})
+	if err != nil {
+		t.Fatalf("--no-input with --no-card-update must deploy without asking; got %v, output:\n%s", err, out)
+	}
+	if !*uploaded {
+		t.Error("expected the deploy to run")
+	}
+}
+
+// TestCardUpdate_NoInputThroughArgv drives the same skip end to end, so the
+// --no-input plumbing (root flag → prompt primitives → this prompt) is covered
+// rather than the package variable alone. Stdin is at EOF, so an ungated read
+// would silently skip the update and the deploy would succeed.
+//
+// The premise changed with the exit code, and this is the case that says why. The skip
+// used to be returned as an error, so `blocks deploy --no-input` uploaded, wrote the
+// config, and then exited nonzero: automation that retries on nonzero deploys a second
+// time, paying for a second upload, and the developer reads a failure for a deployment
+// that is live. So the exit code is asserted as zero here, alongside everything the
+// case already required — the upload ran, the config was written, the card was not, and
+// the flag that suppresses the question is named.
+func TestCardUpdate_NoInputThroughArgv(t *testing.T) {
+	dir, cleanup := setupDeployTest(t, []string{"echo"}, "")
+	defer cleanup()
+	deployNoCardUpdate = false // setupDeployTest suppresses the prompt; this test is about it
+
+	cardPath := filepath.Join(t.TempDir(), "agent-card.json")
+	writeAgentCard(t, cardPath, map[string]any{"agentName": "echo"})
+	before, _ := os.ReadFile(cardPath)
+
+	uploaded := recordingAdapter(t, "cloudflare", "https://myapp.pages.dev")
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-input", "--card-path", "echo="+cardPath)
+	})
+	if err != nil {
+		t.Fatalf("a deploy that uploaded must not exit nonzero because a post-deploy question could not be asked; got %v, output:\n%s", err, out)
+	}
+	if !*uploaded {
+		t.Error("the skip is about the card prompt only; the deploy itself should have run")
+	}
+	if !strings.Contains(out, "Deployed: https://myapp.pages.dev") {
+		t.Errorf("the deploy must still be reported as done:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT updated") || !strings.Contains(out, "--no-card-update") {
+		t.Errorf("the run must say the card was not updated and name --no-card-update:\n%s", out)
+	}
+	if after, _ := os.ReadFile(cardPath); !bytes.Equal(before, after) {
+		t.Errorf("card must not be written under --no-input:\nbefore: %s\nafter: %s", before, after)
+	}
+	// The upload succeeded, so the config write that follows it must still have
+	// happened — the skip is not a rollback.
+	raw, readErr := os.ReadFile(filepath.Join(dir, "blocks.config.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(raw), "https://myapp.pages.dev") {
+		t.Errorf("lastDeployedUrl should have been saved before the card prompt; got %s", raw)
+	}
+}
+
+// The declared form of the same intent says nothing about it. --no-card-update is how a
+// caller states that the card is not to be touched, and a note explaining a question
+// that was never going to be asked is noise in every later run of that pipeline.
+func TestCardUpdate_NoInputWithNoCardUpdateSaysNothingAboutTheCard(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"echo"}, "")
+	defer cleanup()
+
+	cardPath := filepath.Join(t.TempDir(), "agent-card.json")
+	writeAgentCard(t, cardPath, map[string]any{"agentName": "echo"})
+
+	uploaded := recordingAdapter(t, "cloudflare", "https://myapp.pages.dev")
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-input", "--no-card-update", "--card-path", "echo="+cardPath)
+	})
+	if err != nil {
+		t.Fatalf("--no-input with --no-card-update must deploy without asking; got %v, output:\n%s", err, out)
+	}
+	if !*uploaded {
+		t.Error("expected the deploy to run")
+	}
+	if strings.Contains(out, "agent card") || strings.Contains(out, "NOT updated") {
+		t.Errorf("--no-card-update already stated the intent; the run must not explain the skip:\n%s", out)
+	}
+}
+
+// A malformed --card-path is settled before the upload. It is a mistake in the
+// invocation, knowable without deploying, and the alternative — discovering it in the
+// card walk — is the same defect this file's --no-input cases describe: a completed,
+// billable upload reported as a failed command.
+func TestCardUpdate_MalformedCardPathIsRefusedBeforeTheUpload(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"echo"}, "")
+	defer cleanup()
+
+	uploaded := recordingAdapter(t, "cloudflare", "https://myapp.pages.dev")
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--card-path", "justaname")
+	})
+	if err == nil {
+		t.Fatalf("expected a malformed --card-path to be refused; output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--card-path") {
+		t.Errorf("error %q should name the flag it could not parse", err.Error())
+	}
+	if *uploaded {
+		t.Error("a flag the CLI could not parse must be refused before anything is uploaded")
+	}
 }
 
 // TestCardUpdate_SiblingFound_PromptAccepted appends a webApp entry when the
@@ -61,6 +231,11 @@ func TestCardUpdate_SiblingFound_PromptAccepted(t *testing.T) {
 
 	stdout, _ := runCardUpdateFromCwd(t, project, cfg, "https://myapp.pages.dev", nil, "y\n")
 
+	// The complement of the --no-input cases: an interactive run still asks, and still
+	// writes when the answer is yes.
+	if !strings.Contains(stdout, "Add https://myapp.pages.dev to identity.webApps") {
+		t.Errorf("stdout %q should carry the confirmation", stdout)
+	}
 	if !strings.Contains(stdout, "Updated") {
 		t.Errorf("stdout %q should mention 'Updated'", stdout)
 	}
@@ -429,5 +604,38 @@ func TestCardUpdate_LabelTooLong_NotWritten(t *testing.T) {
 	identity, _ := card["identity"].(map[string]any)
 	if apps, ok := identity["webApps"].([]any); ok && len(apps) != 0 {
 		t.Errorf("over-length label must not be written; got webApps=%v", apps)
+	}
+}
+
+// The line that reports a written card told the user to re-run 'blocks publish' from the
+// agent's directory, with the agent name interpolated into it. That name comes from
+// blocks.config.json, so a project can choose it, and a line the CLI formats as
+// something to run may not be built from a value a project chooses: it is a line that
+// gets pasted into a shell, and no display-escaping helper makes `;`, `&&`, backticks or
+// $(...) inert there — they are ordinary printable characters.
+//
+// The scan reuses commandLines, this package's one definition of "reads as something to
+// run", and the path and agent are still reported so the user can see which file moved.
+func TestTheUpdatedCardLineOffersNoPastableCommandBuiltFromTheAgentName(t *testing.T) {
+	const hostileAgent = "echo;$(id)"
+
+	parent := t.TempDir()
+	project := filepath.Join(parent, "myapp")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cardPath := filepath.Join(parent, "card.json")
+	writeAgentCard(t, cardPath, map[string]any{"agentName": hostileAgent})
+
+	cfg := &config.BlocksConfig{Agents: []string{hostileAgent}}
+	stdout, stderr := runCardUpdateFromCwd(t, project, cfg,
+		"https://myapp.pages.dev", map[string]string{hostileAgent: cardPath}, "y\n")
+
+	if !strings.Contains(stdout, "Updated") {
+		t.Fatalf("premise: the card must have been written; stdout=%s stderr=%s", stdout, stderr)
+	}
+	assertNoInjectedValueInCommandLines(t, stdout, hostileAgent)
+	if !strings.Contains(stdout, cardPath) {
+		t.Errorf("the file that changed must still be reported:\n%s", stdout)
 	}
 }

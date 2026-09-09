@@ -2,8 +2,10 @@ package deploy
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // ValidateWebAppURL enforces the same shape rule as
@@ -34,11 +36,18 @@ func ValidateWebAppURL(raw string) error {
 	if host == "" {
 		return fmt.Errorf("url %q has no host", raw)
 	}
-	// Go's url.Parse already rejects malformed IPv6 literals
-	// (`https://[x]`, `https://[gggg::1]`) with "invalid host" via the
-	// netip package — no extra check is needed at this layer for IPv6.
-	// The fall-through scheme check below restricts `[::1]` to the http
-	// loopback arm.
+	// url.Parse does NOT reject a malformed IPv6 literal: it checks bracket
+	// balance, the optional port and RFC 6874 zone syntax, and never that the
+	// brackets hold an address. `https://[x]` parses cleanly with Host "[x]" and
+	// Hostname "x". A comment here previously claimed the opposite — that netip
+	// rejected these upstream — which is why the corpus cases below asserting
+	// "invalid host" for `[x]` and `[gggg::1]` had been failing.
+	//
+	// The scheme check further down restricts `[::1]` to the http loopback arm;
+	// this one only establishes that a bracketed host is an address at all.
+	if strings.HasPrefix(parsed.Host, "[") && net.ParseIP(host) == nil {
+		return fmt.Errorf("url %q has invalid host %q (a bracketed host must be an IP literal)", raw, parsed.Host)
+	}
 	if portStr := parsed.Port(); portStr != "" {
 		p, err := strconv.Atoi(portStr)
 		if err != nil || p < 1 || p > 65535 {
@@ -83,4 +92,3 @@ func isHex(b byte) bool {
 	}
 	return false
 }
-

@@ -1,6 +1,7 @@
 package cliconfig
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,7 +79,35 @@ func TestFetchServerErrorIsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if _, err := Fetch(srv.URL); err == nil {
+	_, err := Fetch(srv.URL)
+	if err == nil {
 		t.Fatalf("a 500 must surface as an error (only 404 is lenient)")
+	}
+
+	// Verify the error is the typed HTTPStatusError
+	var httpErr HTTPStatusError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected HTTPStatusError, got: %T", err)
+	}
+	if httpErr.StatusCode != 500 {
+		t.Errorf("expected status code 500, got: %d", httpErr.StatusCode)
+	}
+}
+
+func TestFetchMalformedJSONIsDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"enterprise":true,malformed`)) // Invalid JSON
+	}))
+	defer srv.Close()
+	_, err := Fetch(srv.URL)
+	if err == nil {
+		t.Fatalf("malformed JSON must surface as an error")
+	}
+
+	// Verify the error is the typed DecodeError
+	var decodeErr DecodeError
+	if !errors.As(err, &decodeErr) {
+		t.Fatalf("expected DecodeError, got: %T", err)
 	}
 }

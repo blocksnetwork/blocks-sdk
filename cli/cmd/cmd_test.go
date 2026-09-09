@@ -5,11 +5,97 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
+	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
+	"github.com/spf13/cobra"
 )
+
+// ambientTargetingVars are the environment variables this package's cases assume are
+// absent: everything that can name the deployment a command reaches, the credential it
+// sends, or the profile it reads them from. It is isolateAmbientState's own list plus
+// BLOCKS_PROFILE, which selects the profile before any of the others are consulted.
+//
+// BLOCKS_CDM_URL is the one that made a floor necessary. It is a tier of the target
+// precedence now — it names the deployment a profile recording none resolves to — so a
+// developer with one exported in their shell watched stock-profile cases silently
+// retarget and fail for a reason that had nothing to do with their change.
+var ambientTargetingVars = []string{
+	cdm.URLEnv,
+	blocksBackendURLEnv,
+	blocksAPIKeyEnv,
+	blocksProfileEnv,
+	blocksCLIClientIDEnv,
+	blocksAppBaseURLEnv,
+	blocksDashboardURLEnv,
+}
+
+// ambientLeftAtStartup describes anything still in effect after TestMain cleared it.
+// It is recorded once, before any case runs, so the case that asserts the floor held
+// does not depend on what ran before it — which under -shuffle is not knowable.
+var ambientLeftAtStartup []string
+
+// TestMain clears the ambient state above for every case in this package. It is a
+// floor, not a replacement for isolateAmbientState: a case that needs a value set —
+// or set to something specific — still sets it with t.Setenv, which restores per case
+// and so composes with this.
+//
+// Two sources are covered, and the second is why the withdrawal goes through the
+// CLI's own helper rather than os.Unsetenv. `go test` runs with the working directory
+// set to the package directory, and root.go's init() loads ./.env from there before
+// any test runs: a stray, gitignored cmd/.env was quietly supplying BLOCKS_API_KEY to
+// every local run of this package, and one case had to be hardened against it by hand.
+// dropProjectEnvValue takes the value, the loader's record of which file supplied it,
+// and — through that record — the environment a delegated agent runtime would be
+// handed, so no case can inherit any of the three.
+func TestMain(m *testing.M) {
+	for _, key := range ambientTargetingVars {
+		dropProjectEnvValue(key)
+		if v, ok := os.LookupEnv(key); ok {
+			ambientLeftAtStartup = append(ambientLeftAtStartup, fmt.Sprintf("%s=%q is still set", key, v))
+		}
+		if src := envFileSource(key); src != "" {
+			ambientLeftAtStartup = append(ambientLeftAtStartup, fmt.Sprintf("%s is still recorded as supplied by %s", key, src))
+		}
+	}
+	os.Exit(m.Run())
+}
+
+// The floor itself: nothing a developer's shell — or a stray project .env in this
+// directory — exported reaches a case, and a case that deliberately sets one of those
+// variables still sees its own value.
+func TestAmbientTargetingIsClearedBeforeTheSuiteRuns(t *testing.T) {
+	for _, left := range ambientLeftAtStartup {
+		t.Errorf("ambient state survived TestMain: %s", left)
+	}
+
+	t.Setenv(blocksAPIKeyEnv, "bk_set_by_this_case")
+	if got := os.Getenv(blocksAPIKeyEnv); got != "bk_set_by_this_case" {
+		t.Errorf("%s = %q; a case that sets one of these must still win", blocksAPIKeyEnv, got)
+	}
+}
+
+// resolveCLIContext runs the same context resolution the root command performs in
+// PersistentPreRun. Tests that call a helper directly — rather than driving the
+// whole command — must call this after seeding the profile store and the
+// environment, because the deployment origin, the credential and the enterprise
+// verdict are all resolved once per invocation and read from there.
+//
+// cmd names the command whose --api-key / --api-key-stdin flags apply; pass
+// rootCmd when the test exercises neither.
+func resolveCLIContext(t *testing.T, cmd *cobra.Command) {
+	t.Helper()
+	clictx.Reset()
+	clictx.Resolve(effectiveOverrides(cmd))
+	t.Cleanup(clictx.Reset)
+}
 
 // captureStdout redirects os.Stdout and returns whatever was printed.
 //
@@ -302,6 +388,32 @@ func TestInitCommandConsumerPythonNonInteractiveDescription(t *testing.T) {
 	}
 }
 
+// The two line-ending cases assert what the loader parsed rather than what it exported,
+// because the CLI's own process imports only the variables it consumes: an ordinary
+// application variable is recorded for the delegated agent instead of being set here.
+// See env_file_process_boundary_test.go for that boundary; these two are only about \r\n.
+func assertParsedFromEnvFile(t *testing.T, want map[string]string) {
+	t.Helper()
+	for key, value := range want {
+		canonical := canonicalEnvKey(key)
+		if _, ok := projectEnvValues[canonical]; !ok {
+			t.Errorf("%s was not parsed out of the file at all", key)
+			continue
+		}
+		if got := projectEnvValueFor(canonical); got != value {
+			t.Errorf("%s = %q, want %q", key, got, value)
+		}
+	}
+}
+
+// restoreEnvFileRecord puts back both halves of the loader's record, cloned rather than
+// aliased because the loader clears them in place.
+func restoreEnvFileRecord(t *testing.T) {
+	t.Helper()
+	priorKeys, priorValues := maps.Clone(envFileKeys), maps.Clone(projectEnvValues)
+	t.Cleanup(func() { envFileKeys, projectEnvValues = priorKeys, priorValues })
+}
+
 func TestLoadEnvFileCRLF(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
@@ -313,15 +425,11 @@ func TestLoadEnvFileCRLF(t *testing.T) {
 	os.Unsetenv("BAZ")
 	defer os.Unsetenv("FOO")
 	defer os.Unsetenv("BAZ")
+	restoreEnvFileRecord(t)
 
 	loadEnvFile(envPath)
 
-	if got := os.Getenv("FOO"); got != "bar" {
-		t.Errorf("FOO = %q, want %q", got, "bar")
-	}
-	if got := os.Getenv("BAZ"); got != "qux" {
-		t.Errorf("BAZ = %q, want %q", got, "qux")
-	}
+	assertParsedFromEnvFile(t, map[string]string{"FOO": "bar", "BAZ": "qux"})
 }
 
 func TestLoadEnvFileLF(t *testing.T) {
@@ -335,15 +443,11 @@ func TestLoadEnvFileLF(t *testing.T) {
 	os.Unsetenv("B")
 	defer os.Unsetenv("A")
 	defer os.Unsetenv("B")
+	restoreEnvFileRecord(t)
 
 	loadEnvFile(envPath)
 
-	if got := os.Getenv("A"); got != "1" {
-		t.Errorf("A = %q, want %q", got, "1")
-	}
-	if got := os.Getenv("B"); got != "2" {
-		t.Errorf("B = %q, want %q", got, "2")
-	}
+	assertParsedFromEnvFile(t, map[string]string{"A": "1", "B": "2"})
 }
 
 func TestLoadEnvFileSkipsExistingVars(t *testing.T) {
@@ -381,12 +485,122 @@ func TestInitCommandInvalidMode(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for unknown --mode value")
 		}
-		if !strings.Contains(err.Error(), "unsupported mode") {
-			t.Errorf("error = %q, want 'unsupported mode' wording", err.Error())
+		if !strings.Contains(err.Error(), "invalid --mode") {
+			t.Errorf("error = %q, want 'invalid --mode' wording", err.Error())
 		}
 	})
 
 	if _, err := os.Stat(filepath.Join(dir, "x")); err == nil {
 		t.Error("directory should not be created on invalid --mode")
+	}
+}
+
+// seedEnterpriseProfileForTest points the profile store at a temp
+// contexts.json holding one enterprise profile and resolves clictx from it.
+// It also takes a snapshot of process-wide state and restores it on cleanup
+// so tests using it are isolated from each other.
+//
+// baseURL overrides the profile's recorded deployment. A test that points the
+// command at a local server MUST pass that server's URL, or the profile records
+// one deployment while the request goes to another — and the context banner then
+// correctly refuses to describe the request in the profile's terms.
+func seedEnterpriseProfileForTest(t *testing.T, baseURL ...string) {
+	t.Helper()
+	deployment := "https://umbrella.blocks.ai"
+	if len(baseURL) > 0 && baseURL[0] != "" {
+		deployment = baseURL[0]
+	}
+	path := filepath.Join(t.TempDir(), "contexts.json")
+	if err := os.WriteFile(path, []byte(`{
+      "schema_version": 3,
+      "active": "umbrella.blocks.ai",
+      "profiles": {
+        "umbrella.blocks.ai": {
+          "base_url": "`+deployment+`",
+          "enterprise": true,
+          "product_name": "Umbrella Corporation",
+          "default_org_id": "org-1",
+          "orgs": {"org-1": {"org_name": "Engineering", "api_key": "bk_test"}}
+        }
+      }
+    }`), 0600); err != nil {
+		t.Fatalf("write contexts: %v", err)
+	}
+
+	// Clear any ambient API key so the profile's own cached key is the one the
+	// command sends. A key from the environment outranks the profile at request
+	// time, so leaving a developer's local .env in play would silently change what
+	// the command authenticates as. Tests that want an ambient key set it after
+	// this call.
+	t.Setenv(blocksAPIKeyEnv, "")
+
+	// Snapshot global state that tests might mutate
+	origContextsPathFunc := profiles.ContextsPathFunc
+	origRootProfile := rootProfile
+	// Note: stdinScanner, isInteractive, branding are already handled by specific tests
+
+	profiles.ContextsPathFunc = func() (string, error) { return path, nil }
+
+	t.Cleanup(func() {
+		profiles.ContextsPathFunc = origContextsPathFunc
+		rootProfile = origRootProfile
+		profiles.SetActiveOverride("")
+		clictx.Reset()
+	})
+
+	clictx.Resolve(nil)
+}
+
+// The writer and this loader are two halves of one rule, so they are tested as one: a
+// value written by `blocks login --write-env` has to reach the next command as the value
+// the deployment sent, whatever bytes it contained. The writer quotes anything that is
+// not plainly inert, and this is the read that has to take those quotes off — a
+// credential handed back with a quote still attached authenticates nowhere and explains
+// nothing.
+//
+// The cases are the values a deployment could hand the writer that mean something to a
+// shell or to a dotenv parser: the same list internal/auth proves inert under
+// `source .env`.
+func TestLoadEnvFileReadsBackTheValueTheWriterWrote(t *testing.T) {
+	for _, value := range []string{
+		"bk_live$(id)",
+		"bk_live`id`",
+		"bk_live; touch pwned",
+		"bk_live # still part of the key",
+		"bk_live with spaces",
+	} {
+		t.Run(value, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := auth.ApplyEnvAt(dir, auth.EnvMutation{Key: blocksAPIKeyEnv, Value: value}); err != nil {
+				t.Fatalf("ApplyEnvAt: %v", err)
+			}
+			t.Chdir(dir)
+			loadProjectEnv(t, blocksAPIKeyEnv)
+
+			if got := os.Getenv(blocksAPIKeyEnv); got != value {
+				written, _ := os.ReadFile(filepath.Join(dir, ".env"))
+				t.Errorf("%s = %q, want %q; the file was:\n%s", blocksAPIKeyEnv, got, value, string(written))
+			}
+		})
+	}
+}
+
+// A quoted value in a .env nobody here wrote is imported as the value inside the quotes,
+// because that is what the dotenv loaders in the scaffolded agents do with the same file.
+// A hand-quoted key used to reach the agent as the key and reach this CLI with its quotes
+// attached: one of the two authenticated and neither said why.
+func TestLoadEnvFileStripsQuotesTheAgentLoadersStrip(t *testing.T) {
+	dir := writeProjectEnv(t, t.TempDir(),
+		blocksAPIKeyEnv+"='bk_single'\n"+blocksBackendURLEnv+"=\"https://blocks.acme.example\"\n")
+	t.Chdir(dir)
+	loadProjectEnv(t, blocksAPIKeyEnv, blocksBackendURLEnv)
+
+	for _, tc := range []struct{ key, want string }{
+		{blocksAPIKeyEnv, "bk_single"},
+		{blocksBackendURLEnv, "https://blocks.acme.example"},
+	} {
+		if got := os.Getenv(tc.key); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.key, got, tc.want)
+		}
 	}
 }

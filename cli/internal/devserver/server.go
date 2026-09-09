@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 )
 
 const (
@@ -134,7 +136,7 @@ func (s *Server) serveDevScript(w http.ResponseWriter, r *http.Request) {
 	// `cdmUrl` plumbs the local backend's CDM endpoint to the widget so
 	// `TaskClient.create` resolves PubNub keysets and `api.baseUrl` from
 	// the local stack instead of the production CDM.
-	cdmURL := strings.TrimRight(s.backendBaseURL, "/") + "/api/v1/cdm"
+	cdmURL := cdm.EndpointFor(s.backendBaseURL)
 
 	payload := fmt.Sprintf(
 		"window.__BLOCKS_EMBED_DEV__ = {\n"+

@@ -83,6 +83,14 @@ func resolveAbs(cwd, p string) string {
 // append the deployed URL to each local agent-card.json's identity.webApps.
 // If a card is not reachable locally, prints a copy-pasteable snippet to
 // stderr instead. Idempotent — already-present URLs are not re-added.
+//
+// It reports nothing back to its caller, and that is the point: it runs after the
+// upload and after the config write, so every outcome it can reach — a card it could
+// not read, a schema cap, a question it may not ask under --no-input — describes the
+// card update, never the deployment. Handing any of them back as an error would make
+// `blocks deploy` exit nonzero on a deploy that completed, and automation that retries
+// on nonzero would upload again. Anything that could genuinely fail the command has to
+// be settled before the upload; parseCardPathFlags is, in runDeploy.
 func maybeUpdateLocalAgentCards(cfg *config.BlocksConfig, deployedURL string, overrides map[string]string, stdin io.Reader, stdout io.Writer, stderr io.Writer) {
 	// Validate the URL with the same rule the backend enforces on
 	// identity.webApps[].url before writing it into any card. A plugin /
@@ -131,6 +139,15 @@ func maybeUpdateLocalAgentCards(cfg *config.BlocksConfig, deployedURL string, ov
 			fmt.Fprintf(stderr, "Warning: skipping card update for %s — identity.webApps already has %d entries (the maximum). Remove an entry or add %s manually.\n", agent, maxWebApps, deployedURL)
 			continue
 		}
+		// Reached only where a prompt was really about to be printed: an agent whose
+		// card is not local, already carries the URL, or is at the schema cap asks
+		// nothing. Under --no-input the question cannot be asked, so the card is left
+		// alone and the skip is stated — not returned. The deploy is finished and its
+		// exit code has to say so.
+		if noInputMode {
+			printCardUpdateNotAsked(stderr, agent, deployedURL, projectLabel)
+			continue
+		}
 		fmt.Fprintf(stdout, "Add %s to identity.webApps of %s's card? [Y/n] ", deployedURL, agent)
 		line, readErr := reader.ReadString('\n')
 		ans := strings.TrimSpace(strings.ToLower(line))
@@ -156,16 +173,38 @@ func maybeUpdateLocalAgentCards(cfg *config.BlocksConfig, deployedURL string, ov
 			fmt.Fprintf(stderr, "Warning: write %s: %v\n", path, err)
 			continue
 		}
-		fmt.Fprintf(stdout, "Updated %s — re-run 'blocks publish' from %s/ to push the change.\n", path, agent)
+		// The file that changed is reported, and the command that pushes it carries
+		// nothing but itself. The path and the agent name both arrive from
+		// blocks.config.json and the working directory, so interpolating either into a
+		// line the user is invited to copy hands a hostile project extra shell words —
+		// `;`, `&&`, backticks and $(...) are ordinary printable characters that no
+		// display-escaping helper is going to neutralise.
+		fmt.Fprintf(stdout, "Updated %s\n", path)
+		fmt.Fprintf(stdout, "  To push the change, run: blocks publish  # from that agent's directory\n")
 	}
 }
 
 func printCardSnippet(w io.Writer, agent, url, label string) {
+	fmt.Fprintf(w, "The agent '%s' card was not found locally. Ask the owner to add this entry to identity.webApps:\n\n", agent)
+	printWebAppEntry(w, url, label)
+}
+
+// printCardUpdateNotAsked reports a card the CLI would have asked about and could not,
+// because --no-input withdrew the question. It is a note rather than a failure: the
+// upload and the config write are already done, so the only honest thing left to do is
+// say what was skipped and how to say so deliberately next time.
+func printCardUpdateNotAsked(w io.Writer, agent, url, label string) {
 	fmt.Fprintf(w,
-		"The agent '%s' card was not found locally. Ask the owner to add this entry to identity.webApps:\n\n"+
-			"  {\n    \"url\": \"%s\",\n    \"label\": \"%s\"\n  }\n\n",
-		agent, url, label,
-	)
+		"Note: the deploy is complete, but %s's agent card was NOT updated — --no-input withdrew the confirmation.\n"+
+			"  Pass --no-card-update to state that intent and silence this note. To add the entry by hand:\n\n",
+		agent)
+	printWebAppEntry(w, url, label)
+}
+
+// printWebAppEntry renders the identity.webApps entry a card is missing. Both notes
+// that print one share it so the two cannot describe the entry differently.
+func printWebAppEntry(w io.Writer, url, label string) {
+	fmt.Fprintf(w, "  {\n    \"url\": %q,\n    \"label\": %q\n  }\n\n", url, label)
 }
 
 // cardContainsWebApp returns whether identity.webApps already contains url

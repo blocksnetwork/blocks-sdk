@@ -24,6 +24,30 @@ type Config struct {
 	DashboardBaseURL string `json:"dashboardBaseUrl"`
 }
 
+// HTTPStatusError represents an HTTP error response from the cli-config endpoint.
+// This allows error classification in cmd/login.go for better user messages.
+type HTTPStatusError struct {
+	StatusCode int
+}
+
+func (e HTTPStatusError) Error() string {
+	return fmt.Sprintf("cli-config fetch failed: HTTP %d", e.StatusCode)
+}
+
+// DecodeError represents a JSON decode error from the cli-config endpoint.
+// This allows error classification in cmd/login.go for better user messages.
+type DecodeError struct {
+	Err error
+}
+
+func (e DecodeError) Error() string {
+	return fmt.Sprintf("cli-config parse failed: %v", e.Err)
+}
+
+func (e DecodeError) Unwrap() error {
+	return e.Err
+}
+
 var client = &http.Client{
 	Timeout: 10 * time.Second,
 	// Mirror cdm.go: disable HTTP/2 (h2 hangs on some Windows TLS stacks).
@@ -51,11 +75,11 @@ func Fetch(baseURL string) (*Config, error) {
 		return &Config{}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("cli-config fetch failed: HTTP %d", resp.StatusCode)
+		return nil, HTTPStatusError{StatusCode: resp.StatusCode}
 	}
 	var cfg Config
 	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("cli-config parse failed: %w", err)
+		return nil, DecodeError{Err: err}
 	}
 	return &cfg, nil
 }

@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/branding"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 )
 
@@ -135,5 +138,157 @@ func TestLogoutReportsFailureWhenProfileStoreUnreadable(t *testing.T) {
 
 	if err := runLogout(logoutCmd, nil); err == nil {
 		t.Fatal("expected logout to return an error when the profile store is unreadable")
+	}
+}
+
+func TestLogoutNamesPreservedDeployment(t *testing.T) {
+	seedEnterpriseProfileForTest(t)
+	isolateLogoutSideEffects(t)
+	branding.Set("Umbrella Corporation")
+	t.Cleanup(func() { branding.Reset() })
+	out := captureStdout(func() {
+		if err := runBlocksLogout(); err != nil {
+			t.Fatalf("runBlocksLogout: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Logged out of Umbrella Corporation") {
+		t.Errorf("should name the product:\n%s", out)
+	}
+	if !strings.Contains(out, "umbrella.blocks.ai") {
+		t.Errorf("should name the preserved profile:\n%s", out)
+	}
+	if !strings.Contains(out, "blocks profile remove") {
+		t.Errorf("should say how to forget it:\n%s", out)
+	}
+}
+
+func TestLogoutDefaultProfileOmitsRemovalHint(t *testing.T) {
+	withTempProfiles(t)
+	isolateLogoutSideEffects(t)
+	orgKeys := map[string]profiles.OrgKey{"org-1": {OrgName: "Org 1", ApiKey: "bk_default"}}
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{DefaultOrgID: "org-1", Orgs: orgKeys}, true); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	out := captureStdout(func() {
+		if err := runBlocksLogout(); err != nil {
+			t.Fatalf("runBlocksLogout: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Logged out of") {
+		t.Errorf("should print logout message:\n%s", out)
+	}
+	if strings.Contains(out, "blocks profile remove") {
+		t.Errorf("should NOT suggest removing default profile:\n%s", out)
+	}
+	if strings.Contains(out, "Deployment kept") {
+		t.Errorf("should NOT print deployment-kept message for default profile:\n%s", out)
+	}
+}
+
+// Logout clears the credentials stored in a profile and sends no request, so an
+// ambient backend URL pointing requests elsewhere must not change what it names:
+// the profile — and its brand — is what the sentence is about.
+func TestLogoutNamesTheProfileEvenWhenRequestsWouldGoElsewhere(t *testing.T) {
+	seedEnterpriseProfileForTest(t)
+	isolateLogoutSideEffects(t)
+	t.Setenv("BLOCKS_BACKEND_URL", "http://127.0.0.1:8899")
+	t.Setenv("BLOCKS_API_KEY", "bk_elsewhere")
+	resolveCLIContext(t, logoutCmd)
+	branding.Set("Umbrella Corporation")
+	t.Cleanup(branding.Reset)
+
+	out := captureStdout(func() {
+		if err := runBlocksLogout(); err != nil {
+			t.Fatalf("runBlocksLogout: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "Logged out of Umbrella Corporation") {
+		t.Errorf("logout should name the profile it cleared:\n%s", out)
+	}
+	if strings.Contains(out, "127.0.0.1:8899") {
+		t.Errorf("logout must not name a deployment it did not touch:\n%s", out)
+	}
+}
+
+// A profile name is attacker-influenceable: it is derived from the host of whatever
+// deployment a login reached, and that host can come from a project .env or from the
+// deployment's own discovery response. The logout summary knows the name and has to
+// report it, but a line the CLI formats as something to run may not be built from it —
+// a line presented as a command is a line that gets pasted into a shell, and
+// termsafe.Text does not help there: `;`, `&&`, backticks and $(...) pass through it as
+// the ordinary printable characters they are.
+//
+// The scan reuses commandLines, this package's one definition of "reads as something to
+// run", so a summary that starts wording its remedy differently in future is covered by
+// this case rather than by a report.
+func TestTheLogoutSummaryOffersNoPastableCommandBuiltFromTheProfile(t *testing.T) {
+	restoreCLIState(t)
+	defer isolateProfiles(t)()
+	isolateAmbientState(t)
+
+	seedProfile(t, injectedProfileName, profiles.Profile{
+		BaseURL:    injectedProfileBaseURL,
+		Enterprise: true,
+		Orgs:       map[string]profiles.OrgKey{},
+	})
+	resolveCLIContext(t, logoutCmd)
+
+	out := captureStdout(printLogoutSummary)
+
+	assertNoInjectedValueInCommandLines(t, out, injectedProfileName, injectedProfileBaseURL)
+	// The name is still reported — a kept deployment the user cannot identify is not
+	// something they can act on — and the removal is still offered.
+	if !strings.Contains(out, injectedProfileName) {
+		t.Errorf("the summary must still name the profile it kept:\n%s", out)
+	}
+	if !strings.Contains(out, "blocks profile remove") {
+		t.Errorf("the remedy must still name the command that forgets the deployment:\n%s", out)
+	}
+}
+
+// A surviving legacy credential is a failed logout. The legacy file is the last tier the
+// resolver consults, so a `blocks` entry left in it keeps the very next command
+// authenticated — which is exactly why a surviving profile key or `.env` key fails the
+// command. This used to warn on a delete failure and skip silently when the path could
+// not be resolved, so `logout` printed "Logged out." over a credential still on disk.
+func TestLogoutFailsWhenTheLegacyCredentialCannotBeRemoved(t *testing.T) {
+	restoreCLIState(t)
+	defer isolateProfiles(t)()
+	isolateAmbientState(t)
+
+	// A credential path that cannot be resolved at all: previously skipped in silence.
+	orig := auth.CredentialPathFunc
+	t.Cleanup(func() { auth.CredentialPathFunc = orig })
+	boom := errors.New("no home directory")
+	auth.CredentialPathFunc = func() (string, error) { return "", boom }
+
+	err := runBlocksLogout()
+	if err == nil {
+		t.Fatal("an unresolvable legacy credential store must fail the logout")
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("the cause must be wrapped so the user can act on it, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "logout incomplete") {
+		t.Errorf("the failure must say the logout did not complete, got %v", err)
+	}
+}
+
+// The complement: no legacy file at all is the ordinary case and must stay a success,
+// or every install without one would fail to log out.
+func TestLogoutSucceedsWhenThereIsNoLegacyCredentialFile(t *testing.T) {
+	restoreCLIState(t)
+	defer isolateProfiles(t)()
+	isolateAmbientState(t)
+
+	orig := auth.CredentialPathFunc
+	t.Cleanup(func() { auth.CredentialPathFunc = orig })
+	auth.CredentialPathFunc = func() (string, error) {
+		return filepath.Join(t.TempDir(), "credentials.json"), nil
+	}
+
+	if err := runBlocksLogout(); err != nil {
+		t.Fatalf("a missing legacy store is not a failure: %v", err)
 	}
 }

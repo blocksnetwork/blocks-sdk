@@ -123,3 +123,19 @@ In all cases, publish a new patch version as the primary remediation.
 | `PYPI_TOKEN`           | Python PyPI        |
 | `BLOCKS_BACKEND_URL`   | CLI builds         |
 | `BLOCKS_CLI_CLIENT_ID` | CLI builds         |
+
+## Variables (non-secret)
+
+Repository variables are optional — each has a shipped default, so a
+release built with none of them set is still correct.
+
+| Variable                 | Used by    | Controls                                                                                 | Default     |
+| ------------------------ | ---------- | ---------------------------------------------------------------------------------------- | ----------- |
+| `BLOCKS_INSTANCE_DOMAIN` | CLI builds | DNS suffix for short-name expansion: `blocks login acme` targets `https://acme.<domain>` | `blocks.ai` |
+
+`BLOCKS_INSTANCE_DOMAIN` must never resolve to an empty string — an empty
+domain would expand `blocks login acme` to the unusable `https://acme.`.
+Both CLI build paths are written so that an unset *or* empty value falls
+back to the default: `cli/.goreleaser.yaml` wraps the lookup in a
+`with`/`else` block, and the npm workflow appends the ldflag only when the
+value is non-empty. `cli/tests/goreleaser_test.sh` asserts this.

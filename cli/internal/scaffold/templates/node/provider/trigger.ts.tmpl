@@ -7,6 +7,8 @@ import type { ProgressEvent, ArtifactEvent, TerminalEvent } from '@blocks-networ
  * Usage: npx tsx trigger.ts
  */
 async function main() {
+  // billingMode selects the PubNub keyset for this deployment — a protocol
+  // detail, not a pricing choice. Leave it as 'free'.
   const client = await TaskClient.create({
     billingMode: 'free',
     apiKey: process.env.BLOCKS_API_KEY!,

@@ -43,6 +43,10 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.version }}
           BLOCKS_BACKEND_URL: ${{ secrets.BLOCKS_BACKEND_URL }}
           BLOCKS_CLI_CLIENT_ID: ${{ secrets.BLOCKS_CLI_CLIENT_ID }}
+          # Public, non-secret DNS suffix for short-name expansion
+          # (`blocks login acme` -> https://acme.<domain>). Falls back to the
+          # shipped default when the repository variable is unset or empty.
+          BLOCKS_INSTANCE_DOMAIN: ${{ vars.BLOCKS_INSTANCE_DOMAIN || 'blocks.ai' }}
 
       - name: Create GitHub Release
         run: |

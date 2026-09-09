@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/spf13/pflag"
 )
 
@@ -34,8 +35,8 @@ func TestRegisterPayloadPrivateFree(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		json.Unmarshal(body, &received)
-		w.WriteHeader(200)
-		w.Write([]byte(`{"status":"ok"}`))
+		w.WriteHeader(http.StatusCreated)
+		w.Write(registeredResponseBody(r.URL.Query().Get("agentName")))
 	}))
 	defer ts.Close()
 
@@ -283,5 +284,72 @@ func TestRegisterNoCredentialsFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not authenticated") {
 		t.Errorf("error should mention 'not authenticated', got: %s", err.Error())
+	}
+}
+
+func TestRegisterPrintsContextBanner(t *testing.T) {
+	seedEnterpriseProfileForTest(t) // sets up enterprise profile for context banner test
+	out := captureStdout(func() {
+		clictx.PrintBanner()
+	})
+	if !strings.Contains(out, "[umbrella.blocks.ai / Engineering]") {
+		t.Fatalf("banner missing from output:\n%s", out)
+	}
+}
+
+func TestBannerSilentWithoutResolvedOrg(t *testing.T) {
+	clictx.Reset()
+	out := captureStdout(func() {
+		clictx.PrintBanner()
+	})
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected no banner, got %q", out)
+	}
+}
+
+func TestRegisterCallsBannerFunction(t *testing.T) {
+	// This test proves that the register command path calls clictx.PrintBanner().
+	// Seeds enterprise context so the banner is non-empty, then verifies the
+	// banner appears in the command output.
+
+	cleanup := setupFakeCredentials(t)
+	defer cleanup()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer ts.Close()
+
+	dir := writeValidProject(t)
+	cardPath := filepath.Join(dir, "agent-card.json")
+	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+	oldDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldDir)
+
+	resetRegisterFlags()
+
+	// Set up enterprise profile context AFTER environment is configured
+	// but BEFORE calling Execute so PersistentPreRun sees it
+	// The profile must record the deployment the command is pointed at, so the
+	// context banner describes the request rather than refusing to.
+	seedEnterpriseProfileForTest(t, ts.URL)
+
+	output := captureStdout(func() {
+		rootCmd.SetArgs([]string{"register", cardPath})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("register failed: %v", err)
+		}
+	})
+
+	// Verify both that the banner appears (proving PrintBanner() is called)
+	// and that the command succeeds
+	if !strings.Contains(output, "[umbrella.blocks.ai / Engineering]") {
+		t.Fatalf("register command should print banner when enterprise context is available, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Congratulations!") {
+		t.Fatalf("register command should succeed, got:\n%s", output)
 	}
 }

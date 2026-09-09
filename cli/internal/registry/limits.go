@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 type PricingLimits struct {
@@ -59,25 +61,44 @@ func FetchPricingLimits(backendURL string) PricingLimits {
 		return DefaultPricingLimits()
 	}
 
-	limits := DefaultPricingLimits()
-	if wire.MinPricePerTask != "" {
-		limits.MinPricePerTask = wire.MinPricePerTask
+	limits, ok := wire.limits()
+	if !ok {
+		return DefaultPricingLimits()
 	}
-	if wire.MinPricePerMinute != "" {
-		limits.MinPricePerMinute = wire.MinPricePerMinute
-	}
-	if wire.MaxPricePerTask != "" {
-		limits.MaxPricePerTask = wire.MaxPricePerTask
-	}
-	if wire.MaxPricePerMinute != "" {
-		limits.MaxPricePerMinute = wire.MaxPricePerMinute
-	}
-	if wire.MaxFreeTasksAllowed != nil {
-		limits.MaxFreeTasksAllowed = *wire.MaxFreeTasksAllowed
-	}
-	if wire.MaxFreeMinutesAllowed != nil {
-		limits.MaxFreeMinutesAllowed = *wire.MaxFreeMinutesAllowed
-	}
-
 	return limits
+}
+
+// limits converts a decoded response into bounds, or reports that it cannot.
+//
+// It is all-or-nothing on purpose. The previous overlay applied each field only when
+// present, so a response carrying three of the six left the other three at this build's
+// compiled-in defaults — bounds from two different sources, presented to the user as one
+// deployment's pricing rules, with no way to tell which came from where. The response
+// schema makes all six required, so a body missing any of them is not this endpoint's
+// answer and the honest reading is to use none of it.
+//
+// The four prices are also checked as decimals rather than trusted as strings. They are
+// compared against a typed price later, so an unparseable bound would not be rejected
+// there — it would silently fail to constrain, which is the direction that matters for a
+// value the deployment supplies.
+func (w pricingLimitsWire) limits() (PricingLimits, bool) {
+	if w.MaxFreeTasksAllowed == nil || w.MaxFreeMinutesAllowed == nil {
+		return PricingLimits{}, false
+	}
+	for _, price := range []string{w.MinPricePerTask, w.MinPricePerMinute, w.MaxPricePerTask, w.MaxPricePerMinute} {
+		if price == "" {
+			return PricingLimits{}, false
+		}
+		if _, err := decimal.NewFromString(price); err != nil {
+			return PricingLimits{}, false
+		}
+	}
+	return PricingLimits{
+		MinPricePerTask:       w.MinPricePerTask,
+		MinPricePerMinute:     w.MinPricePerMinute,
+		MaxPricePerTask:       w.MaxPricePerTask,
+		MaxPricePerMinute:     w.MaxPricePerMinute,
+		MaxFreeTasksAllowed:   *w.MaxFreeTasksAllowed,
+		MaxFreeMinutesAllowed: *w.MaxFreeMinutesAllowed,
+	}, true
 }

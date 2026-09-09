@@ -12,9 +12,32 @@ import (
 	"strings"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/branding"
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 )
 
 var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// agentNameFlagHint and webappNameFlagHint name the argument that supplies each
+// project name without a terminal. They are the answer to "how do I run this in
+// a script?", so they are phrased as the command a caller can copy.
+const (
+	agentNameFlagHint  = "the name as the first argument (blocks init <name>)"
+	webappNameFlagHint = "the name as the first argument (blocks init <name> --mode webapp --agent <agent>)"
+)
+
+// helpAgentNameText is the agent-name prompt help. Like helpDisplayNameText it
+// reads the active product name and deployment kind at call time so an
+// enterprise deployment describes reachability on that deployment rather than a
+// marketplace of consumers.
+func helpAgentNameText() string {
+	text := "  A unique identifier for your agent on " + branding.ProductName() + ".\n" +
+		"  Must contain only letters, numbers, and underscores (e.g. my_weather_agent).\n" +
+		"  This becomes the agentName in your agent-card.json and is how other agents\n"
+	if clictx.Enterprise() {
+		return text + "  reach yours on this deployment."
+	}
+	return text + "  and consumers find yours."
+}
 
 // helpDisplayNameText is the display-name prompt help. It reads the active
 // product name at call time so enterprise deployments brand it correctly.
@@ -80,11 +103,11 @@ const (
 
 // Config holds all wizard answers needed to scaffold a project.
 type Config struct {
-	Name              string   // machine identifier (agentName)
-	DisplayName       string   // human-readable display name
+	Name              string // machine identifier (agentName)
+	DisplayName       string // human-readable display name
 	Description       string
-	Language          string   // "node" or "python"
-	Mode              string   // "provider" (default) | "consumer" | "webapp"
+	Language          string // "node" or "python"
+	Mode              string // "provider" (default) | "consumer" | "webapp"
 	Concurrency       int
 	ExpectedInstances int
 	Streaming         bool
@@ -119,6 +142,38 @@ func ValidateProjectName(name string) error {
 	return nil
 }
 
+// modeAliases maps every accepted --mode spelling to its canonical value.
+// The canonical values are "provider" and "consumer": they select the template
+// directory, are validated by internal/scaffold, and are written into
+// scaffolded projects. The connect-agent / call-agent spellings exist because
+// "provider" and "consumer" are marketplace terms that mean nothing inside an
+// enterprise deployment. Aliases are accepted on every profile so a CI script
+// is never sensitive to which profile is active.
+var modeAliases = map[string]string{
+	"provider":      "provider",
+	"consumer":      "consumer",
+	"connect-agent": "provider",
+	"call-agent":    "consumer",
+}
+
+// NormalizeMode resolves any accepted --mode spelling to its canonical value.
+// ok is false for unrecognized input, including "webapp" (a project kind, not
+// a mode) and the empty string.
+func NormalizeMode(raw string) (string, bool) {
+	canonical, ok := modeAliases[strings.ToLower(strings.TrimSpace(raw))]
+	return canonical, ok
+}
+
+// modeLabels returns the display labels for the Mode prompt. Enterprise
+// deployments have no marketplace, so Provider/Consumer is replaced by wording
+// that describes what the user is doing.
+func modeLabels(enterprise bool) []string {
+	if enterprise {
+		return []string{"Connect agent", "Call agent"}
+	}
+	return []string{"Provider", "Consumer"}
+}
+
 // DefaultConfig returns the default non-interactive configuration.
 // DisplayName defaults to the agentName (Name).
 func DefaultConfig(name string) Config {
@@ -151,47 +206,28 @@ func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config,
 		}
 		cfg.Name = nameFromArgs
 	} else {
-		for {
-			fmt.Print("Agent name (letters, numbers, underscores, ? for help): ")
-			line, err := r.ReadString('\n')
-			if err != nil {
-				if err == io.EOF {
-					return cfg, fmt.Errorf("name is required")
-				}
-				return cfg, err
-			}
-			name := strings.TrimSpace(line)
-			if name == "?" {
-				fmt.Println("  A unique identifier for your agent on " + branding.ProductName() + ".")
-				fmt.Println("  Must contain only letters, numbers, and underscores (e.g. my_weather_agent).")
-				fmt.Println("  This becomes the agentName in your agent-card.json and is how other agents")
-				fmt.Println("  and consumers find yours.")
-				fmt.Println()
-				continue
-			}
-			if name == "" {
-				fmt.Println("  Name is required.")
-				continue
-			}
-			if err := ValidateAgentName(name); err != nil {
-				fmt.Printf("  Invalid: %v\n", err)
-				continue
-			}
-			cfg.Name = name
-			break
+		name, err := readRequiredLine(r, "Agent name (letters, numbers, underscores)", agentNameFlagHint, helpAgentNameText(), ValidateAgentName)
+		if err != nil {
+			return cfg, err
 		}
+		cfg.Name = name
 	}
 
 	// Mode (provider or consumer). Skip prompt if --mode flag was passed.
+	labels := modeLabels(clictx.Enterprise())
 	if modeFromFlag != "" {
-		cfg.Mode = modeFromFlag
-		displayMode := "Provider"
-		if modeFromFlag == "consumer" {
-			displayMode = "Consumer"
+		canonical, ok := NormalizeMode(modeFromFlag)
+		if !ok {
+			return cfg, fmt.Errorf("invalid mode %q — must be one of: provider, consumer, connect-agent, call-agent", modeFromFlag)
 		}
-		fmt.Printf("+ Mode: %s\n", displayMode)
+		cfg.Mode = canonical
+		display := labels[0]
+		if canonical == "consumer" {
+			display = labels[1]
+		}
+		fmt.Printf("+ Mode: %s\n", display)
 	} else {
-		modeIdx, err := InteractiveSelect("Mode", []string{"Provider", "Consumer"}, 0, helpType)
+		modeIdx, err := InteractiveSelect("Mode", labels, 0, helpType)
 		if err != nil {
 			return cfg, err
 		}
@@ -308,22 +344,16 @@ func SelectProjectKind() (int, error) {
 // loop runs under a single raw-mode session so only one goroutine ever reads
 // stdin. When stdin is not a terminal, the agent loop falls back to plain line
 // prompts (no live suggestions).
+//
+// The name prompt is unconditional and gated, so under --no-input this function
+// refuses before the raw-mode reader is ever started — the agent loop's own
+// keypress reads need no separate gate.
 func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
 	r := bufio.NewReader(os.Stdin)
 
-	var name string
-	for {
-		n, err := readLine(r, "Web app name", "", helpWebappName)
-		if err != nil {
-			return Config{}, err
-		}
-		n = strings.TrimSpace(n)
-		if err := ValidateProjectName(n); err != nil {
-			fmt.Printf("  Invalid: %v\n", err)
-			continue
-		}
-		name = n
-		break
+	name, err := readRequiredLine(r, "Web app name", webappNameFlagHint, helpWebappName, ValidateProjectName)
+	if err != nil {
+		return Config{}, err
 	}
 
 	ri, ok := newRawInput()
@@ -433,6 +463,9 @@ func modeFromIndex(idx int) string {
 }
 
 func readLine(r *bufio.Reader, prompt string, defaultVal string, helpText string) (string, error) {
+	if noInputMode {
+		return "", fmt.Errorf("cannot ask %q with --no-input", prompt)
+	}
 	for {
 		if defaultVal != "" {
 			fmt.Printf("%s [%s] (? for help): ", prompt, defaultVal)
@@ -460,6 +493,9 @@ func readLine(r *bufio.Reader, prompt string, defaultVal string, helpText string
 }
 
 func readInt(r *bufio.Reader, prompt string, defaultVal int, min int, helpText string) (int, error) {
+	if noInputMode {
+		return 0, fmt.Errorf("cannot ask %q with --no-input", prompt)
+	}
 	for {
 		fmt.Printf("%s [%d] (? for help): ", prompt, defaultVal)
 		line, err := r.ReadString('\n')
@@ -488,6 +524,9 @@ func readInt(r *bufio.Reader, prompt string, defaultVal int, min int, helpText s
 }
 
 func readConfirm(r *bufio.Reader, prompt string, defaultYes bool, helpText string) (bool, error) {
+	if noInputMode {
+		return false, fmt.Errorf("cannot ask %q with --no-input", prompt)
+	}
 	hint := "Y/n"
 	if !defaultYes {
 		hint = "y/N"

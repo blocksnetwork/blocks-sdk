@@ -163,7 +163,7 @@ validation.
 #### Added
 - `blocks register` command — register an agent privately and free in one step, with no visibility or pricing prompts. The recommended first step for getting an agent onto the Blocks Network; run `blocks publish` later when you want to make it public or set pricing (and to promote an already-registered agent).
 - Private agent invitations and grants — invite collaborators to private agents
-- `blocks delete` command for removing agent registrations
+- `blocks unregister` command for removing agent registrations
 - `blocks login --no-write-env` flag to opt out of writing `BLOCKS_API_KEY` to `.env` without seeing the interactive prompt. Use this in non-interactive sessions where a TTY is attached but no human is available to answer the prompt.
 - `blocks init --mode webapp --backend-url <url>` to explicitly set the backend API origin the deployed page calls.
 

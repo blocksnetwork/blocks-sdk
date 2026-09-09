@@ -73,9 +73,11 @@ func TestValidateWebAppURL_ErrorMessages(t *testing.T) {
 	}{
 		{"https://example.com:99999", "1-65535"},
 		{"https://%zz", "invalid percent-encoding"},
-		// Malformed IPv6 literals are caught by Go's url.Parse itself
-		// (netip rejects them with "invalid host"). No custom validator
-		// runs at this layer; the parser is sufficient.
+		// Malformed IPv6 literals are refused, but which layer refuses them depends on the
+		// Go patch level: 1.24.0 parses `https://[x]` cleanly and the bracketed-host rule in
+		// ValidateWebAppURL catches it; later 1.24.x reject it inside url.Parse. Both messages
+		// contain "invalid host", which is why this expectation holds on either — the custom
+		// rule is not redundant, it is what covers the older patch levels.
 		{"https://[gggg::1]", "invalid host"},
 		{"https://[x]", "invalid host"},
 		{"http://example.com", "loopback"},
