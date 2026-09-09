@@ -11,8 +11,10 @@ package profiles
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
@@ -126,7 +128,14 @@ func ensureDefault(c *Contexts) {
 	if _, ok := c.Profiles[DefaultProfile]; !ok {
 		c.Profiles[DefaultProfile] = Profile{Orgs: map[string]OrgKey{}}
 	}
-	if c.Active == "" {
+	// A persisted active name that no longer resolves is repaired to the default rather
+	// than left standing. `blocks profile remove` cannot leave one behind — it refuses to
+	// remove the default and rewrites Active — but a hand-edited store, a partial write, or
+	// a store from a build that named profiles differently can. Left alone, Active() returns
+	// an error, every consumer of the resolved context discards it as "no profile", and the
+	// invocation quietly falls through to the ambient URL, the legacy store or a CDM default
+	// — acting on a deployment nobody selected. Self-healing keeps that from being silent.
+	if _, ok := c.Profiles[c.Active]; c.Active == "" || !ok {
 		c.Active = DefaultProfile
 	}
 }
@@ -270,6 +279,51 @@ func Rename(oldName, newName string) error {
 		c.Active = newName
 	}
 	return Save(c)
+}
+
+// SameBaseURL reports whether two base URLs address the same deployment. It is
+// the single definition of "same deployment" for callers that must decide
+// whether a profile still describes the backend being called. Either side being
+// unparseable, or empty, means "not the same".
+func SameBaseURL(a, b string) bool {
+	na := NormalizeBaseURL(a)
+	return na != "" && na == NormalizeBaseURL(b)
+}
+
+// NormalizeBaseURL parses raw into a comparable "scheme://host[:port][/path]"
+// base URL: scheme/host lowercased, the scheme's default port (443 for https, 80
+// for http) dropped, and any trailing slash on the path trimmed. The path is
+// retained because the CLI uses a base URL as a full request prefix
+// (`BaseURL + "/api/v1/..."`), so path-prefixed multi-tenant deployments on one
+// host are distinct. Returns "" when raw has no parseable host.
+func NormalizeBaseURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return scheme + "://" + host + strings.TrimRight(u.EscapedPath(), "/")
+}
+
+// RecordsCompletedLogin reports whether this profile holds evidence that a login
+// finished against the deployment it describes: an organization recorded as its default,
+// or any cached organization key. Both are written together when a login succeeds.
+//
+// A profile merely existing is not that evidence. ensureDefault materializes an empty
+// DefaultProfile on first run, so the stock Blocks Network profile is present before
+// anyone has logged in — and because empty BaseURL is how "resolve via CDM" is recorded,
+// neither its existence nor its origin distinguishes "not logged in yet" from "logged in
+// to Blocks Network". The cached organization is what separates them.
+func (p *Profile) RecordsCompletedLogin() bool {
+	return p.DefaultOrgID != "" || len(p.Orgs) > 0
 }
 
 // DefaultOrgKey returns the active-org key for a profile (its DefaultOrgID, else

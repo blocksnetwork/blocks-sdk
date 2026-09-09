@@ -46,6 +46,14 @@ jobs:
           LDFLAGS="${LDFLAGS} -X github.com/pubnub/blocks-sdk/cli/cmd.defaultBackendURL=${BLOCKS_BACKEND_URL}"
           LDFLAGS="${LDFLAGS} -X github.com/pubnub/blocks-sdk/cli/cmd.defaultCliClientID=${BLOCKS_CLI_CLIENT_ID}"
 
+          # Optional override, appended only when non-empty so an unset or
+          # empty variable keeps the compiled default (blocks.ai) instead of
+          # shipping an empty domain that would expand `blocks login acme` to
+          # `https://acme.`.
+          if [ -n "${BLOCKS_INSTANCE_DOMAIN}" ]; then
+            LDFLAGS="${LDFLAGS} -X github.com/pubnub/blocks-sdk/cli/cmd.defaultInstanceDomain=${BLOCKS_INSTANCE_DOMAIN}"
+          fi
+
           mkdir -p dist
 
           for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 freebsd/arm64 freebsd/amd64 windows/amd64; do
@@ -61,6 +69,7 @@ jobs:
         env:
           BLOCKS_BACKEND_URL: ${{ secrets.BLOCKS_BACKEND_URL }}
           BLOCKS_CLI_CLIENT_ID: ${{ secrets.BLOCKS_CLI_CLIENT_ID }}
+          BLOCKS_INSTANCE_DOMAIN: ${{ vars.BLOCKS_INSTANCE_DOMAIN }}
 
       - name: Package npm platform packages
         working-directory: cli

@@ -87,6 +87,52 @@ credentialFlow: none
 	}
 }
 
+// TestLoadPlugins_CommandCannotReadCLIStdin pins the invariant that makes the
+// plugin protocol a one-way channel: buildPluginUpload gives the subprocess no
+// stdin, so a plugin command cannot consume the bytes a user typed for the CLI —
+// and readLastNonEmptyLine, which parses that subprocess's stdout, is not a user
+// prompt and has nothing to do with --no-input. Wiring os.Stdin through would let
+// a plugin swallow (or impersonate) a CLI prompt; this test fails if that happens.
+func TestLoadPlugins_CommandCannotReadCLIStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("plugin tests use /bin/sh; skip on Windows")
+	}
+	Reset()
+
+	// Hand the CLI a stdin that holds a line, then assert the plugin never sees it.
+	f, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("secret-line\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	origStdin := os.Stdin
+	os.Stdin = f
+	t.Cleanup(func() { os.Stdin = origStdin; f.Close() })
+
+	dir := t.TempDir()
+	writePluginYAML(t, dir, "stdinprobe.yml", `
+name: stdinprobe
+command: ["/bin/sh", "-c", "read line; echo \"https://example.com/${line:-none}\""]
+credentialFlow: none
+`)
+	if err := LoadPlugins(dir); err != nil {
+		t.Fatalf("LoadPlugins: %v", err)
+	}
+	a, _ := Resolve("stdinprobe")
+	url, err := a.Upload(context.Background(), &auth.ProviderCredentials{}, t.TempDir())
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if url != "https://example.com/none" {
+		t.Errorf("plugin read %q from the CLI's stdin; it must get no stdin at all", url)
+	}
+}
+
 // TestLoadPlugins_UnknownProtocolRejected ensures forward-compatibility: a
 // future protocolVersion the CLI doesn't understand surfaces a clear error.
 func TestLoadPlugins_UnknownProtocolRejected(t *testing.T) {

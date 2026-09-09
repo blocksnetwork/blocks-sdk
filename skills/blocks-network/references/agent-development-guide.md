@@ -65,22 +65,85 @@ they can run it against the backend.
 ### Step 3: Authenticate
 
 ```bash
-blocks login --write-env
+blocks login --network --write-env
 ```
 
 This opens browser-based OAuth, stores credentials, and writes
 `BLOCKS_API_KEY` to the project `.env`. Use `--dir <path>` to target a
-different directory (e.g. `blocks login --write-env --dir ./my_agent`).
+different directory (e.g. `blocks login --network --write-env --dir
+./my_agent`).
 
-**Always pass `--write-env` (or `--no-write-env`) when invoking `blocks
-login` from a coding-agent / non-interactive session.** The CLI
-auto-detects non-TTY stdin and silently skips the
-`Write BLOCKS_API_KEY to project .env? (Y/n):` prompt without writing
-anything -- so bare `blocks login` does not hang, but it also does not
-populate `.env`, which is rarely what an agent flow wants. Pass the
-flag explicitly so the outcome is deterministic regardless of how the
-harness wires stdin: `--write-env` opts in unconditionally;
-`--no-write-env` opts out unconditionally.
+**Name the deployment, and pass `--write-env` (or `--no-write-env`), when
+invoking `blocks login` from a coding-agent / non-interactive session.**
+In an interactive terminal `blocks login` asks which deployment to target
+unless the question is already settled — by any completed login, a Blocks
+Network one included, since that stores no deployment URL of its own; or by a
+deployment this invocation resolves (the active profile, `BLOCKS_BACKEND_URL`,
+or a project `.env` pinning a deployment the user has a profile for — a bare
+`blocks login` there returns to it without asking). Only a genuine first run is
+asked. Then — if the answer is
+Enterprise — for that instance's URL or short name, and finally
+`Write credentials to project .env? (Y/n):`. With no `--no-input`, the CLI
+auto-detects non-TTY stdin and silently skips them -- so bare `blocks login`
+does not hang, but it also does not populate `.env`, which is rarely what an
+agent flow wants. Under `--no-input` those two questions are errors instead
+of silent defaults. Be explicit so the outcome is the same regardless of how
+the harness wires stdin:
+
+- `--network` targets Blocks Network with no deployment prompt. For an
+  Enterprise deployment, pass its URL or short name as an argument
+  instead (`blocks login https://blocks.acme.com`, or `blocks login acme`
+  for `https://acme.blocks.ai`); the two are mutually exclusive. A URL must
+  be `https://` unless its host is loopback, its authority must be a host
+  with an optional port in 1–65535 and not `user@host`, it may carry a
+  path prefix but no query string and no fragment, and a short name must be
+  a single DNS label expanding inside the 253-character DNS limit. An
+  argument matching an existing profile name is not an address and is not
+  re-checked: it resolves to that profile's saved deployment and is used as
+  stored. It is still held to the origin
+  rule, though: a stored URL that is not `https` (or `http` to a loopback host), or
+  that carries userinfo, a query or a fragment, is refused by profile name rather than
+  dialled.
+- `--write-env` opts in and `--no-write-env` opts out, and each does so whatever
+  else is on the command line, because these two flags are the first things
+  the decision consults.
+- `--no-input` (global) asks the CLI not to read stdin: where it is
+  honoured, a prompt that is still required fails with an error naming the
+  flag — or the environment variable — that answers it, whether or not stdin
+  is a terminal. It covers the three questions above, so pair it with the
+  flags in this list — a key in `BLOCKS_API_KEY` does not answer them, while
+  `--api-key` / `--api-key-stdin` does. It does **not** cover the
+  organization picker the browser login shows when the account belongs to
+  more than one organization — pass `--api-key` / `--api-key-stdin` to skip
+  the browser flow and that picker — nor the token paste prompt of
+  `blocks login --provider cloudflare|vercel|netlify`. Those two are the only
+  gaps: `blocks deploy` reads no stdin under the flag. Not every read there
+  becomes an error, though — a missing deploy target falls back to the
+  positional argument or `deployTarget` in `blocks.config.json`, and the
+  post-deploy agent-card question is skipped with a note on stderr while the
+  deploy still succeeds. The flag's own help text
+  (`blocks --help`) is the current list.
+
+`--write-env` writes `BLOCKS_API_KEY`, plus the deployment's own
+`BLOCKS_BACKEND_URL` and `BLOCKS_CDM_URL` when the login targeted a specific
+deployment rather than stock Blocks Network. Both matter to a script you
+launch yourself (`npx tsx trigger.ts`, `python main.py`): without the
+backend URL it resolves the REST origin from remote config and reaches
+Blocks Network, and without the CDM URL it resolves its real-time keysets
+from the public default and subscribes on Blocks Network keysets while
+calling your deployment's API. A `--network` login needs neither, writes
+neither, and clears stale values. All three land in one edit, so an
+interrupted login does not leave a new key beside another deployment's URLs
+-- see [Environment Variables (.env)](#environment-variables-env).
+
+The key itself is stored in the deployment's profile in
+`~/.config/blocks/contexts.json`, independently of `--write-env`.
+`blocks logout` clears that profile's cached org keys and strips
+`BLOCKS_API_KEY` from the project `.env`, but keeps the deployment target
+so a later `blocks login` returns to it; `blocks profile remove <name>`
+forgets the deployment, along with whatever the project `.env` held for it —
+unless another profile still describes the same deployment, in which case it
+forgets only that name and leaves the file alone.
 
 ### Step 4: Register the Agent (or Publish)
 
@@ -89,12 +152,14 @@ cd <agent-name> && blocks register
 ```
 
 `blocks register` is the recommended first step: it validates
-`agent-card.json` and publishes agent metadata as **private and free**
-(usable by the owner and invited organizations only). It has no
+`agent-card.json` and registers the agent as **private and free**
+(usable by the owner and invited organizations only). Registering is not
+publishing — nothing is listed publicly until `blocks publish`. It has no
 visibility/billing/terms prompts or flags, so non-interactive and CI
-invocations succeed with no required flags. (Interactive runs may still
-prompt for an organization name on the first agent an org publishes —
-the same prompt `blocks publish` shows.) Requires prior `blocks login`.
+invocations succeed with no required flags. (Interactive runs may still prompt for an organization name on the first agent an org
+registers or publishes — the same prompt `blocks publish` shows, and Blocks Network
+only: an Enterprise deployment pre-seeds organizations, so it skips both that prompt
+and `--org-name`.) Requires prior `blocks login`.
 
 Run `blocks publish` when you want to make the agent **public** or set
 **pricing**; it can also promote an already-registered agent. The flags
@@ -104,18 +169,19 @@ below apply to `blocks publish`.
 
 In a TTY, `blocks publish` walks the user through listing visibility,
 billing mode, pricing, and terms acceptance. In CI or coding-agent
-sessions, the same prompts hang. Provide flags up front:
+sessions it does not prompt at all: a missing required value is an
+immediate error naming the flag that supplies it. Provide flags up front:
 
 | Flag | Purpose |
 |---|---|
-| `--billing-mode {free\|paid}` | Required (mirrors `agent-card.json`). |
+| `--billing-mode {free\|paid}` | Required (mirrors `agent-card.json`). On a deployment with no marketplace, billing is off and `paid` is **rejected**; publish free there (omit the flag, or pass `free`). |
 | `--listing {public\|private}` | Visibility in the registry. |
 | `--price <usd>` | Single-kind agent price (auto-mapped to per-task or per-minute). |
 | `--price-per-task <usd>` / `--price-per-minute <usd>` | Per-kind pricing for dual-kind (request + pipe) agents. |
 | `--free-units <n>` | Free trial units per consumer org (auto-mapped from `taskKinds`). |
 | `--free-tasks <n>` / `--free-minutes <n>` | Per-kind free trial counts for dual-kind agents. |
 | `--accept-terms` | Accept legal attestations non-interactively. |
-| `--org-name <name>` | Set the organization name on first publish. |
+| `--org-name <name>` | Set the organization name on first publish. **Blocks Network only** — inert on an Enterprise deployment, whose organizations are pre-seeded by its admin. |
 | `--api-key <key>` / `--api-key-stdin` | Authenticate inline without `blocks login`. |
 
 Two recipes:
@@ -132,6 +198,27 @@ blocks publish --billing-mode paid --listing private \
 `blocks publish` re-runs the same schema validation as `blocks check`,
 so you don't need to run `check` first -- but it's still useful as a
 fast pre-flight.
+
+### Remove the Agent (`blocks unregister`)
+
+`blocks unregister` is the inverse of `blocks register` -- it removes the
+agent from the deployment you are currently targeting.
+
+```bash
+blocks unregister                     # name read from ./agent-card.json
+blocks unregister <agentName>         # remove an agent from anywhere
+blocks unregister <agentName> --yes   # skip the confirmation (required in CI)
+```
+
+With no argument the name comes from `identity.agentName` in
+`agent-card.json` in the current directory. The deployment is printed
+before the removal, which **cannot be undone**; no organization is named,
+because the deployment authorizes the removal by your rights over this
+agent rather than by the organization the key belongs to, and the
+confirmation prompt names the agent one line later.
+A non-interactive session refuses to remove anything without `--yes`, and
+`--no-input` turns the confirmation into an error naming `--yes`.
+`--api-key` / `--api-key-stdin` work here as they do on `blocks register`.
 
 ### Verify Identity
 
@@ -160,13 +247,35 @@ blocks invite accept <token>                              # consumer-side: accep
 ### CI/CD Auth (Reference)
 
 ```bash
-blocks login --api-key "$KEY" --write-env  # non-interactive login + .env write
-blocks publish --api-key "$KEY"            # use a pre-obtained API key
+blocks login --api-key "$KEY" --write-env     # non-interactive login + .env write
+blocks login --network --write-env            # target Blocks Network, no deployment prompt
+blocks login acme --write-env                 # target an Enterprise instance (short name or full URL)
+blocks publish --api-key "$KEY"               # use a pre-obtained API key
 echo "$KEY" | blocks publish --api-key-stdin  # read from stdin
-blocks logout                              # clear stored credentials
-blocks version                             # print CLI version
-blocks upgrade                             # self-update (POSIX installer flow)
+blocks unregister <agentName> --yes           # remove an agent (confirmation skipped)
+blocks logout                                 # clear stored credentials
+blocks version                                # print CLI version
+blocks upgrade                                # self-update (POSIX installer flow)
 ```
+
+Prefix any command with `--no-input` (`blocks --no-input register`) to ask
+it not to read stdin: where it is honoured, a prompt that is still required
+fails with an error naming the flag — or, for a hosting partner's API token,
+the environment variable — that answers it, instead of hanging. It is not
+universal, so the flag's own help text (`blocks --help`) — kept in step with
+the code — is the current list rather than a formality. In the recipes above,
+the one gap is the organization picker the browser login shows when the
+account belongs to more than one organization, and it has no answer flag at
+all; the `--api-key` / `--api-key-stdin` forms skip the browser flow and that
+picker.
+
+`blocks invite send` and `blocks invite revoke` print
+`[deployment / agent <name> → <grantee>]` before acting;
+`blocks invite accept` prints the deployment alone. As with `unregister`,
+no organization is named — these operations turn on ownership of the named
+agent (or on being the invitation's recipient), not on the organization the
+key belongs to. `register` and `publish` do name the organization, since the
+agent is created under one.
 
 When an orchestrator reconnects to an existing sub-task, `session.onArtifact(...)`
 replays any pre-populated artifacts synchronously at registration time. Those
@@ -528,18 +637,95 @@ Edit the `requestParts` array in `trigger.ts` to change the input.
 
 ## Environment Variables (.env)
 
-SDKs resolve keys at runtime via CDM (Config Delivery Mechanism),
-not from env vars. For local development, the super-installer sets
-`BLOCKS_CDM_URL` to point at the backend's CDM endpoint.
+SDKs resolve real-time keys at runtime via CDM (Config Delivery
+Mechanism), not from env vars. `BLOCKS_CDM_URL` points them at a specific
+deployment's CDM endpoint instead of the default one.
 
 ```bash
-BLOCKS_CDM_URL=http://localhost:3001/api/v1/cdm   # SDK fetches keys from here
-BLOCKS_API_KEY=                                     # Blocks Network API key (from `blocks login --write-env`)
+BLOCKS_CDM_URL=https://blocks.acme.com/api/v1/cdm  # SDK fetches keysets from here
+BLOCKS_API_KEY=                                    # API key
+BLOCKS_BACKEND_URL=https://blocks.acme.com         # REST origin pin
 ```
 
-The backend serves dual keyset config (playground + network) at
-`GET /api/v1/cdm`. For production, `BLOCKS_CDM_URL` is unset and SDKs
-fetch from the default S3-hosted endpoint.
+All three are written by `blocks login --write-env` when the login targeted
+a specific deployment.
+
+Every Blocks deployment serves dual keyset config (playground + network)
+at `GET /api/v1/cdm`. With `BLOCKS_CDM_URL` unset, SDKs fetch from a
+hardcoded default endpoint, which resolves Blocks Network keysets.
+
+The two settings are independent: `BLOCKS_BACKEND_URL` overrides only the
+REST API origin and does not change where keysets come from.
+
+`blocks run` sets both for the delegated SDK process whenever the
+invocation targets a named deployment, so an agent started that way needs
+neither in `.env` (a value already present in the environment always
+wins); stock Blocks Network needs no injection, since the SDK default
+already resolves it. A process you launch directly -- a trigger or consumer script run
+with `npx tsx` / `python`, which `blocks run` never touches -- gets no
+injection and reads them from `.env`, where `blocks login --write-env` puts
+both alongside the key. Missing the CDM URL is the failure that is easy to
+overlook: the script calls the enterprise REST API while subscribing on
+Blocks Network keysets.
+
+If you set either value by hand, know that a value supplied by a project
+`.env` -- rather than exported in your shell, which wins at both of these
+gates, the one input above even an export being a target named on the
+`blocks login` command line, below -- is checked before it is followed, and
+the two follow related but distinct rules:
+
+- `BLOCKS_BACKEND_URL` is honoured when **any** saved profile describes the
+  deployment it names, i.e. you have logged in there at some point. It does
+  not have to be the profile that is currently active.
+- `BLOCKS_CDM_URL` is honoured only when it is the CDM endpoint of the
+  deployment this invocation actually targets. That is an identity check
+  against the target rather than a question about logging in, so on stock
+  Blocks Network, which has no such origin of its own, there is nothing to
+  compare against and a file-sourced value is declined there.
+
+The CLI drops anything else and prints what it dropped, so a `.env` that
+travels with a cloned repository does not redirect a command or a credential
+at a deployment you never named. Export the value in your shell, or log in
+to that deployment (or pin the deployment that serves that CDM endpoint), to
+make it authoritative. A project `blocks login --write-env` was run in is
+not affected: that login creates the profile and writes the matching URLs.
+
+A login that names its target explicitly additionally unsets an ambient
+`BLOCKS_CDM_URL` for that login, because the payload behind it names both an
+API origin and an OAuth client id and would otherwise redefine the deployment
+just named. `--network` (or picking Blocks Network at the prompt) drops any
+such value; an instance argument drops any value that is not that instance's
+own CDM endpoint. Those drops are the one place an exported value does not
+win: they do not weigh provenance, because a choice made on this invocation
+outranks ambient configuration. They affect that login process only.
+
+A project `.env` configures your **agent**, and can also retarget the CLI through
+a fixed list: the CLI imports the seven settings it consumes itself —
+`BLOCKS_API_KEY`, `BLOCKS_BACKEND_URL`, `BLOCKS_CDM_URL`, `BLOCKS_PROFILE`,
+`BLOCKS_APP_BASE_URL`, `BLOCKS_DASHBOARD_URL`, `BLOCKS_CLI_CLIENT_ID`. Everything
+else stays out of the CLI's own process and is still merged into the environment of
+the agent process `blocks run` starts, so your handler's own configuration arrives
+from `.env` exactly as before, and nothing a cloned repository ships can change the
+transport the CLI uses, which certificates it trusts, where it keeps credentials, or
+what it executes. Being a `BLOCKS_*` name is not the test — `BLOCKS_INSTALL_DIR`
+is not on the list.
+
+Four of the seven do change where the CLI points, so a cloned `.env` is not inert.
+A pin in one naming a deployment no saved profile describes is dropped rather than
+obeyed, with a note naming the file, the variable and the deployment used instead;
+the withdrawal covers the delegated agent as well as the CLI.
+
+Names commonly found in a `.env` that would be puzzling to see ignored get an
+explanatory note on stderr naming the variable and the file: the proxy and
+certificate settings (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`,
+`SSL_CERT_FILE`, `SSL_CERT_DIR`, `GODEBUG`), the state-location ones
+(`XDG_CONFIG_HOME`, `HOME`, `USERPROFILE`), the hosting-provider tokens
+(`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `VERCEL_TOKEN`,
+`VERCEL_TEAM_ID`, `NETLIFY_AUTH_TOKEN`) and `BLOCKS_INSTALL_DIR`. The note
+decides nothing and the remedy is to export the variable in your shell. Matching
+is case-insensitive. The one with a day-to-day consequence is the token group:
+`blocks deploy` reads those from the environment, so a token in a project `.env`
+is not used — export it, which is what the deploy docs have always said.
 
 ---
 

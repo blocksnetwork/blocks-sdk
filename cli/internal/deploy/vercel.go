@@ -71,7 +71,7 @@ func vercelUploadAt(ctx context.Context, creds *auth.ProviderCredentials, assets
 		return "", fmt.Errorf("vercel: collect files: %w", err)
 	}
 
-	// Step 1: upload each file.
+	// Upload each file to Vercel.
 	var refs []vercelFileRef
 	for relPath, content := range files {
 		sha := sha1sum(content)
@@ -85,7 +85,7 @@ func vercelUploadAt(ctx context.Context, creds *auth.ProviderCredentials, assets
 		})
 	}
 
-	// Step 2: create deployment.
+	// Create the deployment.
 	//
 	// projectSettings is REQUIRED for the first deployment of a project (Vercel
 	// then saves it for subsequent deploys). A prebuilt static web/ has no
@@ -139,7 +139,7 @@ func vercelUploadAt(ctx context.Context, creds *auth.ProviderCredentials, assets
 		return "", fmt.Errorf("vercel: deploy returned no deployment ID (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	// Step 3: poll until READY.
+	// Poll the deployment until ready.
 	deployedURL, err := vercelPollDeploymentAt(ctx, token, teamID, deployResp.ID, apiBase)
 	if err != nil {
 		return "", err

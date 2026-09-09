@@ -6,7 +6,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
+	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
 	"github.com/spf13/cobra"
 )
 
@@ -46,14 +48,25 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 			output["days_remaining"] = daysRemaining
 			output["expired"] = k.IsExpired()
 		}
+		// A script reading this output has the same blind spot a person does: the
+		// profile named above is not where commands go while an override is in
+		// force. The key is present only then, so existing consumers see no change.
+		if backendOverrideNote() != "" {
+			output["backend_url_override"] = clictx.ChosenBackendURL()
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(output)
 	}
 
-	// Human-readable output
+	// Human-readable output. The organization name is whatever the deployment called
+	// it — cached locally by login, but authored remotely — so it is rendered inert:
+	// these four lines are what a user reads to check which identity later commands
+	// will act as, and an erase-line or cursor-up sequence in the name can overwrite
+	// the ones above it. The JSON branch needs no equivalent: the encoder escapes
+	// control characters itself.
 	fmt.Printf("  Profile:  %s\n", name)
-	fmt.Printf("  Org:      %s\n", k.OrgName)
+	fmt.Printf("  Org:      %s\n", termsafe.Text(k.OrgName))
 	fmt.Printf("  Org ID:   %s\n", p.DefaultOrgID)
 	if k.KeyId != "" {
 		fmt.Printf("  Key ID:   %s\n", k.KeyId)
@@ -77,6 +90,11 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("  Expires:  never\n")
 	}
+
+	// Everything above describes the stored profile. When an override displaces it,
+	// the identity reported is not the one requests will be made as, and this is
+	// one of the two places a user goes looking for that.
+	fmt.Print(backendOverrideNoteLine("  "))
 
 	return nil
 }

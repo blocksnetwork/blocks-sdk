@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
+	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
 	"github.com/spf13/cobra"
 )
 
@@ -44,19 +46,28 @@ var registerCmd = &cobra.Command{
 // public/paid flags) so the suggested first-publish flow cannot reach the
 // public or paid paths.
 func runRegister(ctx context.Context, cmd *cobra.Command, args []string) error {
-	prep, err := preparePublish(args, registerApiKey, registerApiKeyStdin)
+	prep, err := preparePublish(args)
 	if err != nil {
 		return err
 	}
 
-	interactive := isInteractive()
+	// --no-input counts as non-interactive here for the same reason it does in
+	// `publish`: the caller asked not to be prompted, TTY or not.
+	interactive := interactiveSession()
 	if interactive && !prep.enterprise {
 		printRegisterIntro(prep.agentName)
 	}
 
-	if err := applyEnterpriseOrgPicker(prep, interactive, registerApiKey, registerApiKeyStdin); err != nil {
+	if err := applyEnterpriseOrgPicker(prep, interactive); err != nil {
 		return err
 	}
+
+	// After the organization picker, for the reason given in `publish`: the picker
+	// is the last input that can change which organization this registration acts
+	// as, and a banner naming the wrong one is worse than none. The deployment half
+	// of the target is settled earlier and the picker states it before it asks, so
+	// nothing here is the user's first sight of where the command is pointed.
+	clictx.PrintBanner()
 
 	org, err := resolveOrgNameInput(cmd, prep, interactive, "org-name", registerOrgName)
 	if err != nil {
@@ -68,8 +79,6 @@ func runRegister(ctx context.Context, cmd *cobra.Command, args []string) error {
 	promInput := registry.PromotionInput{Listing: "private", BillingMode: "free"}
 
 	return finalizePublish(ctx, prep, promInput, org, interactive, submitOptions{
-		apiKeyFlag:  registerApiKey,
-		apiKeyStdin: registerApiKeyStdin,
 		commandName: "blocks register",
 		promoteHint: true,
 	})
@@ -81,7 +90,7 @@ func printRegisterIntro(agentName string) {
 	fmt.Println("Register an Agent")
 	if agentName != "" {
 		fmt.Println()
-		fmt.Printf("Agent: %s\n", agentName)
+		fmt.Printf("Agent: %s\n", termsafe.Text(agentName))
 	}
 	fmt.Println()
 	fmt.Println("Your agent will be private (only organizations you invite can use it) and free.")

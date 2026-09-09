@@ -14,6 +14,12 @@ builds:
       - -X github.com/pubnub/blocks-sdk/cli/cmd.Version={{.Version}}
       - -X github.com/pubnub/blocks-sdk/cli/cmd.defaultBackendURL={{ .Env.BLOCKS_BACKEND_URL }}
       - -X github.com/pubnub/blocks-sdk/cli/cmd.defaultCliClientID={{ .Env.BLOCKS_CLI_CLIENT_ID }}
+      # BLOCKS_INSTANCE_DOMAIN is optional and MUST never resolve to an empty
+      # string: an empty domain would expand `blocks login acme` to
+      # `https://acme.`. envOrDefault alone only covers an unset variable — a
+      # variable that is set but empty (an undefined CI variable expands to "")
+      # still yields "", so the `with`/`else` block rejects that case too.
+      - -X github.com/pubnub/blocks-sdk/cli/cmd.defaultInstanceDomain={{ with envOrDefault "BLOCKS_INSTANCE_DOMAIN" "blocks.ai" }}{{ . }}{{ else }}blocks.ai{{ end }}
     env:
       - CGO_ENABLED=0
     goos:

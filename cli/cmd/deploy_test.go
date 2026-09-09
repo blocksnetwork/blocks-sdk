@@ -14,6 +14,7 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/deploy"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
+	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 )
 
 // setupDeployTest configures credentials, writes blocks.config.json and web/
@@ -401,6 +402,288 @@ func TestEnsureDeployCredentials_SourceAware(t *testing.T) {
 	}
 }
 
+// runDeployArgv drives `blocks deploy` the way a caller does — through argv, so
+// the --no-input plumbing in PersistentPreRun is exercised rather than simulated —
+// with stdin already at EOF so an ungated read fails the test instead of hanging
+// it. It returns the command's error.
+//
+// Every flag it touches is reset on cleanup: cobra does not re-apply defaults on a
+// second Execute(), so a test that passes --no-input would otherwise leave every
+// later test in the package running with it set.
+func runDeployArgv(t *testing.T, args ...string) error {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close() // reads return EOF immediately
+	origStdin := os.Stdin
+	os.Stdin = r
+	origScanner := stdinScanner
+	stdinScanner = nil
+	t.Cleanup(func() {
+		os.Stdin = origStdin
+		stdinScanner = origScanner
+		r.Close()
+		rootCmd.SetArgs(nil)
+		rootNoInput = false
+		setNoInputMode(false)
+		wizard.SetNoInputMode(false)
+		deployList = false
+		deployNoCardUpdate = false
+		deployCardPaths = nil
+	})
+	rootCmd.SetArgs(append([]string{"deploy"}, args...))
+	return rootCmd.Execute()
+}
+
+// recordingAdapter registers a disk-source adapter and reports whether its Upload
+// ever ran, so a test can tell "refused before deploying" from "deployed, then
+// complained".
+func recordingAdapter(t *testing.T, name, returnURL string) *bool {
+	t.Helper()
+	called := false
+	deploy.Register(deploy.Adapter{
+		Name:       name,
+		Source:     deploy.SourceDisk,
+		Credential: deploy.CredentialFlowNone,
+		Upload: func(ctx context.Context, creds *auth.ProviderCredentials, dir string) (string, error) {
+			called = true
+			return returnURL, nil
+		},
+	})
+	t.Cleanup(deploy.Reset)
+	return &called
+}
+
+// setupDivergentBackend makes the bundle's baked backend disagree with the active
+// one, which is the condition the "Continue deploying anyway?" confirmation guards.
+func setupDivergentBackend(t *testing.T, dir string) {
+	t.Helper()
+	writeConfigBackend(t, dir, "https://blocks.acme.com")
+	restore := isolateProfiles(t)
+	t.Cleanup(restore)
+	_ = profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL: "https://blocks.other.com", Orgs: map[string]profiles.OrgKey{},
+	}, true)
+	t.Setenv("BLOCKS_BACKEND_URL", "") // force profile-based resolution
+}
+
+// TestDeployNoInput_BackendDivergenceRefused covers the confirmation at the
+// divergence warning. On a terminal it used to read stdin even under --no-input,
+// so a caller who asked never to be prompted could block there.
+func TestDeployNoInput_BackendDivergenceRefused(t *testing.T) {
+	dir, cleanup := setupDeployTest(t, []string{"echo2"}, "")
+	defer cleanup()
+	setupDivergentBackend(t, dir)
+
+	origIsTTY := isTTY
+	isTTY = func() bool { return true } // the case that used to block
+	t.Cleanup(func() { isTTY = origIsTTY })
+
+	uploaded := recordingAdapter(t, "cloudflare", "https://my-app.pages.dev")
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-input", "--no-card-update")
+	})
+	if err == nil {
+		t.Fatalf("expected --no-input to refuse the divergence confirmation; got nil error, output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--no-input") {
+		t.Errorf("error %q should name --no-input", err.Error())
+	}
+	if !strings.Contains(err.Error(), "blocks init") {
+		t.Errorf("error %q should name the command that answers it ('blocks init ... --backend-url')", err.Error())
+	}
+	if *uploaded {
+		t.Error("deploy must be refused before the upload, not after it")
+	}
+}
+
+// TestDeployNoInput_BackendDivergencePlainNonTTYStillDeploys is the regression
+// gate for the same site: without --no-input, a non-terminal session keeps taking
+// its documented default of warning and continuing.
+func TestDeployNoInput_BackendDivergencePlainNonTTYStillDeploys(t *testing.T) {
+	dir, cleanup := setupDeployTest(t, []string{"echo2"}, "")
+	defer cleanup()
+	setupDivergentBackend(t, dir)
+
+	uploaded := recordingAdapter(t, "cloudflare", "https://my-app.pages.dev")
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-card-update")
+	})
+	if err != nil {
+		t.Fatalf("plain non-TTY deploy must continue past the divergence warning; got %v, output:\n%s", err, out)
+	}
+	if !*uploaded {
+		t.Error("documented default off a terminal is to warn and continue; upload did not run")
+	}
+	if !strings.Contains(strings.ToLower(out), "warning") {
+		t.Errorf("expected the divergence warning to still be printed; got:\n%s", out)
+	}
+}
+
+// TestDeployNoInput_TargetFromConfig covers the deploy-target picker. --no-input
+// takes the documented non-interactive branch — the target this project already
+// recorded — rather than asking or failing.
+func TestDeployNoInput_TargetFromConfig(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"my_agent"}, "netlify")
+	defer cleanup()
+
+	origIsTTY := isTTY
+	isTTY = func() bool { return true } // the branch that reaches the picker
+	t.Cleanup(func() { isTTY = origIsTTY })
+
+	uploaded := recordingAdapter(t, "netlify", "https://defaulted.netlify.app")
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "--no-input", "--no-card-update")
+	})
+	if err != nil {
+		t.Fatalf("--no-input should resolve the target from blocks.config.json; got %v, output:\n%s", err, out)
+	}
+	if !*uploaded {
+		t.Error("expected the saved deployTarget to be deployed")
+	}
+}
+
+// TestDeployNoInput_NoTargetNamesTheArgument covers the same picker with nothing
+// to fall back on: the refusal has to name what supplies the target.
+func TestDeployNoInput_NoTargetNamesTheArgument(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"my_agent"}, "")
+	defer cleanup()
+
+	origIsTTY := isTTY
+	isTTY = func() bool { return true }
+	t.Cleanup(func() { isTTY = origIsTTY })
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "--no-input", "--no-card-update")
+	})
+	if err == nil {
+		t.Fatalf("expected an error when --no-input and no target is resolvable; output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "no deploy target") || !strings.Contains(err.Error(), "deployTarget") {
+		t.Errorf("error %q should name the positional argument and deployTarget", err.Error())
+	}
+}
+
+// TestDeployNoInput_PluginTokenNamesEnvVar covers plugin credential entry: an
+// on-disk target with an api-token flow prompts for the token when its env var is
+// unset, and --no-input has to name that variable instead of reading stdin.
+func TestDeployNoInput_PluginTokenNamesEnvVar(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"my_agent"}, "")
+	defer cleanup()
+	t.Setenv("MY_PLUGIN_TOKEN", "")
+
+	deploy.Register(deploy.Adapter{
+		Name:             "myplugin",
+		Source:           deploy.SourceDisk,
+		Credential:       deploy.CredentialFlowAPIToken,
+		CredentialEnvVar: "MY_PLUGIN_TOKEN",
+		Upload: func(ctx context.Context, creds *auth.ProviderCredentials, dir string) (string, error) {
+			return "https://plugin.example.com", nil
+		},
+	})
+	t.Cleanup(deploy.Reset)
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "myplugin", "--no-input", "--no-card-update")
+	})
+	if err == nil {
+		t.Fatalf("expected --no-input to refuse the plugin token prompt; output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--no-input") || !strings.Contains(err.Error(), "MY_PLUGIN_TOKEN") {
+		t.Errorf("error %q should name --no-input and the plugin's credentialEnvVar", err.Error())
+	}
+}
+
+// TestDeployNoInput_PluginTokenPlainNonTTYUnchanged is the regression gate: with
+// no --no-input the prompt still runs and still fails on unreadable stdin with its
+// own wording, so nothing about the plain path moved.
+func TestDeployNoInput_PluginTokenPlainNonTTYUnchanged(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"my_agent"}, "")
+	defer cleanup()
+	t.Setenv("MY_PLUGIN_TOKEN", "")
+
+	deploy.Register(deploy.Adapter{
+		Name:             "myplugin",
+		Source:           deploy.SourceDisk,
+		Credential:       deploy.CredentialFlowAPIToken,
+		CredentialEnvVar: "MY_PLUGIN_TOKEN",
+		Upload: func(ctx context.Context, creds *auth.ProviderCredentials, dir string) (string, error) {
+			return "https://plugin.example.com", nil
+		},
+	})
+	t.Cleanup(deploy.Reset)
+
+	var err error
+	captureStdoutStderr(func() {
+		err = runDeployArgv(t, "myplugin", "--no-card-update")
+	})
+	if err == nil {
+		t.Fatal("expected the token read to fail on EOF stdin")
+	}
+	if !strings.Contains(err.Error(), "read token") {
+		t.Errorf("error %q should be the unchanged read failure", err.Error())
+	}
+	if strings.Contains(err.Error(), "--no-input") {
+		t.Errorf("error %q must not mention --no-input when the flag was not passed", err.Error())
+	}
+}
+
+// TestDeployNoInput_PartnerTokenNamesEnvVar covers the built-in partner token
+// prompt reached through `blocks deploy`, which reads stdin only after its env var
+// and stored credential come up empty.
+func TestDeployNoInput_PartnerTokenNamesEnvVar(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"my_agent"}, "")
+	defer cleanup()
+	// setupDeployTest injects partner tokens to skip these prompts; this test is
+	// about what happens when there is none.
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	deploy.Reset() // built-in cloudflare, so the partner flow (not the plugin path) runs
+	t.Cleanup(deploy.Reset)
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-input", "--no-card-update")
+	})
+	if err == nil {
+		t.Fatalf("expected --no-input to refuse the Cloudflare token prompt; output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--no-input") || !strings.Contains(err.Error(), "CLOUDFLARE_API_TOKEN") {
+		t.Errorf("error %q should name --no-input and CLOUDFLARE_API_TOKEN", err.Error())
+	}
+}
+
+// TestDeployNoInput_PartnerTokenPlainNonTTYUnchanged is the regression gate for
+// the partner prompt: without the flag it still reads stdin and still reports its
+// own read failure.
+func TestDeployNoInput_PartnerTokenPlainNonTTYUnchanged(t *testing.T) {
+	_, cleanup := setupDeployTest(t, []string{"my_agent"}, "")
+	defer cleanup()
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	deploy.Reset()
+	t.Cleanup(deploy.Reset)
+
+	var err error
+	captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-card-update")
+	})
+	if err == nil {
+		t.Fatal("expected the partner token read to fail on EOF stdin")
+	}
+	if strings.Contains(err.Error(), "--no-input") {
+		t.Errorf("error %q must not mention --no-input when the flag was not passed", err.Error())
+	}
+}
+
 // TestConfirmYesNo verifies the shared Y/n prompt: only an explicit "n"/"no"
 // declines; empty input (Enter), EOF, and unrecognized answers default to yes.
 func TestConfirmYesNo(t *testing.T) {
@@ -408,8 +691,8 @@ func TestConfirmYesNo(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"", true},          // EOF → continue (default-yes)
-		{"\n", true},        // blank line → continue
+		{"", true},   // EOF → continue (default-yes)
+		{"\n", true}, // blank line → continue
 		{"y\n", true},
 		{"yes\n", true},
 		{"n\n", false},
@@ -427,5 +710,63 @@ func TestConfirmYesNo(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("confirmYesNo(%q) = %v, want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+// The backend URL the divergence warning reports is attacker-influenceable twice over:
+// the bundle's own comes from blocks.config.json, and the active one from a profile or a
+// project .env. Both are values `blocks deploy` has to report and neither may appear
+// inside the retarget instruction, because a line presented as a command is a line that
+// gets pasted into a shell — and termsafe.Text says nothing about that, since `;`, `&&`,
+// backticks and $(...) pass through it as the ordinary printable characters they are.
+//
+// The scan reuses commandLines, this package's one definition of "reads as something to
+// run". The second assertion is narrower on purpose: the pre-fix warning spread the
+// remedy over two lines — "To retarget, re-run" then "'blocks init … --backend-url <the
+// active backend>'" — which a reader pastes as one command whether or not a marker set
+// notices it, so the instruction is held to carrying no value at all.
+func TestTheDivergenceWarningOffersNoPastableCommandBuiltFromTheBackendURL(t *testing.T) {
+	dir, cleanup := setupDeployTest(t, []string{"echo2"}, "")
+	defer cleanup()
+
+	const injectedActiveBackend = "https://blocks.acme.example/x;$(id)"
+	writeConfigBackend(t, dir, "https://blocks.other.example")
+	defer isolateProfiles(t)()
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL: injectedActiveBackend, Orgs: map[string]profiles.OrgKey{},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+	t.Setenv("BLOCKS_BACKEND_URL", "") // force profile-based resolution
+
+	uploaded := recordingAdapter(t, "cloudflare", "https://my-app.pages.dev")
+
+	var err error
+	out := captureStdoutStderr(func() {
+		err = runDeployArgv(t, "cloudflare", "--no-card-update")
+	})
+	if err != nil {
+		t.Fatalf("a non-terminal deploy must warn and continue; got %v, output:\n%s", err, out)
+	}
+	if !*uploaded {
+		t.Error("premise: the deploy this warning accompanies must have run")
+	}
+
+	assertNoInjectedValueInCommandLines(t, out, injectedActiveBackend)
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "blocks init") && strings.Contains(line, injectedActiveBackend) {
+			t.Errorf("the retarget instruction carries the active backend URL:\n%s", line)
+		}
+	}
+	// The divergence must still be reported, and both backends named, or the warning
+	// would be safe by saying nothing.
+	if !strings.Contains(out, injectedActiveBackend) {
+		t.Errorf("the warning must still name the active backend:\n%s", out)
+	}
+	if !strings.Contains(out, "https://blocks.other.example") {
+		t.Errorf("the warning must still name the backend the bundle was built for:\n%s", out)
+	}
+	if !strings.Contains(out, "blocks init") {
+		t.Errorf("the remedy must still name the command that rebuilds web/:\n%s", out)
 	}
 }

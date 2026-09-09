@@ -22,6 +22,8 @@ if (!apiKey) {
 const AGENT_NAME = 'my_target_agent';
 
 async function main() {
+  // billingMode selects the PubNub keyset for this deployment — a protocol
+  // detail, not a pricing choice. Leave it as 'free'.
   const client = await TaskClient.create({
     billingMode: 'free',
     apiKey,

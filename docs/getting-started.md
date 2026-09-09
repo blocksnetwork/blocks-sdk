@@ -88,17 +88,97 @@ On Windows, activate the virtual environment with
 ## 4. Authenticate and Register
 
 ```bash
-blocks login --write-env
+blocks login --network --write-env
 blocks register   # private + free, the recommended first step
 # Later, to make the agent public or set pricing: blocks publish
 ```
 
-`blocks login --write-env` authenticates with Blocks Network and writes
-`BLOCKS_API_KEY` to the project `.env`. `blocks register` validates
+`blocks login --network --write-env` authenticates with Blocks Network and
+writes `BLOCKS_API_KEY` to the project `.env`. `blocks register` validates
 `agent-card.json`, then registers the agent card with the Network as
 **private and free** (usable by you and the organizations you invite).
 Run `blocks publish` when you want to make the agent public or set
-pricing; it can also promote an already-registered agent.
+pricing; it can also promote an already-registered agent. To take an
+agent back off a deployment, `blocks unregister` is the inverse of
+`blocks register`.
+
+`--network` is what makes the target explicit. Without it, `blocks login`
+run in a terminal asks which deployment to target — Blocks Network or an
+Enterprise instance — unless the question is already settled. It is settled
+once any login has completed, including a login to Blocks Network, which
+stores no deployment URL of its own; and it is settled by a deployment this
+invocation resolves, whether from the active profile, from
+`BLOCKS_BACKEND_URL`, or from a project `.env` pinning a deployment you have
+a profile for. In those cases it goes there without asking, so the
+deployment `blocks logout` preserved is the one a later bare `blocks login`
+returns to. Only a genuine first run — nothing recording a finished login,
+nothing naming a deployment — is asked. The
+recipes in this guide name Blocks Network up front so they stay
+reproducible in scripts. For an Enterprise deployment, pass its URL or
+short name as an argument instead of `--network`:
+
+```bash
+blocks login https://blocks.acme.com --write-env
+blocks login acme --write-env             # short name for https://acme.blocks.ai
+```
+
+A deployment URL must be `https://`; `http://` is accepted only for
+`localhost`, `127.0.0.1` and `[::1]`, which is what keeps a key from going
+out in clear text off your own machine. Its authority must be a host with an
+optional port in 1–65535 (not `user@host`), and it may carry a path prefix
+but no query string and no fragment — the argument is an origin the CLI appends endpoint
+paths to, and neither can be part of one. A short name must be a single
+label (letters, digits and hyphens) that expands to a hostname inside the
+253-character DNS limit — anything else has to be passed as a bare host or a
+full URL. A refused argument is an error naming the accepted forms, and
+nothing is sent. A name matching a profile you already have is the one
+exception: it is not an address, so it is not re-checked — it resolves to that
+profile's saved deployment and is used as stored, which is what keeps a short
+alias for a custom domain working after the first sign-in. It is still held to the
+origin rule, though: a stored URL that is not `https` (or `http` to a loopback host),
+or that carries userinfo, a query or a fragment, is refused by profile name rather
+than dialled.
+
+`--write-env` writes `BLOCKS_API_KEY`, and the deployment's own
+`BLOCKS_BACKEND_URL` and `BLOCKS_CDM_URL` beside it when the login targeted
+a specific deployment rather than stock Blocks Network. Those two are what
+point a script you launch yourself (the trigger in Step 6, or a consumer
+project) at the deployment the key came from: the backend URL sets the REST
+origin, and the CDM URL is where a runtime resolves the real-time keysets,
+so with only the first a directly-launched script would call your
+deployment's API while subscribing on Blocks Network keysets. `blocks run`
+supplies both to the agent process it starts, so an agent run that way
+needs neither — as defaults, though: a non-empty value the child already
+carries for either variable wins over the supplied one. A `--network` login needs neither, writes neither, and
+removes stale values. Pass `--no-write-env` to skip the `.env` write, and
+the global `--no-input` flag to ask the CLI not to read stdin — where it is
+honoured, a prompt that is still required becomes an error naming the flag
+that answers it instead of a hang.
+
+`--no-input` covers the prompts on this flow — which deployment to target,
+the instance URL or short name if you pick Enterprise, and whether to write
+`.env` — and covers them whether or not stdin is a terminal. So under
+`--no-input` any of those questions that is still open is an error naming
+the flag that answers it, rather than a silent default: without
+`--network`, a first sign-in would otherwise land on Blocks Network without
+being asked to. Without `--no-input`, a non-interactive run still skips
+those questions and takes the old defaults. A key passed as `--api-key` or
+`--api-key-stdin` answers both by itself; `BLOCKS_API_KEY` in the
+environment does not.
+
+The flag is **not** universal: notably, if your account belongs to more
+than one organization, the browser login asks which one to use and that
+prompt still reads stdin, and there is no flag that answers it — so treat
+the flag's own help text (`blocks --help`) as the live list rather than
+assuming full coverage. Passing `--api-key` (or `--api-key-stdin`) skips
+the browser flow, and with it the organization picker. Where a refusal
+does have an answer, that answer is sometimes an environment variable
+rather than a flag — a hosting partner's API token, for instance. And not
+every closed prompt is a refusal: under `--no-input`, `blocks deploy` falls
+back to its positional target or the `deployTarget` in
+`blocks.config.json` rather than erroring, and its post-deploy offer to add
+the deployed URL to a local agent card is skipped with a note on stderr
+while the deploy itself still succeeds.
 
 `blocks init` scaffolds three kinds of projects:
 
@@ -137,7 +217,16 @@ blocks run
 ```
 
 The CLI validates `agent-card.json`, loads `.env`, and delegates to the
-language runner:
+language runner. The whole `.env` is handed to the agent process, so your
+own application variables arrive there as usual. The CLI itself imports just
+seven named settings from that file — being a `BLOCKS_*` name is not the
+test — and four of them do change where it points, so a `.env` that came
+with a cloned repository is not inert. What protects you there is that a pin
+naming a deployment no saved profile describes is dropped rather than obeyed,
+with a note saying so. See the `blocks-sdk/cli/README.md` section "What a
+project `.env` can and cannot change about the CLI" for the exact set and the
+names that get an explanatory note.
+The language runners:
 
 - **Node:** finds the SDK `blocks-run` binary from local dependencies or
   the workspace.
@@ -175,7 +264,7 @@ Node:
 blocks init my_consumer --mode consumer --language node --yes
 cd my_consumer
 npm install
-blocks login --write-env
+blocks login --network --write-env
 # Edit index.ts and set AGENT_NAME to the target agent.
 npm run start
 ```
@@ -188,7 +277,7 @@ cd my_consumer
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e . && pip install blocks-network --upgrade
-blocks login --write-env
+blocks login --network --write-env
 # Edit main.py and set AGENT_NAME to the target agent.
 python main.py
 ```

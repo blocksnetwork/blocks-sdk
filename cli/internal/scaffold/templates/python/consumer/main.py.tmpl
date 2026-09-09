@@ -35,6 +35,8 @@ AGENT_NAME = "my_target_agent"
 
 
 def main() -> None:
+    # billing_mode selects the PubNub keyset for this deployment — a protocol
+    # detail, not a pricing choice. Leave it as "free".
     client = TaskClient.create(billing_mode="free", api_key=api_key)
 
     session = client.send_message(
