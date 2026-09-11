@@ -294,7 +294,7 @@ client.destroy();
 
 **sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `stream` (request-task streaming opt-in — `true` requests streaming, `false` suppresses it; omitted uses the server default, now no-streaming, so pass `true` to stream; ignored for pipe; resolved `hasStream` still requires agent capability), `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
 
-**TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId`); set to `'provider'` when the caller is the agent owner viewing a received task. Provider-role access is scoped by the caller's active org: the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org. Admins with an admin-typed active org get the cross-org bypass; when no active org is resolved at all (legacy callers), the server falls back to admin-bypass / non-admin membership check on the agent's org.
+**TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId`); set to `'provider'` when the caller is the agent owner viewing a received task. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
 
 **TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`, `isClosed` (getter; `true` after `close()` / `asyncClose()` runs). Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onCancelRequested(cb: (e: CancelRequestedEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)`, `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `null` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
 
@@ -518,7 +518,20 @@ const client = await TaskClient.create({
 });
 ```
 
-- `billingMode` is required ('free' → playground keyset, 'paid' → network keyset) and must match the target agent's server-derived billingMode (exception: authenticated same-org callers are exempt from this check). Read it from the registry: `(await getAgent(name)).billingMode`.
+- `billingMode` is required ('free' → playground keyset, 'paid' → network keyset) and must match the target agent's server-derived billingMode (exception: authenticated same-org callers are exempt from this check). Read it from the registry. `getAgent()` has no default backend URL and throws `baseUrl is required` without one, so take the Blocks Network backend URL from the CDM; pass `apiKey` as well when the agent is private, otherwise the lookup returns `null`:
+
+  ```ts
+  import { fetchCdmConfig, getAgent } from '@blocks-network/sdk';
+
+  const { api } = await fetchCdmConfig();
+  const entry = await getAgent(name, {
+    baseUrl: api.baseUrl,
+    apiKey: process.env.BLOCKS_API_KEY,
+  });
+  const billingMode = entry?.billingMode;  // undefined when the agent is unknown or not visible
+  ```
+
+  The list helpers (`fetchAgentRegistry`, `fetchAgentsByTag`, `fetchAgentsByListing`) take the same `baseUrl` / `apiKey` options.
 - Exactly one auth mode: `apiKey`, `tokenEndpoint`, or `tokenProvider`
 - `rpcHeaders?: Record<string, string>` — optional extra request headers merged onto every RPC call (not the token mint). Merged UNDER SDK-owned headers, so a caller cannot override `Authorization`, `Content-Type`, `Blocks-Protocol-Version`, or `X-Write-Affinity` (case-insensitive). Request metadata, not auth; the canonical dashboard use is `X-Active-Org` to scope a multi-org user's submission to the agent's owning org.
 - Returns `Promise<TaskClient>`
@@ -555,11 +568,17 @@ const providerSession = await client.connect({
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.
 - `role` defaults to `'consumer'` (task submitter — server checks
   `userId === task.ownerId`). Set to `'provider'` when the caller owns
-  the agent that received the task. Provider-role access is scoped by
-  the caller's active org: the agent's org must match the
-  active org from the session `X-Active-Org` header or the credential's
-  org claim, AND the caller must be a current member of that org.
-  Admins with an admin-typed active org get the cross-org bypass.
+  the agent that received the task. Provider-role access follows the same rule as the Dashboard's
+  received-tasks view: the agent's owner is always admitted. Otherwise
+  the agent's org must match the active org resolved from the session
+  `X-Active-Org` header or the credential's org claim, AND the caller
+  must be a current member of that org; admins with an admin-typed
+  active org get the cross-org bypass, and when no active org is
+  resolved at all (legacy callers) the server falls back to admin-
+  bypass / membership on the agent's org. For a private agent,
+  membership alone is not enough: a non-admin must also hold an agent-
+  management permission in the owning org and have been invited to the
+  agent.
 - Terminal tasks: preloads events/artifacts/streams from history, no live events
 - Active tasks: preloads history, then subscribes from cursor (no gap)
 

@@ -1751,7 +1751,7 @@ func TestPreparePublishSourcesEnterpriseFromClictx(t *testing.T) {
 	t.Chdir(projectDir)
 	t.Setenv("BLOCKS_API_KEY", "bk_test")
 
-	prep, err := preparePublish(nil)
+	prep, err := preparePublish("blocks publish", nil)
 	if err != nil {
 		t.Fatalf("preparePublish: %v", err)
 	}

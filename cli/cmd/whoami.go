@@ -28,11 +28,11 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 
 	name, p, err := profiles.Active()
 	if err != nil {
-		return fmt.Errorf("not logged in — run 'blocks login' first")
+		return notLoggedInError()
 	}
 	k, ok := p.DefaultOrgKey()
 	if !ok {
-		return fmt.Errorf("not logged in — run 'blocks login' first")
+		return notLoggedInError()
 	}
 
 	if jsonOutput {

@@ -186,11 +186,12 @@ func TestTextIsIdempotent(t *testing.T) {
 	}
 }
 
-// Message keeps line structure where Text does not. Text escapes newline along with the
-// rest, which is right for a name and wrong for a whole message: around ten CLI errors put
-// their remedy on a second line, and routing those through Text rendered one flattened
-// line carrying a literal \x0a.
-func TestMessageKeepsLineBreaksAndEscapesTheRest(t *testing.T) {
+// Message keeps line structure and indentation where Text does not. Text escapes
+// newline and tab along with the rest, which is right for a name and wrong for a whole
+// message: around ten CLI errors put their remedy on a second line, and routing those
+// through Text rendered one flattened line carrying a literal \x0a; cobra's
+// unknown-command suggestions are tab-indented, and those rendered as \x09.
+func TestMessageKeepsLineBreaksAndTabsAndEscapesTheRest(t *testing.T) {
 	in := "profile \"prod-typo\" not found\nRun 'blocks profile list' to see which profiles exist"
 	got := Message(in)
 	if got != in {
@@ -200,13 +201,20 @@ func TestMessageKeepsLineBreaksAndEscapesTheRest(t *testing.T) {
 		t.Errorf("the line break must not be escaped, got %q", got)
 	}
 
-	// Everything Text escapes is still escaped, per line. These are the sequences that
-	// erase or reposition, which is the class the escaping exists to stop.
+	// The cobra shape: a suggestion list indented with tabs. It must survive the
+	// boundary byte-for-byte.
+	cobra := "unknown command \"int\" for \"blocks\"\n\nDid you mean this?\n\tinit"
+	if got := Message(cobra); got != cobra {
+		t.Errorf("a tab-indented suggestion must survive unchanged:\n got %q\nwant %q", got, cobra)
+	}
+
+	// Everything Text escapes is still escaped, per line and per tab segment. These are
+	// the sequences that erase or reposition, which is the class the escaping exists
+	// to stop.
 	for _, r := range []struct{ name, in, mustNotHold string }{
 		{"carriage return", "one\rtwo", "\r"},
 		{"erase line", "one\x1b[2Ktwo", "\x1b"},
 		{"cursor up", "one\x1b[1Atwo", "\x1b"},
-		{"tab", "one\ttwo", "\t"},
 		{"bidi override", "one‮two", "‮"},
 	} {
 		out := Message(r.in)
@@ -215,11 +223,18 @@ func TestMessageKeepsLineBreaksAndEscapesTheRest(t *testing.T) {
 		}
 	}
 
-	// A newline inside an otherwise hostile run is kept while the rest is escaped, so a
-	// line can be added but nothing can be hidden.
+	// A newline or tab inside an otherwise hostile run is kept while the rest is
+	// escaped, so a line or a column can be added but nothing can be hidden.
 	out := Message("line one\n\x1b[2Kline two")
 	if !strings.Contains(out, "\n") {
 		t.Errorf("the break must survive, got %q", out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("the escape must not, got %q", out)
+	}
+	out = Message("one\t\x1b[2Ktwo")
+	if !strings.Contains(out, "\t") {
+		t.Errorf("the tab must survive, got %q", out)
 	}
 	if strings.Contains(out, "\x1b") {
 		t.Errorf("the escape must not, got %q", out)

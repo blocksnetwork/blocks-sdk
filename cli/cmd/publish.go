@@ -64,7 +64,7 @@ var publishCmd = &cobra.Command{
 }
 
 func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
-	prep, err := preparePublish(args)
+	prep, err := preparePublish("blocks publish", args)
 	if err != nil {
 		return err
 	}
@@ -292,10 +292,12 @@ type publishPrep struct {
 // preparePublish resolves the backend URL and API key, validates the agent
 // card, and assembles the base registry envelope. It is shared by `publish`
 // and `register` so the two commands cannot drift on validation or payload
-// shape; only the promotion params differ between them. The backend origin, the
-// credential and the enterprise verdict all come from the invocation's resolved
-// context, so neither command re-derives any of them.
-func preparePublish(args []string) (*publishPrep, error) {
+// shape; only the promotion params differ between them. commandName is the CLI
+// verb the user ran, so shared error text can say "registering" or
+// "publishing" as the invocation warrants. The backend origin, the credential
+// and the enterprise verdict all come from the invocation's resolved context,
+// so neither command re-derives any of them.
+func preparePublish(commandName string, args []string) (*publishPrep, error) {
 	backendURL := resolveBackendURL()
 
 	apiKey, err := resolvePublishApiKey()
@@ -323,7 +325,7 @@ func preparePublish(args []string) (*publishPrep, error) {
 		for _, e := range result.Errors {
 			fmt.Fprintf(os.Stderr, "  [FAIL] %s\n", e)
 		}
-		return nil, fmt.Errorf("fix validation errors in %s before publishing", cardPath)
+		return nil, validationBeforeCommandError(cardPath, commandName)
 	}
 	for _, s := range result.Successes {
 		fmt.Printf("  [OK] %s\n", s)
@@ -431,7 +433,7 @@ func finalizePublish(ctx context.Context, prep *publishPrep, promInput registry.
 	applyPromotionToEnvelope(prep.envelope, promInput)
 
 	if prep.backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set")
 	}
 
 	// Apply org name update right before publishing (after all prompts succeed).
@@ -543,9 +545,9 @@ func submitPublishError(err error, agentName string, promInput registry.Promotio
 		case clictx.SourceStdin:
 			return fmt.Errorf("authentication failed — the API key provided via --api-key-stdin was rejected; replace it with a valid key and retry")
 		}
-		return fmt.Errorf("authentication failed — run 'blocks login' to re-authenticate, then retry '%s'", opts.commandName)
+		return authFailedStoredCredentialError(opts.commandName)
 	case 403:
-		return fmt.Errorf("permission denied (HTTP 403) — check that your API key owns this agent")
+		return permissionDenied403Error()
 	default:
 		return publishFailedError(agentName, promInput, apiErrorToMap(apiErr), opts.commandName)
 	}
@@ -601,9 +603,9 @@ func resolvePublishApiKey() (string, error) {
 	case c.StoreErr != nil:
 		return "", fmt.Errorf("failed to load credentials: %w", c.StoreErr)
 	case c.Expired:
-		return "", fmt.Errorf("credentials expired — run 'blocks login' to re-authenticate, or provide --api-key")
+		return "", credentialsExpiredError()
 	default:
-		return "", fmt.Errorf("not authenticated — run 'blocks login' first, or provide --api-key")
+		return "", notAuthenticatedError()
 	}
 }
 
@@ -627,7 +629,7 @@ func apiErrorToMap(e *blocksapi.APIError) map[string]interface{} {
 func publishFailedError(agentName string, input registry.PromotionInput, payload map[string]interface{}, commandName string) error {
 	prefix := commandFailedPrefix(commandName)
 	if publishErrorCode(payload) == "BillingModeInvalid" && input.BillingMode == "free" {
-		return fmt.Errorf("%s: %s", prefix, existingPaidAgentMessage(agentName))
+		return fmt.Errorf("%s: %s", prefix, existingPaidAgentMessage(agentName, resolveAppBaseURL()))
 	}
 	if msg := publishErrorMessage(payload); msg != "" {
 		return fmt.Errorf("%s: %s", prefix, msg)
@@ -681,14 +683,6 @@ func publishErrorCode(payload map[string]interface{}) string {
 		}
 	}
 	return ""
-}
-
-func existingPaidAgentMessage(agentName string) string {
-	agentLabel := "This agent"
-	if strings.TrimSpace(agentName) != "" {
-		agentLabel = fmt.Sprintf("Agent %s", agentName)
-	}
-	return fmt.Sprintf("%s is already configured as a Paid agent. Please delete via the Blocks portal before publishing it as a Free agent.", agentLabel)
 }
 
 const blocksWordmark = ` ____  _     ___   ____ _  __ ____

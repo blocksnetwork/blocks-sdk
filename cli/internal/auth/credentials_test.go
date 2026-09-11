@@ -1,11 +1,31 @@
 package auth
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+// The drained store is the standard post-migration shape: the profile migration
+// moves the Blocks key into contexts.json and deletes the "blocks" namespace,
+// leaving the file itself (and any partner namespaces) in place. Load must say
+// so with the sentinel, not an ad-hoc error, so the CLI's credential adapter can
+// tell "no Blocks key here" apart from "could not read the store".
+func TestLoadReturnsTheSentinelWhenTheBlocksNamespaceIsDrained(t *testing.T) {
+	credPath := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(credPath, []byte(`{"schema_version":3}`), 0600); err != nil {
+		t.Fatalf("write drained store: %v", err)
+	}
+	origFunc := CredentialPathFunc
+	CredentialPathFunc = func() (string, error) { return credPath, nil }
+	defer func() { CredentialPathFunc = origFunc }()
+
+	if _, err := Load(); !errors.Is(err, ErrNoBlocksCredential) {
+		t.Fatalf("Load = %v, want ErrNoBlocksCredential", err)
+	}
+}
 
 func TestLoadDeleteRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()

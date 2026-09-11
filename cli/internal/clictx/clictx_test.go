@@ -1100,6 +1100,17 @@ func mustHostOf(t *testing.T, rawURL string) string {
 // EffectiveBackendURL — the accessor every request path goes through — rather than from
 // Resolve, which has no error to return.
 func TestAnInvalidEffectiveTargetIsRefusedWhateverTierSuppliedIt(t *testing.T) {
+	// The resolver reads the profile store, so the test seeds an isolated one.
+	// Without this it answered from whatever deployment the developer's own
+	// active profile names: a store whose active profile carries a base URL
+	// outranks the build default, so the build-default case below refused
+	// nothing and failed on any machine whose owner was logged in to a
+	// deployment — while a stock store passed. A test's verdict must not depend
+	// on the machine it runs on.
+	seedProfiles(t, profiles.DefaultProfile, map[string]profiles.Profile{
+		profiles.DefaultProfile: {Orgs: map[string]profiles.OrgKey{}},
+	})
+
 	cases := []struct {
 		name string
 		o    Overrides

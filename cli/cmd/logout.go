@@ -89,7 +89,10 @@ func runBlocksLogout() error {
 	envErr := removeEnvApiKey(".env")
 
 	if err := errors.Join(clearErr, legacyErr, envErr); err != nil {
-		return fmt.Errorf("logout incomplete — Blocks credentials remain on disk: %w", err)
+		// The profile is named through the resolved context so the suggestion
+		// names the same profile every other command would act on (--profile and
+		// BLOCKS_PROFILE included), not just the store's saved active name.
+		return logoutIncompleteError(clictx.Profile(), err)
 	}
 
 	printLogoutSummary()

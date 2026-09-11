@@ -301,7 +301,7 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 		return err
 	}
 	if access.backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
 	}
 	if access.backendURL != backendURL {
 		fmt.Fprintf(os.Stderr,
@@ -409,7 +409,7 @@ func resolveCardAccess() (cardAccess, error) {
 		// Same reasoning once more: a stored credential that has expired is a login to
 		// renew, not an absence of one, and saying so beats an anonymous lookup that
 		// reports the user's own private agent as missing.
-		return cardAccess{}, fmt.Errorf("credentials expired — run 'blocks login' to re-authenticate")
+		return cardAccess{}, cardLookupExpiredCredentialError()
 	}
 	if c.Key != "" && (c.Source.Supplied() || access.resolvedTarget) {
 		access.apiKey = c.Key
@@ -453,7 +453,7 @@ func runWebappWizard(ctx context.Context) error {
 		return err
 	}
 	if access.backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
 	}
 	if access.backendURL != resolvedBackend {
 		fmt.Fprintf(os.Stderr,
@@ -512,12 +512,14 @@ func scaffoldWebappProject(ctx context.Context, cfg wizard.Config, client *block
 		card, err := cardfetch.Fetch(ctx, client, name)
 		if err != nil {
 			if errors.Is(err, cardfetch.ErrAgentNotFound) {
-				// The name and the remedy are on separate lines because the name comes
-				// from the registry — the suggestion list this wizard populates from the
-				// backend — and the remedy is worded as a command. One line carrying
-				// both is a line a user can paste with an attacker's text inside it,
-				// which no amount of escaping the display makes safe to run.
-				return fmt.Errorf("agent %q not found — check the spelling.\n  If it is a private agent your account can access, log in first: run 'blocks login'.", name)
+				// The name and the remedy are on separate lines in the stock wording
+				// because the name comes from the registry — the suggestion list this
+				// wizard populates from the backend — and the remedy is worded as a
+				// command. One line carrying both is a line a user can paste with an
+				// attacker's text inside it, which no amount of escaping the display
+				// makes safe to run. The Enterprise wording carries no command, so it
+				// does not need the separation.
+				return agentNotFoundOnDeploymentError(name, originHost(client.BaseURL))
 			}
 			return fmt.Errorf("failed to fetch agent card for %q: %w", name, err)
 		}

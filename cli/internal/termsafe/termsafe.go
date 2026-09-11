@@ -104,27 +104,36 @@ func writeEscape(b *strings.Builder, prefix string, r rune, width int) {
 	}
 }
 
-// Message is Text for a whole message rather than a single value: it keeps line breaks
-// and escapes everything else.
+// Message is Text for a whole message rather than a single value: it keeps line
+// breaks and indentation tabs, and escapes everything else.
 //
-// Text escapes newline along with the rest, which is right for a name and wrong for a
-// message. Around ten CLI errors put their remedy on a second line — the profile-not-found
-// hint, the --no-input refusals, the unreachable-instance advice — and routing those
-// through Text rendered them as one flattened line carrying a literal `\x0a`, which is
-// least readable exactly where the user most needs to read it.
+// Text escapes newline and tab along with the rest, which is right for a name and
+// wrong for a message. Around ten CLI errors put their remedy on a second line — the
+// profile-not-found hint, the --no-input refusals, the unreachable-instance advice —
+// and routing those through Text rendered them as one flattened line carrying a
+// literal `\x0a`, least readable exactly where the user most needs to read it.
+// Cobra's unknown-command output indents its suggestion list with tabs, and the same
+// boundary rendered those as `\x09` on every mistyped command — the same defect one
+// character class over.
 //
-// Only newline is kept. Carriage return, cursor movement and erase sequences are still
-// escaped, so the class Text exists to stop is unaffected: text that reaches a message
-// without having been escaped where it was interpolated can add a line, but it cannot
-// erase, overwrite or reorder one. That residue is real and much weaker than an
-// unreadable remedy on every multi-line error, which is the alternative.
+// Only newline and tab are kept. Both are whitespace a terminal displays rather than
+// acts on: text that reaches a message without having been escaped where it was
+// interpolated can add a line or shift a column, but it cannot erase, overwrite or
+// reorder anything. Carriage return, cursor movement and erase sequences are still
+// escaped, so the class Text exists to stop is unaffected. The residue — a
+// backend-authored tab can misalign a table — is real and much weaker than
+// unreadable CLI formatting on every error, which is the alternative.
 func Message(s string) string {
 	if s == "" {
 		return s
 	}
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
-		lines[i] = Text(line)
+		segments := strings.Split(line, "\t")
+		for j, seg := range segments {
+			segments[j] = Text(seg)
+		}
+		lines[i] = strings.Join(segments, "\t")
 	}
 	return strings.Join(lines, "\n")
 }

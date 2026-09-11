@@ -46,7 +46,7 @@ var registerCmd = &cobra.Command{
 // public/paid flags) so the suggested first-publish flow cannot reach the
 // public or paid paths.
 func runRegister(ctx context.Context, cmd *cobra.Command, args []string) error {
-	prep, err := preparePublish(args)
+	prep, err := preparePublish("blocks register", args)
 	if err != nil {
 		return err
 	}

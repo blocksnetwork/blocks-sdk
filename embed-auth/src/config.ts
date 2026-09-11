@@ -82,8 +82,11 @@ export function resolveBackendBaseUrl(opts?: { backendBaseUrl?: string }): strin
  *      `blocks dev` injected `/__blocks_embed_dev.js` script — points
  *      at the local backend's `/api/v1/cdm` endpoint so the SDK
  *      resolves PubNub keysets and `api.baseUrl` from the local stack).
- *   3. `undefined` — the SDK falls through to its compiled-in default
- *      (`https://config.blocks.ai/config.json`).
+ *   3. `undefined` — the caller (api.ts) derives the CDM from the
+ *      resolved `backendBaseUrl` (`${backendBaseUrl}/api/v1/cdm`). The
+ *      SDK's compiled-in default is never reached in practice: without
+ *      a derived URL, production static deploys would fetch the public
+ *      network's CDM and send RPC to the wrong backend.
  *
  * Returned as an explicit constructor option to `TaskClient.create`,
  * which is the path the `explicit option → CDM → default`

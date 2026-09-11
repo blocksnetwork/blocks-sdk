@@ -66,12 +66,13 @@ func TestReportFatalDoesNotEscapeAnAlreadyEscapedMessage(t *testing.T) {
 func assertInert(t *testing.T, printed string) {
 	t.Helper()
 	for _, r := range strings.TrimSuffix(printed, "\n") {
-		// Newline is the one control character the boundary keeps, because a message is
-		// not a name: around ten CLI errors put their remedy on a second line, and
-		// escaping the break rendered them as one line carrying a literal \x0a. Every
-		// other control character is still escaped, so what remains inert is the part
-		// that matters — nothing printed can erase, reposition or reorder anything.
-		if r == '\n' {
+		// Newline and tab are the two control characters the boundary keeps, because a
+		// message is not a name: around ten CLI errors put their remedy on a second
+		// line, and cobra indents its suggestion list with tabs — escaping either
+		// rendered them as literal \x0a / \x09. Both are whitespace a terminal displays
+		// rather than acts on, so what remains inert is the part that matters — nothing
+		// printed can erase, reposition or reorder anything.
+		if r == '\n' || r == '\t' {
 			continue
 		}
 		if unicode.IsControl(r) {
@@ -119,6 +120,25 @@ func TestReportFatalStillDisarmsAnEscapeInsideAMultiLineMessage(t *testing.T) {
 	got := out.String()
 	if strings.ContainsRune(got, 0x1b) {
 		t.Errorf("an escape sequence survived: %q", got)
+	}
+	assertInert(t, got)
+}
+
+// Cobra's unknown-command output indents its suggestion list with tabs, and the whole
+// cobra error passes through this boundary — so the tab was rendered as a literal
+// `\x09` on every mistyped command. Nothing pinned that either. The tab is
+// CLI-authored formatting, and it is kept.
+func TestReportFatalKeepsCobraSuggestionIndentation(t *testing.T) {
+	var out bytes.Buffer
+	reportFatal(&out, errors.New("unknown command \"int\" for \"blocks\"\n\nDid you mean this?\n\tinit"))
+
+	got := out.String()
+	if strings.Contains(got, `\x09`) {
+		t.Errorf("the suggestion's tab was escaped: %q", got)
+	}
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) != 4 || lines[3] != "\tinit" {
+		t.Errorf("the suggestion must stay tab-indented on its own line, got %q", lines)
 	}
 	assertInert(t, got)
 }

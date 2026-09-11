@@ -22,6 +22,7 @@ import {
   __setStorageBackendForTesting,
   __setTaskClientFactoryForTesting,
 } from '../src/api.js';
+import { BACKEND_BASE_URL_DEFAULT } from '../src/constants.js';
 import * as managerRegistry from '../src/manager-registry.js';
 import { __testing as popupTesting } from '../src/popup.js';
 import { computePartitionKey, createStorageBackend } from '../src/storage.js';
@@ -121,13 +122,16 @@ afterEach(() => {
  * `window.open` runs synchronously *before* the Promise constructor body, so
  * we have to wait one tick for the record to be registered.
  */
-function arrangePopupReply(agents: Array<{ name: string; billingMode: 'free' | 'paid' }>): void {
+function arrangePopupReply(
+  agents: Array<{ name: string; billingMode: 'free' | 'paid' }>,
+  origin: string = BACKEND_ORIGIN,
+): void {
   openSpy.mockImplementation(() => {
     setTimeout(() => {
       const records = Array.from(popupTesting.inFlightPopups.values());
       const record = records[records.length - 1];
       if (!record) return;
-      dispatchMessage(makeSuccessEnvelope(record.state, agents));
+      dispatchMessage(makeSuccessEnvelope(record.state, agents), origin);
     }, 0);
     return popupHandle as unknown as Window;
   });
@@ -696,10 +700,135 @@ describe('cdmUrl plumbing into TaskClient.create (refined Option A)', () => {
     expect(factoryArg.cdmUrl).toBe('https://staging.blocks.ai/api/v1/cdm');
   });
 
-  it('absent in both opts and window → cdmUrl is NOT forwarded (SDK uses default)', async () => {
+  // The previous contract ("absent in both opts and window → cdmUrl is
+  // NOT forwarded, SDK uses its default") was replaced by the derived-CDM
+  // behavior asserted below: production deploys must not fall through to
+  // config.blocks.ai.
+
+  it('derives cdmUrl from backendBaseUrl when no override is set', async () => {
+    // Production static deploys (Vercel / Cloudflare / Netlify) have no dev
+    // shim. Without a derived CDM the SDK falls through to
+    // https://config.blocks.ai/config.json, which points RPC at the public
+    // Blocks Network — "Agent not found" for enterprise agents. The CDM must
+    // come from the same backend the auth flow already uses.
+    const storage = createStorageBackend();
+    __setStorageBackendForTesting(storage);
+    const partitionKey = await computePartitionKey({
+      backendBaseUrl: BACKEND,
+      pageOrigin: PAGE_ORIGIN,
+      agentNames: ['translator'],
+    });
     arrangePopupReply([{ name: 'translator', billingMode: 'free' }]);
     await signInAndGetClient({ agent: 'translator', backendBaseUrl: BACKEND });
-    const factoryArg = factorySpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(factoryArg).not.toHaveProperty('cdmUrl');
+
+    expect(factorySpy).toHaveBeenCalledTimes(1);
+    const factoryArg = factorySpy.mock.calls[0]![0] as { cdmUrl?: string };
+    expect(factoryArg.cdmUrl).toBe(`${BACKEND}/api/v1/cdm`);
+    // Round-trip: the resolved CDM is persisted with the session, so a page
+    // reload resumes against the same backend.
+    expect(storage.getSession(partitionKey)?.cdmUrl).toBe(`${BACKEND}/api/v1/cdm`);
+  });
+
+  it('derives cdmUrl from the compiled-in default backend when no backendBaseUrl is given', async () => {
+    // Vanilla public-network static deploy: no options, no dev shim. The
+    // backend comes from BACKEND_BASE_URL_DEFAULT and the CDM must be
+    // derived from it, not the SDK's compiled-in default endpoint.
+    const defaultBackendOrigin = new URL(BACKEND_BASE_URL_DEFAULT).origin;
+    arrangePopupReply([{ name: 'translator', billingMode: 'free' }], defaultBackendOrigin);
+
+    await signInAndGetClient({ agent: 'translator' });
+
+    expect(factorySpy).toHaveBeenCalledTimes(1);
+    const factoryArg = factorySpy.mock.calls[0]![0] as { cdmUrl?: string };
+    expect(factoryArg.cdmUrl).toBe(`${BACKEND_BASE_URL_DEFAULT}/api/v1/cdm`);
+  });
+
+  it('derives cdmUrl from backendBaseUrl when resuming a pre-cdmUrl session', async () => {
+    // Sessions persisted by widget builds before the fix carry no cdmUrl.
+    // Those resumes must also get the derived CDM, or a returning user on an
+    // enterprise page keeps hitting the public network until they re-sign-in.
+    const agents = [
+      { name: 'translator', id: AGENT_IDS[0]!, billingMode: 'free' as const },
+    ];
+    const partitionKey = await computePartitionKey({
+      backendBaseUrl: BACKEND,
+      pageOrigin: PAGE_ORIGIN,
+      agentNames: ['translator'],
+    });
+    const storage = createStorageBackend();
+    storage.setSession(partitionKey, {
+      refreshToken: 'r'.repeat(32),
+      agentIds: [AGENT_IDS[0]!],
+      agents,
+      orgId: ORG_ID,
+      userId: USER_ID,
+      pageOrigin: PAGE_ORIGIN,
+      backendBaseUrl: BACKEND,
+      // cdmUrl deliberately absent — pre-fix session shape
+    });
+    __setStorageBackendForTesting(storage);
+
+    fetchSpy.mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          token: 'fresh.jwt.value',
+          refreshToken: 'r-rotated-fresh.jwt.value',
+          expiresIn: 60,
+          agentIds: [AGENT_IDS[0]!],
+          userId: USER_ID,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    await signInAndGetClients({ agents: ['translator'], backendBaseUrl: BACKEND });
+
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(factorySpy).toHaveBeenCalledTimes(1);
+    const factoryArg = factorySpy.mock.calls[0]![0] as { cdmUrl?: string };
+    expect(factoryArg.cdmUrl).toBe(`${BACKEND}/api/v1/cdm`);
+  });
+
+  it('a stored session cdmUrl beats the derived default on resume', async () => {
+    // `blocks dev` persists its local CDM override into the session; a resume
+    // must keep using it rather than the backend-derived URL.
+    const agents = [
+      { name: 'translator', id: AGENT_IDS[0]!, billingMode: 'free' as const },
+    ];
+    const partitionKey = await computePartitionKey({
+      backendBaseUrl: BACKEND,
+      pageOrigin: PAGE_ORIGIN,
+      agentNames: ['translator'],
+    });
+    const storage = createStorageBackend();
+    storage.setSession(partitionKey, {
+      refreshToken: 'r'.repeat(32),
+      agentIds: [AGENT_IDS[0]!],
+      agents,
+      orgId: ORG_ID,
+      userId: USER_ID,
+      pageOrigin: PAGE_ORIGIN,
+      backendBaseUrl: BACKEND,
+      cdmUrl: 'http://localhost:3001/api/v1/cdm',
+    });
+    __setStorageBackendForTesting(storage);
+
+    fetchSpy.mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          token: 'fresh.jwt.value',
+          refreshToken: 'r-rotated-fresh.jwt.value',
+          expiresIn: 60,
+          agentIds: [AGENT_IDS[0]!],
+          userId: USER_ID,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    await signInAndGetClients({ agents: ['translator'], backendBaseUrl: BACKEND });
+
+    const factoryArg = factorySpy.mock.calls[0]![0] as { cdmUrl?: string };
+    expect(factoryArg.cdmUrl).toBe('http://localhost:3001/api/v1/cdm');
   });
 });

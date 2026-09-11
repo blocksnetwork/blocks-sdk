@@ -158,10 +158,16 @@ class ChannelManager:
             return channel[5:]
         return None
 
-    # -- PAM wildcard patterns ----------------------------------------------
+    # -- Wildcard patterns (subscription helpers; not grant guidance) ---------
 
     def user_task_pattern(self, org_id: str) -> str:
-        """Wildcard for all org tasks: ``u.{orgId}.*``."""
+        """Legacy wildcard over an org's task channels: ``u.{orgId}.*``.
+
+        The platform no longer grants read access on this pattern. Every
+        consumer read token covers exactly one task channel (see
+        :meth:`task_channel`), and the SDK subscribes to that channel only.
+        Kept for compatibility; do not use it as grant guidance.
+        """
         if not org_id:
             raise ValueError("org_id required for user task pattern")
         return f"u.{org_id}.*"

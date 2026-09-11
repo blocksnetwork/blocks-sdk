@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -87,7 +88,7 @@ const (
 func resolveBackendURL() string {
 	url, err := clictx.EffectiveBackendURL()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to fetch remote config: %v\n", err)
+		fmt.Fprintln(os.Stderr, remoteConfigWarning(err))
 		return ""
 	}
 	return url
@@ -277,7 +278,7 @@ func resolveClientID() string {
 	}
 	cfg, err := cdm.Get()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to fetch remote config: %v\n", err)
+		fmt.Fprintln(os.Stderr, remoteConfigWarning(err))
 		return ""
 	}
 	if cfg.Api.ClientID != "" {
@@ -314,10 +315,18 @@ var readAPIKeyFromStdin = func() (string, error) {
 // credential precedence, kept for one migration cycle. It reports the key,
 // whether a stored credential exists but has expired, and whether the file could
 // not be read at all, and decides nothing: the ordering lives in clictx.
+//
+// A file that is present and readable but holds no Blocks key is reported as no
+// credential rather than as a store failure: that is the standard shape after
+// the profile migration drains the "blocks" namespace, and its owner is simply
+// not authenticated — the opposite of an unreadable store, which may belong to
+// a logged-in user and must not be answered with "log in again". Both the
+// missing file and the drained file therefore fall through to the resolver's
+// no-credential arm.
 func loadStoredCredential() (string, bool, error) {
 	creds, err := auth.Load()
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || errors.Is(err, auth.ErrNoBlocksCredential) {
 			return "", false, nil
 		}
 		return "", false, err
@@ -353,9 +362,9 @@ func loadCredentials() (string, error) {
 	case c.StoreErr != nil:
 		return "", fmt.Errorf("failed to load credentials: %w", c.StoreErr)
 	case c.Expired:
-		return "", fmt.Errorf("API key has expired — run 'blocks login' to create a new one")
+		return "", apiKeyExpiredError()
 	default:
-		return "", fmt.Errorf("not logged in — run 'blocks login' first")
+		return "", notLoggedInError()
 	}
 }
 

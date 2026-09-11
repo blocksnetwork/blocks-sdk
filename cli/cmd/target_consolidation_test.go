@@ -288,7 +288,7 @@ func TestEnterpriseIsFalseWhenAnAmbientBackendDisplacesTheProfile(t *testing.T) 
 		t.Errorf("billing was forced to %q on a deployment that has a marketplace", *ov)
 	}
 
-	prep, err := captureStdoutErr(t, func() (*publishPrep, error) { return preparePublish(nil) })
+	prep, err := captureStdoutErr(t, func() (*publishPrep, error) { return preparePublish("blocks publish", nil) })
 	if err != nil {
 		t.Fatalf("preparePublish: %v", err)
 	}

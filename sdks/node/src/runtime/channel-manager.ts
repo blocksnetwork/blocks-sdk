@@ -137,8 +137,13 @@ export class ChannelManager {
   }
 
   /**
-   * Wildcard pattern for org's task channels (for PAM grants).
-   * Format: u.{orgId}.* (grants access to all tasks for this org)
+   * Legacy: wildcard over an org's task channels, `u.{orgId}.*`.
+   *
+   * The platform no longer grants read access on this pattern. Every consumer
+   * read token covers exactly one task channel (see `taskChannel`), and the
+   * SDK subscribes to that channel only. Kept for compatibility with callers
+   * that build the string for their own purposes; do not use it as grant
+   * guidance.
    */
   userTaskPattern(orgId: string): string {
     if (!orgId) {
@@ -207,8 +212,9 @@ export const taskChannel = (taskId: string, orgId: string): string => {
 };
 
 /**
- * Wildcard pattern for org's task channels (standalone function).
- * Format: u.{orgId}.*
+ * Legacy: wildcard over an org's task channels, `u.{orgId}.*` (standalone).
+ * The platform no longer grants read access on this pattern; consumer read
+ * tokens cover a single task channel. Kept for compatibility only.
  */
 export const userTaskPattern = (orgId: string): string => {
   if (!orgId) {

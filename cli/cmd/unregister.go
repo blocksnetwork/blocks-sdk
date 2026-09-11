@@ -68,7 +68,7 @@ func runUnregister(ctx context.Context, args []string) error {
 	}
 	backendURL := resolveBackendURL()
 	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set — run 'blocks login' first")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set — run 'blocks login' first")
 	}
 
 	// The organization the key belongs to does not scope this removal: the deployment

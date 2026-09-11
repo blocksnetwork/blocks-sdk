@@ -170,7 +170,7 @@ func runInviteSend(agentName string) error {
 	}
 	backendURL := resolveBackendURL()
 	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set")
 	}
 
 	payload := map[string]interface{}{}
@@ -242,7 +242,7 @@ func runInviteList(agentName string) error {
 	}
 	backendURL := resolveBackendURL()
 	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set")
 	}
 
 	listURL := fmt.Sprintf("%s/api/v1/agents/%s/invitations", backendURL, agentPathSegment(agentName))
@@ -298,7 +298,7 @@ func runInviteAccept(token string) error {
 	}
 	backendURL := resolveBackendURL()
 	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set")
 	}
 
 	payload := map[string]string{"token": token}
@@ -343,7 +343,7 @@ func runInviteRevoke(agentName string) error {
 	}
 	backendURL := resolveBackendURL()
 	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set")
 	}
 
 	// First list grants to find the one matching the email/org
@@ -434,7 +434,7 @@ func runInviteGrants(agentName string) error {
 	}
 	backendURL := resolveBackendURL()
 	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set")
 	}
 
 	grantsURL := fmt.Sprintf("%s/api/v1/agents/%s/grants", backendURL, agentPathSegment(agentName))
@@ -506,8 +506,8 @@ func handleErrorResponse(resp *http.Response) error {
 			msg = errResp.Message
 		}
 		if msg != "" {
-			return fmt.Errorf("request failed (HTTP %d): %s", resp.StatusCode, termsafe.Text(msg))
+			return inviteRequestFailedError(resp.StatusCode, termsafe.Text(msg))
 		}
 	}
-	return fmt.Errorf("request failed: HTTP %d", resp.StatusCode)
+	return inviteRequestFailedError(resp.StatusCode, "")
 }

@@ -61,6 +61,23 @@ const clients = await signInAndGetClients({
 await clients.translator.sendMessage({ /* ... */ });
 ```
 
+### Backend and CDM resolution
+
+`signInAndGetClient(s)` resolve the Blocks backend in this order:
+
+1. `backendBaseUrl` option (explicit override)
+2. `window.__BLOCKS_EMBED_DEV__.backendBaseUrl` (set by `blocks dev`)
+3. the widget build's compiled-in default (`https://app.blocks.ai`; on-prem
+   builds inject their own)
+
+The CDM endpoint the resulting `TaskClient` fetches (PubNub keysets +
+`api.baseUrl`) resolves as: explicit `cdmUrl` option, then the `blocks dev`
+shim, then **derived from the resolved backend** —
+`` `${backendBaseUrl}/api/v1/cdm` ``. The widget always passes an explicit
+`cdmUrl` to the SDK, so the SDK's own `BLOCKS_CDM_URL` environment variable
+and compiled-in default never apply inside the widget. To point a page at a
+non-default CDM deployment (staging, on-prem), pass the `cdmUrl` option.
+
 ### Sign-out
 
 ```ts
