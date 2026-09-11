@@ -117,7 +117,7 @@ func resolveDashboardURL() (string, error) {
 	if v := resolveBackendURL(); v != "" {
 		return v, nil
 	}
-	return "", fmt.Errorf("could not resolve dashboard URL - set BLOCKS_APP_BASE_URL or BLOCKS_DASHBOARD_URL, or ensure CDM config is reachable")
+	return "", dashboardURLUnresolvableError()
 }
 
 // agentNameFromCard reads the "name" field from agent-card.json in the cwd.

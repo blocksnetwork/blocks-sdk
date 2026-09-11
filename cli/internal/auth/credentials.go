@@ -9,11 +9,21 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+// ErrNoBlocksCredential is returned by Load when the credentials file is present
+// and readable but holds no "blocks" namespace — the standard state after the
+// profile migration drains the entry. It is a sentinel so the CLI's credential
+// adapter can tell this apart from a store that cannot be read: an absent Blocks
+// key is an absent login (the caller is simply not authenticated), while an
+// unreadable store may belong to a logged-in user whose key cannot be recorded
+// again, and those two states warrant different advice.
+var ErrNoBlocksCredential = errors.New("no Blocks credentials found — run 'blocks login'")
 
 // currentSchemaVersion is the credentials file format version.
 // v3 is a namespaced multi-provider shape; v2 was a flat single-key shape.
@@ -275,7 +285,7 @@ func Load() (*Credentials, error) {
 
 	entry := all.Providers["blocks"]
 	if entry == nil {
-		return nil, fmt.Errorf("no Blocks credentials found — run 'blocks login'")
+		return nil, ErrNoBlocksCredential
 	}
 
 	var expiresAt time.Time

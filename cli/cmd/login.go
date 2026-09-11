@@ -711,7 +711,7 @@ func loginToProfile(ctx context.Context, choice deploymentChoice) (out loginOutc
 	}
 	mergeDiscovery(&p, choice, disco)
 
-	orgId, orgName, err := resolveOrgForKey(backendURL, apiKey, minted)
+	orgId, orgName, err := resolveOrgForKey(backendURL, apiKey, minted, p.Enterprise)
 	if err != nil {
 		return loginOutcome{}, err
 	}
@@ -1136,7 +1136,10 @@ func mergeDiscovery(p *profiles.Profile, choice deploymentChoice, disco *cliconf
 // fail loudly instead. (The browser/OAuth path always resolves an org, so this
 // only guards the --api-key / --api-key-stdin path when publish-context lookup
 // fails — e.g. an invalid key or wrong URL.)
-func resolveOrgForKey(backendURL, apiKey string, minted *auth.Credentials) (string, string, error) {
+//
+// enterprise is the verdict discovery just recorded for this login's target, so
+// the failure names the deployment the way an Enterprise user meets it.
+func resolveOrgForKey(backendURL, apiKey string, minted *auth.Credentials, enterprise bool) (string, string, error) {
 	orgId, orgName := minted.OrgId, minted.OrgName
 	if orgId == "" && apiKey != "" && backendURL != "" {
 		if pc := registry.FetchPublishContext(backendURL, apiKey); pc != nil {
@@ -1144,11 +1147,7 @@ func resolveOrgForKey(backendURL, apiKey string, minted *auth.Credentials) (stri
 		}
 	}
 	if orgId == "" && apiKey != "" {
-		target := backendURL
-		if target == "" {
-			target = "the target instance"
-		}
-		return "", "", fmt.Errorf("could not determine the organization for this API key from %s — the key was not stored; verify the key is valid and the instance URL is correct, then retry", termsafe.Text(target))
+		return "", "", loginOrgUnresolvableError(backendURL, enterprise)
 	}
 	return orgId, orgName, nil
 }

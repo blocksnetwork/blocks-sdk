@@ -61,9 +61,9 @@ export interface SignInSingleOptions {
   /**
    * Override the CDM URL passed to `TaskClient.create`. When unset,
    * the widget reads `__BLOCKS_EMBED_DEV__.cdmUrl` (set by `blocks dev`)
-   * if present; otherwise the SDK falls through to its compiled-in
-   * default. Pass to point a partner page at a non-default CDM
-   * deployment (staging, on-prem).
+   * if present; otherwise the CDM is derived from the resolved
+   * `backendBaseUrl` (`${backendBaseUrl}/api/v1/cdm`). Pass to point a
+   * partner page at a non-default CDM deployment (staging, on-prem).
    */
   cdmUrl?: string;
   /** Optional handler for fatal auth errors after sign-in. */
@@ -79,9 +79,9 @@ export interface SignInMultiOptions {
   /**
    * Override the CDM URL passed to `TaskClient.create`. When unset,
    * the widget reads `__BLOCKS_EMBED_DEV__.cdmUrl` (set by `blocks dev`)
-   * if present; otherwise the SDK falls through to its compiled-in
-   * default. Pass to point a partner page at a non-default CDM
-   * deployment (staging, on-prem).
+   * if present; otherwise the CDM is derived from the resolved
+   * `backendBaseUrl` (`${backendBaseUrl}/api/v1/cdm`). Pass to point a
+   * partner page at a non-default CDM deployment (staging, on-prem).
    */
   cdmUrl?: string;
   /** Optional handler for fatal auth errors after sign-in. */
@@ -120,8 +120,9 @@ export interface SessionData {
   /**
    * CDM URL the SDK should fetch when this session resumes after a
    * page reload. Persisted alongside `backendBaseUrl` so the `blocks
-   * dev` flow's local-CDM override survives reload. Absent on
-   * production sessions; the SDK falls through to its baked-in default.
+   * dev` flow's local-CDM override survives reload. Absent only on
+   * sessions persisted by earlier widget builds; resume then
+   * derives the CDM from `backendBaseUrl`.
    */
   cdmUrl?: string;
 }

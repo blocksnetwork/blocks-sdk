@@ -798,6 +798,14 @@ func (s *state) host() string {
 	return termsafe.Text(strings.TrimSpace(origin))
 }
 
+// DeploymentLabel names the deployment this invocation will actually call, for
+// error wording that must say where a failure happened or where to log in
+// again: the active profile's name while that profile describes the target,
+// otherwise the backend's host. It is the same rule the banner renders, exposed
+// so an error message and the banner can never name different deployments.
+// Empty when nothing resolvable names the target.
+func DeploymentLabel() string { return cur.deployment() }
+
 // TargetName names the deployment this invocation acts on, for the sentences a
 // user reads: "removed from X", "published to X", "creating a project for X". It
 // follows the same rule as Banner — never assert what cannot be verified.

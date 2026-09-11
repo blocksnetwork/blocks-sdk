@@ -50,7 +50,7 @@ func runDev(ctx context.Context) error {
 	// Resolve backend URL.
 	backendURL := resolveBackendURL()
 	if backendURL == "" {
-		return fmt.Errorf("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
+		return backendNotConfigured("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
 	}
 
 	// Build and run server.

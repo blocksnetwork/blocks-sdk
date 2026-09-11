@@ -153,7 +153,17 @@ export async function signInAndGetClients(
   const requestedAgents = validateAgents(opts);
 
   const backendBaseUrl = resolveBackendBaseUrl(opts);
-  const cdmUrl = resolveCdmUrl(opts);
+  // Explicit cdmUrl (caller or `blocks dev` shim) wins; otherwise derive the
+  // CDM from the same backend the auth flow uses. Without this, production
+  // static deploys (no dev shim) let the SDK fall through to its compiled-in
+  // default (config.blocks.ai), pointing RPC at the public Blocks Network —
+  // "Agent not found" for agents on an enterprise backend.
+  //
+  // Sync invariant: for the public network the derived URL
+  // (`app.blocks.ai/api/v1/cdm`) must serve the same CDM document as the
+  // SDK's compiled-in default (`config.blocks.ai/config.json`). The two
+  // endpoints must not drift, or widget keysets silently change.
+  const cdmUrl = resolveCdmUrl(opts) ?? `${backendBaseUrl}/api/v1/cdm`;
   const pageOrigin = resolvePageOrigin();
   const storage = getStorage();
   const partitionKey = await computePartitionKey({
@@ -257,7 +267,7 @@ export async function signInAndGetClients(
     userId: envelope.userId,
     pageOrigin,
     backendBaseUrl,
-    ...(cdmUrl !== undefined ? { cdmUrl } : {}),
+    cdmUrl,
   });
 
   const manager = new EmbeddedAuthSessionManager({
@@ -292,11 +302,13 @@ async function buildClientMap(
     /**
      * Plumbs to `TaskClient.create({ cdmUrl })` — the explicit-option
      * path the `explicit option → CDM → default` resolver
-     * preserves. Set when the dev shim or the page caller wants the SDK
-     * to fetch CDM (PubNub keys + `api.baseUrl`) from a non-default
-     * source — typically the local backend in `blocks dev`.
+     * preserves. Set by the page caller, the `blocks dev` shim, or
+     * derived from `backendBaseUrl` (the production-deploy fallback) so the SDK
+     * always fetches CDM (PubNub keys + `api.baseUrl`) from the backend
+     * the auth flow already uses. Always a string — both call sites
+     * resolve it before reaching here.
      */
-    cdmUrl?: string;
+    cdmUrl: string;
   },
 ): Promise<Record<string, TaskClient>> {
   const factory = getTaskClientFactory();
@@ -320,7 +332,7 @@ async function buildClientMap(
         billingMode: agent.billingMode,
         tokenProvider: manager.tokenProvider,
         onAuthError: sdkOnAuthError,
-        ...(opts.cdmUrl !== undefined ? { cdmUrl: opts.cdmUrl } : {}),
+        cdmUrl: opts.cdmUrl,
       });
       byBillingMode.set(agent.billingMode, client);
     }

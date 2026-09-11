@@ -38,7 +38,7 @@ For Python projects (detected by pyproject.toml): uses venv walk-up with "python
 		cardPath := filepath.Join(cwd, "agent-card.json")
 
 		if _, statErr := os.Stat(cardPath); os.IsNotExist(statErr) {
-			return fmt.Errorf("could not read %s\nCreate an agent-card.json or run: blocks init <name>", cardPath)
+			return agentCardNotFoundError(cardPath)
 		}
 
 		// Validate agent card against schema before running. The shim runs
@@ -162,7 +162,7 @@ func execPython(cwd string) error {
 		return sysExec(blocksRun, []string{"blocks-run"}, cwd)
 	}
 
-	return fmt.Errorf("no Python venv found. Run 'make setup' or activate a virtualenv with the Blocks SDK")
+	return pythonVenvNotFoundError()
 }
 
 // findVenvPython walks up from startDir looking for .venv/bin/python (Unix)

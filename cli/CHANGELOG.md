@@ -55,6 +55,17 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
 
 ### Changed
 
+- Error messages on Enterprise deployments now name the deployment you are
+  working with and say what to do next. Where a message told you to "run
+  `blocks login`" without saying where, it now names your profile and its URL
+  when one exists, or tells you to pass your instance URL when it does not —
+  including where an API key comes from (the deployment's dashboard). A
+  missing backend URL now says to log in first or set `BLOCKS_BACKEND_URL`,
+  instead of naming internal configuration. A permission failure names the
+  permission and the organization it was refused in. `blocks register` no
+  longer tells you to fix validation errors "before publishing", and a failed
+  request names the deployment it was sent to. Messages on Blocks Network are
+  unchanged.
 - `blocks login` now refuses a plain-`http` deployment URL unless its host is
   your own machine. `https://` is required for every other host, and the
   authority has to be a host with an optional port in the range 1–65535, so a
@@ -151,6 +162,17 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
 
 ### Fixed
 
+- A mistyped command's "Did you mean this?" suggestions are indented
+  correctly again. The tab characters indenting each suggestion were being
+  rendered as a literal `\x09`, so every typo produced a garbled hint instead
+  of a readable one.
+- A logged-out CLI no longer reports a credential-store failure when nothing
+  is wrong with the store. The leftover credentials file from an earlier
+  version, drained of its Blocks key by the move to profiles, was being read
+  as a broken store — so logging out and then publishing or registering
+  printed "failed to load credentials" instead of the sign-in guidance. An
+  empty Blocks slot is now treated as simply not signed in; a store that
+  genuinely cannot be read still reports the failure.
 - `blocks profile list`, `blocks whoami`, and `blocks profile use` now report when
   `BLOCKS_BACKEND_URL` overrides the selected profile and decides where commands
   actually go. Previously all three described the saved profile as though it were

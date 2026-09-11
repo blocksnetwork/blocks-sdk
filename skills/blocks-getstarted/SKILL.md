@@ -87,7 +87,7 @@ If the user actually wants to:
 
 - **Deploy code they already wrote** ("deploy mine", "connect", "register", "publish", "ship") -- stop and use the `blocks-network` skill (`https://config.blocks.ai/SKILL.md`).
 - **Modify / fix / update an existing agent** -- stop and use `https://config.blocks.ai/SKILL.md`.
-- **Call agents from a script** (consumer code) -- stop and use `https://config.blocks.ai/SKILL.md` → "Consumer Projects & Trigger / Client Code".
+- **Call agents from a script** (consumer code) -- stop and use `https://config.blocks.ai/SKILL.md`, which routes consumer code to [Node Reference] / [Python Reference].
 
 Use the trigger words from the user's prompt. **Never** infer the path
 from the current working directory or repo name. If the user's intent
@@ -233,7 +233,7 @@ lands in the parent directory's `.env`, which `blocks run` inside the
 project will not pick up.
 
 > For `blocks whoami`, `blocks logout`, `blocks version`, and other CLI
-> auxiliary commands, see `https://config.blocks.ai/SKILL.md` → CLI Reference.
+> auxiliary commands, see [Agent Development Guide] → CLI Commands.
 
 ## Step 4: Scaffold
 
@@ -252,7 +252,7 @@ defaults to Python when `--language` is omitted, so always pass
 agent (`handler.{ts,py}`, `trigger.{ts,py}`, `agent-card.json`). That's
 what this skill is for. If the user actually wants to **call** other
 Blocks agents from a script (a consumer project), stop here and use
-`https://config.blocks.ai/SKILL.md` → "Consumer Projects & Trigger / Client Code".
+`https://config.blocks.ai/SKILL.md`, which routes consumer code to [Node Reference] / [Python Reference].
 
 ## Step 5: Implement Handler and IO Schema
 
@@ -275,8 +275,8 @@ Two things to get right before publish:
    schema, the dashboard can't render input forms.
 
 For the full IO schema rules (transport classes, form/text/file class
-constraints, examples, defaults), see `https://config.blocks.ai/SKILL.md` → IO Schema Rules. For
-streaming agents, see `https://config.blocks.ai/SKILL.md` → Streaming Agents. For handler
+constraints, examples, defaults), see [IO Schema Reference]. For
+streaming agents, see [Node Reference] / [Python Reference]. For handler
 signatures and patterns, see [Node Reference] / [Python Reference].
 
 ## Step 6: Register (or Publish)
@@ -330,8 +330,8 @@ is off and `--billing-mode paid` is rejected with an error naming the value
 that works — publish free there instead (omit the flag, or pass `free`).
 
 For the full non-interactive flag table, paid-pricing variants, and
-private-agent invite management, see `https://config.blocks.ai/SKILL.md` → Registering &
-Publishing.
+private-agent invite management, see `https://config.blocks.ai/SKILL.md` → Registration and
+visibility, and the invite sections of [Node Reference] / [Python Reference].
 
 **Name conflict.** If the user reports that `blocks register` or
 `blocks publish` rejected the name as taken, ask for a more unique
@@ -390,8 +390,8 @@ Report the result to the user.
 
 The scaffolded `trigger.ts` doubles as the canonical pattern for
 **consumer code** that drives agents from another app or script. To
-port the same pattern into a separate codebase, see `https://config.blocks.ai/SKILL.md` →
-Consumer Projects & Trigger / Client Code.
+port the same pattern into a separate codebase, see `https://config.blocks.ai/SKILL.md` and the
+consumer sections of [Node Reference] / [Python Reference].
 
 ## Step 10: Dashboard
 
@@ -418,12 +418,12 @@ BLOCKS_APP_BASE_URL=https://staging.blocks.ai blocks dashboard
 Now that the agent is registered and running, hand off to the
 `blocks-network` skill (`https://config.blocks.ai/SKILL.md`) for everything else:
 
-- **Streaming output** -- `https://config.blocks.ai/SKILL.md` → Streaming Agents
-- **Calling agents from scripts/apps** -- `https://config.blocks.ai/SKILL.md` → Consumer Projects & Trigger / Client Code
-- **Modifying or republishing** -- `https://config.blocks.ai/SKILL.md` → Modifying an Existing Agent / Registering & Publishing
-- **Private-agent access** -- `https://config.blocks.ai/SKILL.md` → Registering & Publishing → invite management
-- **Troubleshooting** -- `https://config.blocks.ai/SKILL.md` → Common Pitfalls
-- **CLI commands** (`whoami`, `logout`, `version`, env-var overrides) -- `https://config.blocks.ai/SKILL.md` → CLI Reference
+- **Streaming output** -- [Node Reference] / [Python Reference]
+- **Calling agents from scripts/apps** -- `https://config.blocks.ai/SKILL.md` → Call an agent from a script or service
+- **Modifying or republishing** -- `https://config.blocks.ai/SKILL.md` → Modify an existing agent / Registration and visibility
+- **Private-agent access** -- `https://config.blocks.ai/SKILL.md` → Registration and visibility; invites in [Node Reference] / [Python Reference]
+- **Troubleshooting** -- `https://config.blocks.ai/SKILL.md` → Completion check, then the relevant reference
+- **CLI commands** (`whoami`, `logout`, `version`, env-var overrides) -- [Agent Development Guide] → CLI Commands / Environment Variables
 
 ## References
 
