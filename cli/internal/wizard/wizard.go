@@ -55,6 +55,12 @@ var projectNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 // Mirrors the limit enforced by internal/config.Validate and cmd/init.go.
 const maxAgentsPerWebapp = 25
 
+// AgentValidateFunc validates a value accepted by the webapp wizard's
+// agent autocomplete. fromSuggestion is true when the value was picked from
+// the registry's suggestion list — the registry already vouched that the
+// agent exists, so an existence check would be a redundant round-trip.
+type AgentValidateFunc func(value string, fromSuggestion bool) error
+
 // Help text constants for inline ? help across wizard prompts.
 const (
 	helpType = "  Provider: You're building an agent that processes tasks.\n" +
@@ -91,15 +97,30 @@ const (
 
 	helpWebappName = "  A name for your web app project. This becomes the directory the files are\n" +
 		"  scaffolded into. Letters, numbers, dots, dashes, and underscores only."
+)
 
-	helpWebappAgents = "  The bare name(s) of the Blocks agent(s) this page will call (e.g. 'translator').\n" +
+// HelpWebappAgentsText is the agent-collection prompt help. It reads the
+// active product name at call time so an enterprise deployment names itself
+// rather than the public network.
+func HelpWebappAgentsText() string {
+	return "  The bare name(s) of the " + branding.ProductName() + " agent(s) this page will call (e.g. 'translator').\n" +
 		"  Start typing to search the registry — public agents plus any private ones\n" +
 		"  your account can access. You can add several agents to one page."
+}
 
-	helpProjectKind = "  Agent: build an agent that processes tasks, or a consumer that calls agents.\n" +
-		"  Web app: scaffold a static page pre-wired with the Blocks embed-auth widget\n" +
+// HelpProjectKindText is the project-kind prompt help. It reads the active
+// product name and deployment kind at call time so an enterprise deployment
+// describes the choice in its own vocabulary — there is no marketplace of
+// consumers there, only other agents on the same deployment.
+func HelpProjectKindText() string {
+	widget := "  Web app: scaffold a static page pre-wired with the " + branding.ProductName() + " embed-auth widget\n" +
 		"  that calls one or more existing agents."
-)
+	if clictx.Enterprise() {
+		return "  Agent: build an agent that processes tasks, or a client that calls other\n" +
+			"  agents on this deployment.\n" + widget
+	}
+	return "  Agent: build an agent that processes tasks, or a consumer that calls agents.\n" + widget
+}
 
 // Config holds all wizard answers needed to scaffold a project.
 type Config struct {
@@ -333,22 +354,23 @@ const (
 // ProjectKindAgent or ProjectKindWebapp. On a non-terminal stdin it returns
 // the default (ProjectKindAgent), preserving the historical agent behavior.
 func SelectProjectKind() (int, error) {
-	return InteractiveSelect("What are you building?", []string{"Agent", "Web app"}, ProjectKindAgent, helpProjectKind)
+	return InteractiveSelect("What are you building?", []string{"Agent", "Web app"}, ProjectKindAgent, HelpProjectKindText())
 }
 
 // RunWebapp executes the interactive webapp wizard: it prompts for a project
 // name, then collects one or more agent names via the live type-ahead
-// autocomplete (backed by suggest). It returns a Config with Mode == "webapp".
+// autocomplete (backed by suggest, with Enter-time validation via validate).
+// It returns a Config with Mode == "webapp".
 //
 // The project-name prompt runs in canonical line mode; the agent-collection
 // loop runs under a single raw-mode session so only one goroutine ever reads
 // stdin. When stdin is not a terminal, the agent loop falls back to plain line
-// prompts (no live suggestions).
+// prompts (no live suggestions, regex-only validation).
 //
 // The name prompt is unconditional and gated, so under --no-input this function
 // refuses before the raw-mode reader is ever started — the agent loop's own
 // keypress reads need no separate gate.
-func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
+func RunWebapp(ctx context.Context, suggest SuggestFunc, validate AgentValidateFunc) (Config, error) {
 	r := bufio.NewReader(os.Stdin)
 
 	name, err := readRequiredLine(r, "Web app name", webappNameFlagHint, helpWebappName, ValidateProjectName)
@@ -358,7 +380,7 @@ func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
 
 	ri, ok := newRawInput()
 	if !ok {
-		agents, err := collectAgentsPlain(r)
+		agents, err := collectAndReviewAgentsPlain(r)
 		if err != nil {
 			return Config{}, err
 		}
@@ -366,18 +388,44 @@ func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
 	}
 	defer ri.close()
 
-	fmt.Print("\r\nAdd the agents this web app will call (esc when done):\r\n")
+	// Collect, review, and — if the review removed everything — collect
+	// again. A wrong pick used to cost a Ctrl+C and a full restart; now it
+	// costs one removal, and even removing every agent only loops back to
+	// the collection prompt.
 	var agents []string
 	for {
-		value, err := ri.autocomplete(ctx, "Agent to use", suggest, ValidateAgentName)
+		fmt.Print("\r\nAdd the agents this web app will call (esc when done):\r\n")
+		agents, err = collectAgentsTTY(ri, ctx, suggest, validate)
+		if err != nil {
+			return Config{}, err
+		}
+		agents, err = reviewAgentsTTY(ri, ctx, agents)
+		if err != nil {
+			return Config{}, err
+		}
+		if len(agents) > 0 {
+			break
+		}
+		fmt.Print("\r\nAll agents removed — add at least one.\r\n")
+	}
+	return Config{Mode: "webapp", Name: name, Agents: agents}, nil
+}
+
+// collectAgentsTTY is the interactive agent-collection loop: type-ahead
+// autocomplete per agent, then an add-another confirm, until Esc, a "no",
+// or the per-page limit.
+func collectAgentsTTY(ri *rawInput, ctx context.Context, suggest SuggestFunc, validate AgentValidateFunc) ([]string, error) {
+	var agents []string
+	for {
+		value, err := ri.autocomplete(ctx, "Agent to use", suggest, validate)
 		if err != nil {
 			if errors.Is(err, ErrCanceled) {
 				if len(agents) > 0 {
 					break // esc finishes once we have at least one agent
 				}
-				return Config{}, fmt.Errorf("canceled")
+				return nil, fmt.Errorf("canceled")
 			}
-			return Config{}, err
+			return nil, err
 		}
 
 		switch {
@@ -397,7 +445,7 @@ func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
 			if errors.Is(err, ErrCanceled) {
 				break
 			}
-			return Config{}, err
+			return nil, err
 		}
 		if !more {
 			break
@@ -405,9 +453,103 @@ func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
 	}
 
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("at least one agent is required")
+		return nil, fmt.Errorf("at least one agent is required")
 	}
-	return Config{Mode: "webapp", Name: name, Agents: agents}, nil
+	return agents, nil
+}
+
+// reviewAgentsTTY shows the collected list and offers removal before
+// anything is scaffolded. Esc at the confirmation finishes the review; Esc
+// at the pick is "never mind" and returns to the confirmation. An empty
+// result is legal here — the caller loops back to collection.
+func reviewAgentsTTY(ri *rawInput, ctx context.Context, agents []string) ([]string, error) {
+	printList := func() {
+		fmt.Printf("\r\n  Agents (%d): %s\r\n", len(agents), strings.Join(agents, ", "))
+	}
+	printList()
+	for len(agents) > 0 {
+		remove, err := ri.confirm("Remove an agent?", false)
+		if err != nil {
+			if errors.Is(err, ErrCanceled) {
+				return agents, nil
+			}
+			return nil, err
+		}
+		if !remove {
+			return agents, nil
+		}
+
+		// The pick reuses the autocomplete: suggestions are the collected
+		// names filtered by the query, and Enter on anything not in the
+		// list is rejected inline.
+		value, err := ri.autocomplete(ctx, "Agent to remove",
+			func(_ context.Context, q string) ([]Suggestion, error) {
+				var out []Suggestion
+				for _, a := range agents {
+					if strings.Contains(strings.ToLower(a), strings.ToLower(q)) {
+						out = append(out, Suggestion{Value: a})
+					}
+				}
+				return out, nil
+			},
+			func(value string, _ bool) error {
+				if !containsString(agents, value) {
+					return fmt.Errorf("%q is not in the list above", value)
+				}
+				return nil
+			})
+		if err != nil {
+			if errors.Is(err, ErrCanceled) {
+				continue
+			}
+			return nil, err
+		}
+		agents = removeString(agents, value)
+		printList()
+	}
+	return agents, nil
+}
+
+// collectAndReviewAgentsPlain is the non-TTY fallback: line-based collection
+// followed by the same review, restarting collection if the review removed
+// everything.
+func collectAndReviewAgentsPlain(r *bufio.Reader) ([]string, error) {
+	for {
+		agents, err := collectAgentsPlain(r)
+		if err != nil {
+			return nil, err
+		}
+		agents, err = reviewAgentsPlain(r, agents)
+		if err != nil {
+			return nil, err
+		}
+		if len(agents) > 0 {
+			return agents, nil
+		}
+		fmt.Println("  All agents removed — at least one is required.")
+	}
+}
+
+// reviewAgentsPlain is the line-based review: print the list, read a name to
+// remove, blank line finishes.
+func reviewAgentsPlain(r *bufio.Reader, agents []string) ([]string, error) {
+	for len(agents) > 0 {
+		fmt.Printf("  Agents (%d): %s\n", len(agents), strings.Join(agents, ", "))
+		line, err := readLine(r, "Agent to remove (blank to finish review)", "", HelpWebappAgentsText())
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return agents, nil
+		}
+		if !containsString(agents, line) {
+			fmt.Printf("  %q is not in the list.\n", line)
+			continue
+		}
+		agents = removeString(agents, line)
+	}
+	return agents, nil
 }
 
 // collectAgentsPlain is the non-TTY fallback for agent collection: repeated
@@ -415,7 +557,7 @@ func RunWebapp(ctx context.Context, suggest SuggestFunc) (Config, error) {
 func collectAgentsPlain(r *bufio.Reader) ([]string, error) {
 	var agents []string
 	for {
-		line, err := readLine(r, "Agent name (blank to finish)", "", helpWebappAgents)
+		line, err := readLine(r, "Agent name (blank to finish)", "", HelpWebappAgentsText())
 		if err != nil {
 			return nil, err
 		}
@@ -450,6 +592,18 @@ func containsString(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// removeString returns xs without want. Agent names are unique within a
+// webapp list, so at most one entry can match.
+func removeString(xs []string, want string) []string {
+	out := make([]string, 0, len(xs))
+	for _, x := range xs {
+		if x != want {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // modeFromIndex maps the InteractiveSelect index for the Mode prompt to

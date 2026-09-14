@@ -311,3 +311,38 @@ func agentNotFoundOnDeploymentError(name, deployment string) error {
 	}
 	return fmt.Errorf("agent %q not found — check the spelling.\n  If it is a private agent your account can access, log in first: run 'blocks login'.", name)
 }
+
+// privateOrgGroup is one organization's private agents in a webapp agent
+// list, as the scaffold's multi-org check groups them.
+type privateOrgGroup struct {
+	orgID   string
+	orgName string
+	agents  []string
+}
+
+// webappMultiOrgPrivateAgentsError is the webapp scaffold's refusal for a
+// page wiring private agents from more than one organization: the sign-in
+// popup binds a session to a single organization and rejects such a mix, so
+// the page would fail for every visitor at the sign-in step — reported here
+// instead, before anything is written.
+//
+// The paste-safety shape of the not-found wording applies: agent and org
+// names are registry-sourced, so they stay on their own lines and off the
+// line that words the remedy. Org names are display-only (not a documented
+// contract field), rendered through termsafe like every interpolated value.
+func webappMultiOrgPrivateAgentsError(groups []privateOrgGroup) error {
+	var lines []string
+	for _, g := range groups {
+		label := g.orgName
+		if label == "" {
+			label = g.orgID
+		}
+		lines = append(lines, fmt.Sprintf("  %s — %s", strings.Join(g.agents, ", "), termsafe.Text(label)))
+	}
+	return fmt.Errorf("cannot scaffold: private agents from more than one organization cannot share one page —\n"+
+		"a sign-in session is bound to a single organization, so every visitor's sign-in would be rejected.\n"+
+		"%s\n"+
+		"  Keep private agents from one organization per page, or make the others public:\n"+
+		"  run 'blocks publish --listing public' for the agents that should be reachable by anyone.",
+		strings.Join(lines, "\n"))
+}

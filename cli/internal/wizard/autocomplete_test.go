@@ -1,6 +1,10 @@
 package wizard
 
 import (
+	"fmt"
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -215,5 +219,168 @@ func TestACModel_Selected(t *testing.T) {
 	m.highlight = 0
 	if v, fromSugg := m.selected(); v != "translator" || !fromSugg {
 		t.Errorf("selected = (%q, %v), want (translator, true)", v, fromSugg)
+	}
+}
+
+// withPipeStdout swaps os.Stdout for a pipe for the duration of the test and
+// returns everything written once f has run. Restoration is deferred so a
+// panic or t.Fatal inside f cannot leave the package's stdout pointed at a
+// dead pipe for later tests.
+func withPipeStdout(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = old
+		w.Close()
+	})
+	f()
+	w.Close()
+	os.Stdout = old // restore on the normal path too, so nothing between here and Cleanup writes into a closed fd
+	out, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// cursorUp parses the trailing \x1b[NA from a rendered block — the number of
+// physical rows the renderer believes it drew.
+func cursorUp(t *testing.T, out string) int {
+	t.Helper()
+	var n int
+	if _, err := fmt.Sscanf(out[strings.LastIndex(out, "\x1b["):], "\x1b[%dA", &n); err != nil {
+		t.Fatalf("no cursor-up suffix in %q", out)
+	}
+	return n
+}
+
+// The cursor-up count at the end of renderAutocomplete must equal the number
+// of physical rows drawn — including rows where a long error, prompt, or
+// suggestion wraps at the terminal width. Counting a wrapped line as one row
+// lands the cursor short, so the \x1b[J clear starts too low and each redraw
+// walks the prompt down the screen leaving residue.
+//
+// The expected count is hard-coded, not derived from physicalLines/visibleLen:
+// deriving it from the helpers under test would let a regression in those
+// helpers move the expectation with the implementation and stay green.
+func TestRenderAutocomplete_WrappedRowsCountedPhysically(t *testing.T) {
+	ri := &rawInput{width: 80}
+
+	// The not-found messages the wizard emits are ~120-135 columns before the
+	// two-space indent, so at 80 columns they wrap to two physical rows. The
+	// em dash is 3 bytes but one column — this fixture also pins that the
+	// counting is by column, not byte.
+	longErr := `agent "transcription-pipeline-v2" not found — check the spelling (if it is a private agent your account can access, cancel with Esc and log in first)`
+
+	m := newACModel()
+	out := withPipeStdout(t, func() {
+		ri.renderAutocomplete("Agent name", m, longErr)
+	})
+
+	// prompt+hint row, input row, error wrapping to 2 rows → 4 total.
+	if n := cursorUp(t, out); n != 4 {
+		t.Errorf("cursor-up = %d rows, want 4 (prompt, input, error wrapped to 2)", n)
+	}
+}
+
+// A suggestion row whose visible length sits exactly at the wrap boundary
+// must count as ONE row — counting its trailing \r\n or counting bytes
+// instead of columns both inflate it to two and push the cursor-up above the
+// block, erasing the line the previous wizard step printed.
+func TestRenderAutocomplete_BoundarySuggestionNotOvercounted(t *testing.T) {
+	// Width 80 keeps the prompt+hint row (~61 cols) unwrapped, isolating the
+	// suggestion row. Highlighted-row prefix: 4 spaces + "› " = 6 visible
+	// columns, so a 74-column value lands the row exactly at 80.
+	const width = 80
+	value := strings.Repeat("a", 74)
+	m := newACModel()
+	m.suggestions = []Suggestion{{Value: value}}
+	m.highlight = 0
+	ri := &rawInput{width: width}
+
+	out := withPipeStdout(t, func() {
+		ri.renderAutocomplete("Agent name", m, "")
+	})
+
+	// prompt+hint, input, one suggestion row → 3 total. The pre-fix bugs
+	// (CRLF/byte inflation) counted 4+ here.
+	if n := cursorUp(t, out); n != 3 {
+		t.Errorf("cursor-up = %d rows, want 3 (boundary suggestion must be one row)", n)
+	}
+}
+
+// Multi-byte glyphs in a suggestion label must be measured in display CELLS,
+// not bytes or runes: an East Asian Wide glyph like 組 occupies two cells
+// (Unicode TR11 / UAX #11). The label below is 11 runes of 組 = 22 cells, so
+// the row's true width is 6 + 60 + 3 + 22 = 91 cells — one physical row at
+// width 91, two at width 80. Rune-counting would read 80 cells and fit it on
+// one row, under-counting; byte-counting would read ~113.
+func TestRenderAutocomplete_UnicodeLabelCountedByCell(t *testing.T) {
+	label := strings.Repeat("組", 11)
+	m := newACModel()
+	m.suggestions = []Suggestion{{Value: strings.Repeat("v", 60), Label: label}}
+	ri := &rawInput{width: 80}
+
+	out := withPipeStdout(t, func() {
+		ri.renderAutocomplete("Agent name", m, "")
+	})
+
+	// prompt+hint, input, suggestion wrapped to 2 rows → 4 total.
+	if n := cursorUp(t, out); n != 4 {
+		t.Errorf("cursor-up = %d rows, want 4 (wide CJK label counted by cell)", n)
+	}
+}
+
+// A long wrapped suggestion must still count all its physical rows — the
+// undercount direction (the original bug) walks the prompt down the screen.
+func TestRenderAutocomplete_WrappedSuggestionCounted(t *testing.T) {
+	// 6-col prefix + 74-char value = 80... deliberately past the boundary:
+	// value 78 cols → row = 84 visible → 2 physical rows at width 80.
+	m := newACModel()
+	m.suggestions = []Suggestion{{Value: strings.Repeat("w", 78)}}
+	m.highlight = 0
+	ri := &rawInput{width: 80}
+
+	out := withPipeStdout(t, func() {
+		ri.renderAutocomplete("Agent name", m, "")
+	})
+
+	// prompt+hint, input, suggestion wrapped to 2 → 4. Exact, not a lower
+	// bound: an overcount (CRLF/byte inflation) fails here just as the
+	// undercount does.
+	if n := cursorUp(t, out); n != 1+1+2 {
+		t.Errorf("cursor-up = %d rows, want %d (prompt, input, suggestion wrapped to 2)", n, 1+1+2)
+	}
+}
+
+// visibleLen itself, pinned directly: ANSI stripping (including the private
+// \x1b[?25l form) and one-cell-per-rune counting, independent of the renderer
+// math that consumes it.
+func TestVisibleLen(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"plain ascii", "hello", 5},
+		{"csi color stripped", "\x1b[31mhello\x1b[0m", 5},
+		{"private-mode stripped", "\x1b[?25l", 0},
+		{"em dash one cell", "a—b", 3},
+		{"cjk wide two cells per rune", strings.Repeat("組", 10), 20},
+		{"combining mark zero cells", "e\u0301", 1}, // e + U+0301 combining acute (decomposed), 1 cell
+		{"mixed arrows hint", "(↑↓ pick)", 9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := visibleLen(tc.in); got != tc.want {
+				t.Errorf("visibleLen(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
 	}
 }

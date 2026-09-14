@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
 	"github.com/pubnub/blocks-sdk/cli/internal/cardfetch"
@@ -16,6 +17,7 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
 	"github.com/pubnub/blocks-sdk/cli/internal/suggest"
+	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
 	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -466,7 +468,7 @@ func runWebappWizard(ctx context.Context) error {
 	}
 	client := blocksapi.NewClient(access.backendURL, access.apiKey)
 
-	cfg, err := wizard.RunWebapp(ctx, makeAgentSuggestFn(client))
+	cfg, err := wizard.RunWebapp(ctx, makeAgentSuggestFn(client), makeAgentValidateFn(ctx, client))
 	if err != nil {
 		return err
 	}
@@ -526,6 +528,16 @@ func scaffoldWebappProject(ctx context.Context, cfg wizard.Config, client *block
 		cards = append(cards, card)
 	}
 
+	// Refuse a page no visitor could sign in to, before any file is written.
+	// An embedded sign-in session binds to one organization, and the popup
+	// rejects private agents spanning more than one — so this mix would fail
+	// for every end user at the sign-in step, long after the scaffold looked
+	// successful. Same failure class as the not-found check above, one layer
+	// earlier.
+	if err := assertPrivateAgentsShareOneOrg(cards); err != nil {
+		return err
+	}
+
 	// Pre-create the project directory so we have a single rollback target
 	// if any subsequent step fails.
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -541,6 +553,54 @@ func scaffoldWebappProject(ctx context.Context, cfg wizard.Config, client *block
 	return nil
 }
 
+// assertPrivateAgentsShareOneOrg mirrors the embedded sign-in controller's
+// multi-org rule rung for rung: among agents whose listing is private, the
+// distinct non-empty orgIds must not exceed one. A private agent with no
+// orgId does not join the set (the controller filters null the same way),
+// and an unstated listing fails open — a deployment that omits the field
+// still meets the real rule at the sign-in endpoint. Nil when the page is
+// signable; the scaffold's refusal otherwise.
+//
+// The controller is the canonical copy of this rule; this mirror exists so
+// the failure surfaces at the scaffold instead of at every visitor's
+// sign-in. A drift in either direction is a bug — permissive here re-admits
+// pages the popup will reject, strict here blocks pages the popup would
+// accept — so both sides pin the rungs behaviorally: the Go side in
+// TestScaffoldWebappRefusesMultiOrgPrivateAgents, the controller's in the
+// "popup rejects private agents from two organizations" integration test.
+// Change one, change both.
+//
+// One edge the mirror cannot match exactly: the controller filters null
+// orgIds, while the parsed envelope gives Go an empty string for both null
+// and absent — so an orgId of literally "" (schema-violating for a UUID
+// column, unreachable from the database) would count as an org there but
+// not here. Documented rather than typed around: a *string field to split
+// null from empty would buy parity on an input that cannot occur.
+func assertPrivateAgentsShareOneOrg(cards []*cardfetch.AgentCard) error {
+	byOrg := make(map[string]*privateOrgGroup)
+	var order []string
+	for _, c := range cards {
+		if c == nil || c.Listing != "private" || c.OrgID == "" {
+			continue
+		}
+		g, seen := byOrg[c.OrgID]
+		if !seen {
+			g = &privateOrgGroup{orgID: c.OrgID, orgName: c.OrgName}
+			byOrg[c.OrgID] = g
+			order = append(order, c.OrgID)
+		}
+		g.agents = append(g.agents, c.AgentName)
+	}
+	if len(byOrg) <= 1 {
+		return nil
+	}
+	groups := make([]privateOrgGroup, 0, len(order))
+	for _, id := range order {
+		groups = append(groups, *byOrg[id])
+	}
+	return webappMultiOrgPrivateAgentsError(groups)
+}
+
 // makeAgentSuggestFn adapts the suggest client to the wizard's SuggestFunc.
 func makeAgentSuggestFn(client *blocksapi.Client) wizard.SuggestFunc {
 	return func(ctx context.Context, q string) ([]wizard.Suggestion, error) {
@@ -553,6 +613,53 @@ func makeAgentSuggestFn(client *blocksapi.Client) wizard.SuggestFunc {
 			out = append(out, wizard.Suggestion{Value: r.AgentName, Label: r.DisplayName})
 		}
 		return out, nil
+	}
+}
+
+// cardValidateTimeout bounds the Enter-time card lookup. It is a var so
+// tests can shrink it. The lookup runs inside the raw-mode event loop, so a
+// stalled request would park the wizard — Ctrl+C queues behind it and the
+// prompt dead-ends until some keypress arrives. Five seconds is generous
+// for a small JSON GET; on expiry the value degrades to acceptance like
+// any other network failure (the scaffold fetch is the authority).
+var cardValidateTimeout = 5 * time.Second
+
+// makeAgentValidateFn adapts cardfetch into the wizard's Enter-time
+// validation: free-text names are looked up immediately, so a typo or a
+// nonexistent agent is rejected at the prompt instead of after every other
+// wizard question has been answered. A name picked from the suggestion list
+// is known to exist and skips the round-trip.
+//
+// Only a definitive not-found blocks acceptance. A network failure — or a
+// lookup that outlives cardValidateTimeout — returns nil and degrades the
+// same way live suggestions do: the scaffold's own card fetch is the
+// authority there, and it reports failures with the full remedy text.
+//
+// The wording carries no command the user is invited to paste: it renders
+// inside the autocomplete's inline error slot, and the name is the user's
+// own free text. (Wrapping is fine — the renderer counts physical rows.)
+func makeAgentValidateFn(ctx context.Context, client *blocksapi.Client) wizard.AgentValidateFunc {
+	return func(value string, fromSuggestion bool) error {
+		if err := wizard.ValidateAgentName(value); err != nil {
+			return err
+		}
+		if fromSuggestion {
+			return nil
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, cardValidateTimeout)
+		defer cancel()
+		_, err := cardfetch.Fetch(lookupCtx, client, value)
+		if err != nil {
+			if errors.Is(err, cardfetch.ErrAgentNotFound) {
+				deployment := originHost(client.BaseURL)
+				if clictx.Enterprise() && deployment != "" {
+					return fmt.Errorf("agent %q not found on %s — check spelling, or verify it is registered on this deployment", value, termsafe.Text(deployment))
+				}
+				return fmt.Errorf("agent %q not found — check the spelling (if it is a private agent your account can access, cancel with Esc and log in first)", value)
+			}
+			return nil // degrade: scaffold fetch surfaces real failures
+		}
+		return nil
 	}
 }
 
@@ -710,19 +817,51 @@ func printWebappResolvedURLs(assetBase, backendURL string, resolvedFromExplicitS
 	fmt.Printf("    Asset host:  %s\n", assetBase)
 	if !resolvedFromExplicitSource {
 		fmt.Printf("    (No backend was specified, so the asset host above will be used. To\n")
-		fmt.Printf("     target another backend, pass --backend-url, set BLOCKS_BACKEND_URL,\n")
-		fmt.Printf("     or switch profiles with 'blocks profile use'.)\n")
+		if clictx.Enterprise() {
+			fmt.Printf("     target another backend, run 'blocks login <your-instance>' first,\n")
+			fmt.Printf("     or pass --backend-url, or switch profiles with 'blocks profile use'.)\n")
+		} else {
+			// The Network user has no instance to name: their remedy is the
+			// flag or a profile switch, with the Enterprise login offered as a
+			// hint the way the next-steps block offers it — not as the leading
+			// instruction, which read as telling them to paste a placeholder.
+			fmt.Printf("     target another backend, pass --backend-url, or switch profiles with\n")
+			fmt.Printf("     'blocks profile use'. For Blocks Enterprise, run 'blocks login\n")
+			fmt.Printf("     <your-instance>' first.)\n")
+		}
 	}
 }
 
+// printWebappNextSteps prints what to do after a scaffolded webapp. The login
+// line follows the agent flow's printNextSteps rules: it is skipped entirely
+// when this invocation holds a credential for the deployment it actually
+// reaches (the scaffold just used it to fetch the cards), and an Enterprise
+// deployment gets the placeholder form — the instance URL is not interpolated,
+// for the paste-safety reason printNextSteps records.
+//
+// A caller without a credential can only have scaffolded public agents (a
+// private card fetch would have failed), so the line is marked optional:
+// 'blocks dev' needs no login, and the credential's only use is updating the
+// agent cards at deploy time.
 func printWebappNextSteps(cfg wizard.Config, dirName string) {
 	agentList := strings.Join(cfg.Agents, ", ")
 	fmt.Printf("\n  Webapp '%s' created (agents: %s)!\n\n", dirName, agentList)
 	fmt.Println("  Next steps:")
 	fmt.Printf("    cd %s\n", dirName)
-	fmt.Println("    blocks login              # authenticate with Blocks")
+	if !authenticatedForTarget() {
+		if clictx.Enterprise() {
+			fmt.Println("    blocks login <your-instance> --write-env  # optional for public agents — needed to update cards via 'blocks deploy'")
+		} else {
+			fmt.Println("    blocks login --write-env  # optional for public agents (first time only)")
+			fmt.Println("                              # for Blocks Enterprise: blocks login <your-instance> --write-env")
+		}
+	}
 	fmt.Println("    blocks dev                # start local dev server at http://localhost:4242")
 	fmt.Println("")
 	fmt.Println("  When ready to deploy:")
-	fmt.Println("    blocks deploy cloudflare        # or vercel / netlify")
+	if clictx.Enterprise() {
+		fmt.Println("    blocks deploy cloudflare        # or vercel / netlify, or your own target ('blocks deploy --list')")
+	} else {
+		fmt.Println("    blocks deploy cloudflare        # or vercel / netlify")
+	}
 }

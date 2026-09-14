@@ -7,6 +7,15 @@
 // CLI's API key attached (by the shared blocksapi client) it surfaces the
 // caller's private and granted agents alongside public ones; anonymously it
 // returns public agents only.
+//
+// That split is asked for explicitly: with a credential the query passes
+// listing=public,private, which the backend answers through the same
+// reach ladder (ownership or an explicit grant) that discovery enforces.
+// The default listing (public plus granted-private, owned-private excluded)
+// is a discovery-grid decision that hides the agents the wizard most needs
+// to surface — the user's own. Without a credential the listing parameter
+// is omitted: the backend requires authentication for any private-including
+// listing, and an anonymous caller gets public agents only either way.
 package suggest
 
 import (
@@ -54,6 +63,9 @@ func Agents(ctx context.Context, client *blocksapi.Client, q string) ([]AgentSug
 		"q":     []string{q},
 		"field": []string{"agentname"},
 		"limit": []string{strconv.Itoa(defaultLimit)},
+	}
+	if client.APIKey != "" {
+		query.Set("listing", "public,private")
 	}
 	resp, err := client.Get(ctx, "/api/v1/registry/suggest", query)
 	if err != nil {

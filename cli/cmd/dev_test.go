@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -192,5 +193,75 @@ func TestDevBlocksEmbedDevJsServed(t *testing.T) {
 		if strings.Contains(bodyStr, forbidden) {
 			t.Errorf("response body must NOT contain %q, got:\n%s", forbidden, bodyStr)
 		}
+	}
+}
+
+// The banner names the project directory it is serving: the scaffold creates
+// a subdirectory, so "which directory am I in?" is a real question at dev
+// time and the answer belongs in the startup output.
+func TestDevBannerPrintsProjectDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	writeBlocksConfig(t, tmpDir, []string{"myagent"})
+	t.Setenv("BLOCKS_BACKEND_URL", "http://unused")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out := captureStdout(func() {
+		_ = runDev(ctx)
+	})
+	// Getwd resolves symlinks (macOS /var → /private/var), TempDir does not.
+	realTmp, err := filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Project: "+realTmp) {
+		t.Errorf("banner does not name the served project directory:\n%s", out)
+	}
+}
+
+// The banner names the served project directory, and a directory name can
+// carry control or bidi characters — the line the operator reads to confirm
+// which project is running must not be forgeable, so the path is termsafe'd
+// like every other externally-influenced value.
+func TestDevBannerTermsafesHostilePath(t *testing.T) {
+	// The hostile name needs control characters, which are illegal in
+	// Windows filenames — the test cannot construct its fixture there.
+	if runtime.GOOS == "windows" {
+		t.Skip("control characters are illegal in Windows filenames, so the hostile directory cannot be created here")
+	}
+	root := t.TempDir()
+	// ESC is a legal byte in a directory name; so is the RLO bidi character.
+	hostile := filepath.Join(root, "pwn\x1b[2K‮proj")
+	if err := os.MkdirAll(hostile, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldDir, _ := os.Getwd()
+	if err := os.Chdir(hostile); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	writeBlocksConfig(t, hostile, []string{"myagent"})
+	t.Setenv("BLOCKS_BACKEND_URL", "http://unused")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out := captureStdout(func() {
+		_ = runDev(ctx)
+	})
+	if strings.Contains(out, "\x1b[2K") {
+		t.Errorf("banner emitted a raw control sequence from the hostile directory name:\n%q", out)
+	}
+	if !strings.Contains(out, `pwn\x1b[2K`) {
+		t.Errorf("banner did not name the project in escaped form:\n%q", out)
+	}
+	if !strings.Contains(out, "\\u202e") {
+		t.Errorf("banner did not escape the bidi character:\n%q", out)
 	}
 }

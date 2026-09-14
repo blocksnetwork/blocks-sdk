@@ -69,12 +69,16 @@ func (f *NetlifyFlow) Ensure(ctx context.Context) (*auth.ProviderCredentials, er
 	}
 
 	// 3. Interactive prompt.
-	token, err := promptToken(
+	token, err := promptTokenOpenBrowser(
 		fmt.Sprintf(
-			"Create a Netlify Personal Access Token at %s.\nPaste the token: ",
+			"Create a Netlify Personal Access Token at %s.\n",
 			netlifyTokenURL,
 		),
+		"Paste the token: ",
+		netlifyTokenURL,
 		f.readerOrStdin(),
+		interactiveStdin(f.Reader),
+		openBrowser,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("netlify: read token: %w", err)

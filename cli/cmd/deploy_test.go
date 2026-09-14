@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -768,5 +769,65 @@ func TestTheDivergenceWarningOffersNoPastableCommandBuiltFromTheBackendURL(t *te
 	}
 	if !strings.Contains(out, "blocks init") {
 		t.Errorf("the remedy must still name the command that rebuilds web/:\n%s", out)
+	}
+}
+
+// The Project banner names the directory being deployed, and a directory
+// name can carry control or bidi characters — this is a line the operator
+// reads to confirm what is about to be published, so the path is termsafe'd
+// like every other externally-influenced value.
+func TestRunDeploy_ProjectBannerTermsafesHostilePath(t *testing.T) {
+	// The hostile name needs control characters, which are illegal in
+	// Windows filenames — the test cannot construct its fixture there.
+	if runtime.GOOS == "windows" {
+		t.Skip("control characters are illegal in Windows filenames, so the hostile directory cannot be created here")
+	}
+	root := t.TempDir()
+	// ESC and the RLO bidi character are both legal in a directory name.
+	hostile := filepath.Join(root, "pwn\x1b[2K‮proj")
+	webDir := filepath.Join(hostile, "web")
+	if err := os.MkdirAll(webDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<html></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := map[string]interface{}{
+		"templateVersion": "1.0.0",
+		"agents":          []string{"echo2"},
+		"backendBaseUrl":  "https://app.blocks.ai",
+	}
+	cfgData, _ := json.Marshal(cfg)
+	if err := os.WriteFile(filepath.Join(hostile, "blocks.config.json"), cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	setupFakeCredentials(t)
+	t.Setenv("CLOUDFLARE_API_TOKEN", "test-cf-token")
+	prevSkip := deployNoCardUpdate
+	deployNoCardUpdate = true
+	t.Cleanup(func() { deployNoCardUpdate = prevSkip })
+
+	oldDir, _ := os.Getwd()
+	if err := os.Chdir(hostile); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(oldDir) })
+
+	stubAdapter(t, "cloudflare", "https://my-app.pages.dev")
+
+	out := captureStdoutStderr(func() {
+		if err := runDeploy(context.Background(), "cloudflare"); err != nil {
+			t.Fatalf("runDeploy: %v", err)
+		}
+	})
+	if strings.Contains(out, "\x1b[2K") {
+		t.Errorf("Project banner emitted a raw control sequence from the hostile directory name:\n%q", out)
+	}
+	if !strings.Contains(out, `pwn\x1b[2K`) {
+		t.Errorf("Project banner did not name the project in escaped form:\n%q", out)
+	}
+	if !strings.Contains(out, "\\u202e") {
+		t.Errorf("Project banner did not escape the bidi character:\n%q", out)
 	}
 }

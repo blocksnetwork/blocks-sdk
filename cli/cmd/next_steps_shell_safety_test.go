@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
+	"github.com/pubnub/blocks-sdk/cli/internal/branding"
+	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
@@ -141,4 +143,153 @@ func TestTheAgentNotFoundErrorSeparatesTheNameFromTheCommand(t *testing.T) {
 	if !strings.Contains(err.Error(), hostileAgent) {
 		t.Errorf("the error must still name the agent it could not find: %v", err)
 	}
+}
+
+// The webapp next-steps block is context-aware like the agent block: the
+// login line disappears when this invocation already holds a credential for
+// the deployment it reaches, an Enterprise deployment gets the placeholder
+// form, and an unauthenticated caller (who can only have scaffolded public
+// agents) is told login is optional rather than mandatory.
+func TestPrintWebappNextStepsBranchMatrix(t *testing.T) {
+	cfg := wizard.Config{Name: "page", Mode: "webapp", Agents: []string{"translator"}}
+
+	t.Run("network unauthenticated offers optional login and the enterprise hint", func(t *testing.T) {
+		inNetworkContext(t)
+		out := captureStdout(func() { printWebappNextSteps(cfg, "page") })
+		for _, want := range []string{
+			"blocks login --write-env",
+			"for Blocks Enterprise: blocks login <your-instance> --write-env",
+			"optional for public agents",
+			"blocks dev",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("network/unauthed output missing %q:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "blocks deploy --list") {
+			t.Errorf("network deploy hint mentions custom targets:\n%s", out)
+		}
+	})
+
+	t.Run("network authenticated skips the login line", func(t *testing.T) {
+		inNetworkContext(t)
+		seedProfile(t, "blocks-network", profiles.Profile{
+			BaseURL: "",
+			Orgs:    map[string]profiles.OrgKey{"org": {ApiKey: "bk_net", OrgName: "Org"}},
+		})
+		clictx.Resolve(nil)
+		if !authenticatedForTarget() {
+			t.Fatal("premise: a seeded org key must authenticate the invocation")
+		}
+		out := captureStdout(func() { printWebappNextSteps(cfg, "page") })
+		if strings.Contains(out, "blocks login") {
+			t.Errorf("authed output still tells the user to log in:\n%s", out)
+		}
+		if !strings.Contains(out, "blocks dev") {
+			t.Errorf("authed output missing the dev step:\n%s", out)
+		}
+	})
+
+	t.Run("enterprise unauthenticated uses the placeholder and names custom targets", func(t *testing.T) {
+		restoreCLIState(t)
+		t.Cleanup(isolateProfiles(t))
+		t.Setenv(cdm.URLEnv, "")
+		seedProfile(t, "umbrella.blocks.example", profiles.Profile{
+			BaseURL:    "https://umbrella.blocks.example",
+			Enterprise: true,
+			Orgs:       map[string]profiles.OrgKey{},
+		})
+		clictx.Resolve(nil)
+		out := captureStdout(func() { printWebappNextSteps(cfg, "page") })
+		for _, want := range []string{
+			"blocks login <your-instance> --write-env",
+			"optional for public agents",
+			"blocks deploy --list",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("enterprise/unauthed output missing %q:\n%s", want, out)
+			}
+		}
+		assertNoInjectedValueInCommandLines(t, out, "umbrella.blocks.example", "https://umbrella.blocks.example")
+	})
+
+	t.Run("enterprise authenticated skips the login line", func(t *testing.T) {
+		inEnterpriseProfileContext(t)
+		if !authenticatedForTarget() {
+			t.Fatal("premise: the seeded enterprise org key must authenticate the invocation")
+		}
+		out := captureStdout(func() { printWebappNextSteps(cfg, "page") })
+		if strings.Contains(out, "blocks login") {
+			t.Errorf("authed enterprise output still tells the user to log in:\n%s", out)
+		}
+	})
+}
+
+// The resolved-URLs fallback leads with a runnable remedy instead of naming
+// only the environment variable a script would set — and the remedy is
+// deployment-aware like the next-steps block: Enterprise names the instance
+// login, Network leads with the flag/profile remedies and offers the
+// Enterprise login as a hint, never as a placeholder to paste.
+func TestPrintWebappResolvedURLsFallbackLeadsWithLogin(t *testing.T) {
+	t.Run("enterprise", func(t *testing.T) {
+		inEnterpriseProfileContext(t)
+		out := captureStdout(func() {
+			printWebappResolvedURLs("https://example.com", "https://example.com", false)
+		})
+		if !strings.Contains(out, "run 'blocks login <your-instance>' first") {
+			t.Errorf("enterprise fallback does not lead with the login remedy:\n%s", out)
+		}
+	})
+
+	t.Run("network", func(t *testing.T) {
+		inNetworkContext(t)
+		out := captureStdout(func() {
+			printWebappResolvedURLs("https://example.com", "https://example.com", false)
+		})
+		for _, want := range []string{"pass --backend-url", "'blocks profile use'", "For Blocks Enterprise, run 'blocks login"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("network fallback missing %q:\n%s", want, out)
+			}
+		}
+		// The Enterprise login is a hint, never the leading remedy a Network
+		// user could mistake for a command to paste verbatim.
+		if strings.HasPrefix(strings.TrimSpace(out[strings.Index(out, "target another backend, "):]), "target another backend, run 'blocks login") {
+			t.Errorf("network fallback leads with the Enterprise placeholder:\n%s", out)
+		}
+	})
+
+	explicit := captureStdout(func() {
+		printWebappResolvedURLs("https://example.com", "https://example.com", true)
+	})
+	if strings.Contains(explicit, "No backend was specified") {
+		t.Errorf("explicit resolution printed the fallback:\n%s", explicit)
+	}
+}
+
+// The wizard help texts name the active product and, on Enterprise, describe
+// the agent choice in deployment vocabulary instead of marketplace terms.
+func TestWebappWizardHelpTextsAreDeploymentAware(t *testing.T) {
+	t.Run("network", func(t *testing.T) {
+		inNetworkContext(t)
+		if got := wizard.HelpWebappAgentsText(); !strings.Contains(got, "Blocks Network agent(s)") {
+			t.Errorf("agents help does not name the product:\n%s", got)
+		}
+		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "consumer that calls agents") {
+			t.Errorf("project-kind help lost the network wording:\n%s", got)
+		}
+	})
+	t.Run("enterprise", func(t *testing.T) {
+		inEnterpriseProfileContext(t)
+		// branding is set at command startup from the active profile; the
+		// resolve helper replays only the context, so the profile's product
+		// name is applied here the way PersistentPreRun would.
+		branding.Set("Umbrella Blocks")
+		t.Cleanup(branding.Reset)
+		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "client that calls other") {
+			t.Errorf("project-kind help kept marketplace wording on Enterprise:\n%s", got)
+		}
+		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "Umbrella Blocks embed-auth widget") {
+			t.Errorf("project-kind help does not name the product:\n%s", got)
+		}
+	})
 }

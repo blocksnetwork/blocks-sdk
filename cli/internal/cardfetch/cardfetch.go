@@ -26,7 +26,9 @@ var ErrAgentNotFound = errors.New("agent not found")
 
 // AgentCard is the subset of card fields the embed generator consumes.
 // All other fields in the registry response (pricing, ownership, runtime,
-// embeddedAuth, etc.) are ignored.
+// embeddedAuth, etc.) are ignored — except the envelope's listing/org
+// fields below, which the scaffold reads to refuse pages no visitor could
+// sign in to.
 type AgentCard struct {
 	AgentName string
 	TaskKinds []string
@@ -35,6 +37,16 @@ type AgentCard struct {
 	// Streams is keyed by the card-level stream key (e.g. "_default").
 	// Empty or absent in the card → empty map.
 	Streams map[string]StreamDecl
+
+	// Listing, OrgID and OrgName come from the response envelope, not the
+	// card. All three are documented contract fields of the registry's
+	// single-agent response; OrgName is display-only by contract — callers
+	// keying orgs must use OrgID, which is the stable identifier. An empty
+	// Listing means the payload did not state one, and consumers fail open
+	// on it.
+	Listing string
+	OrgID   string
+	OrgName string
 }
 
 // InputDecl mirrors a single io.inputs[] entry. Schema and Example are
@@ -74,6 +86,9 @@ type outerEnvelope struct {
 	Agent struct {
 		AgentName string          `json:"agentName"`
 		Card      json.RawMessage `json:"card"`
+		Listing   string          `json:"listing"`
+		OrgID     string          `json:"orgId"`
+		OrgName   string          `json:"orgName"`
 	} `json:"agent"`
 }
 
@@ -170,7 +185,11 @@ func Fetch(ctx context.Context, client *blocksapi.Client, agentName string) (*Ag
 		return nil, fmt.Errorf("parse agent %q card: %w", agentName, err)
 	}
 
-	return buildAgentCard(envelope.Agent.AgentName, &card), nil
+	parsed := buildAgentCard(envelope.Agent.AgentName, &card)
+	parsed.Listing = envelope.Agent.Listing
+	parsed.OrgID = envelope.Agent.OrgID
+	parsed.OrgName = envelope.Agent.OrgName
+	return parsed, nil
 }
 
 func buildAgentCard(name string, c *cardJSON) *AgentCard {

@@ -70,12 +70,16 @@ func (f *VercelFlow) Ensure(ctx context.Context) (*auth.ProviderCredentials, err
 	}
 
 	// 3. Interactive prompt.
-	token, err := promptToken(
+	token, err := promptTokenOpenBrowser(
 		fmt.Sprintf(
-			"Create a Vercel API token at %s.\nPaste the token: ",
+			"Create a Vercel API token at %s.\n",
 			vercelTokenURL,
 		),
+		"Paste the token: ",
+		vercelTokenURL,
 		f.readerOrStdin(),
+		interactiveStdin(f.Reader),
+		openBrowser,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("vercel: read token: %w", err)

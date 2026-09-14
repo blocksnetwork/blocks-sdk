@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 )
 
@@ -76,15 +78,27 @@ func readKey() (string, error) {
 		return "?", nil
 	case 3: // Ctrl+C
 		return "ctrlc", nil
-	case 0x1b: // Escape — start of arrow key sequence
-		if _, err := os.Stdin.Read(buf); err != nil {
+	case 0x1b: // Escape — a lone Esc, or the start of an escape sequence
+		// A blocking second read cannot tell the two apart until more input
+		// arrives, which parks the picker on a lone Esc until the user's
+		// next keypress — and that key is consumed as the disambiguator.
+		// Poll briefly instead: an arrow burst is already buffered and polls
+		// ready at once, while a lone Esc resolves within the same window
+		// the autocomplete decoder uses (escTimeout) for this ambiguity.
+		if !stdinReadableWithin(escTimeout) {
 			return "esc", nil
 		}
-		if buf[0] != '[' {
-			return "esc", nil
+		// Input followed the ESC, so this is a sequence, never a lone Esc.
+		// Unrecognized ones — left/right arrows, Home/End, Delete,
+		// Alt-modified keys — return the ignored key rather than "esc":
+		// Esc now cancels pickers, and reporting a left arrow as Esc would
+		// cancel on a navigation keypress that predates and never meant
+		// cancellation.
+		if _, err := os.Stdin.Read(buf); err != nil || buf[0] != '[' {
+			return "", nil
 		}
 		if _, err := os.Stdin.Read(buf); err != nil {
-			return "esc", nil
+			return "", nil
 		}
 		switch buf[0] {
 		case 'A':
@@ -92,10 +106,27 @@ func readKey() (string, error) {
 		case 'B':
 			return "down", nil
 		}
-		return "esc", nil
+		return "", nil
 	}
 
 	return string(buf[0]), nil
+}
+
+// ansiEscapes matches CSI sequences (ESC [ params final-byte), including
+// private-parameter forms like \x1b[?25l, the only escape forms the
+// renderers emit. Row counting needs visible widths, not byte counts.
+var ansiEscapes = regexp.MustCompile("\x1b\\[[0-9;:?]*[a-zA-Z]")
+
+// visibleLen returns the terminal-cell width of s with ANSI escapes removed —
+// what physicalLines needs, since the renderers embed color codes and
+// non-ASCII glyphs. Cell width, not byte or rune count: an East Asian Wide
+// character like 組 occupies two cells per Unicode TR11 (UAX #11), a
+// combining mark occupies zero, and a byte count would inflate every
+// multi-byte glyph. Counting wrong in either direction corrupts the
+// cursor-up math — under-counting leaves residue below, over-counting erases
+// the line above the block.
+func visibleLen(s string) int {
+	return runewidth.StringWidth(ansiEscapes.ReplaceAllString(s, ""))
 }
 
 // physicalLines returns the number of terminal rows a string of the given
@@ -107,8 +138,26 @@ func physicalLines(visibleLen, termWidth int) int {
 	return (visibleLen + termWidth - 1) / termWidth
 }
 
+// defaultTermWidth is the fallback column count when the terminal size cannot
+// be read (non-TTY, or a kernel that answers without one). Both renderers
+// share it so their wrap math cannot drift apart.
+const defaultTermWidth = 80
+
+// terminalWidth reads the column count for fd, falling back to
+// defaultTermWidth when it cannot.
+func terminalWidth(fd int) int {
+	width, _, err := term.GetSize(fd)
+	if err != nil || width <= 0 {
+		return defaultTermWidth
+	}
+	return width
+}
+
 // InteractiveSelect shows a single-select list navigable with arrow keys.
-// Returns the index of the selected option. helpText is printed when the user presses ?.
+// Returns the index of the selected option. helpText is printed when the user
+// presses ?. Esc restores the terminal and returns ErrCanceled — the same
+// cancel the autocomplete prompt has always offered, so every picker can be
+// backed out of without killing the process.
 func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText string) (int, error) {
 	if noInputMode {
 		return 0, fmt.Errorf("cannot ask %q with --no-input", prompt)
@@ -126,17 +175,17 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText
 	cursor := defaultIdx
 
 	// Get terminal width so we can account for line wrapping.
-	width, _, _ := term.GetSize(fd)
-	if width <= 0 {
-		width = 80
-	}
+	width := terminalWidth(fd)
 
 	// Calculate total physical rows used by the rendered block,
-	// accounting for lines that wrap at the terminal width.
-	hint := "(\xe2\x86\x91\xe2\x86\x93 navigate, enter select, ? help)"
-	totalRows := physicalLines(len(prompt)+1+len(hint), width) // +1 for the space
+	// accounting for lines that wrap at the terminal width. Widths are
+	// display cells (visibleLen strips the color codes and counts East Asian
+	// Wide glyphs as two cells), not bytes — the arrows in the hint are
+	// multi-byte.
+	hint := "(\xe2\x86\x91\xe2\x86\x93 navigate, enter select, esc cancel, ? help)"
+	totalRows := physicalLines(visibleLen(prompt)+1+visibleLen(hint), width) // +1 for the space
 	for _, opt := range options {
-		totalRows += physicalLines(4+len(opt), width) // "  > " or "    " = 4 chars
+		totalRows += physicalLines(4+visibleLen(opt), width) // "  > " or "    " = 4 chars
 	}
 
 	// Hide cursor during rendering.
@@ -190,6 +239,10 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText
 		case "enter":
 			cleanup(options[cursor])
 			return cursor, nil
+		case "esc":
+			fmt.Fprintf(os.Stdout, "\r\n\x1b[J\x1b[?25h")
+			term.Restore(fd, oldState)
+			return 0, ErrCanceled
 		case "ctrlc":
 			fmt.Fprintf(os.Stdout, "\r\n\x1b[J\x1b[?25h")
 			term.Restore(fd, oldState)
