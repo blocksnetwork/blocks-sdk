@@ -2101,3 +2101,261 @@ func TestInitTreatsAFlagMatchingTheRemotelyResolvedTargetAsItsOwn(t *testing.T) 
 		t.Error("a --backend-url naming the effective target is not foreign; the stored credential must not be withheld")
 	}
 }
+
+// TestMakeAgentValidateFn covers the wizard's Enter-time existence check: a
+// free-text name is looked up immediately, a suggestion-picked name never
+// round-trips, a definitive not-found blocks acceptance, and any other
+// failure degrades (the scaffold fetch is the authority there).
+func TestMakeAgentValidateFn(t *testing.T) {
+	t.Run("free-text name that exists passes", func(t *testing.T) {
+		srv := fakeRegistryServer(t, map[string]string{"echo2": "echo2.json"})
+		validate := makeAgentValidateFn(context.Background(), blocksapi.NewClient(srv.URL, "k"))
+		if err := validate("echo2", false); err != nil {
+			t.Errorf("validate(existing free text) = %v, want nil", err)
+		}
+	})
+
+	t.Run("suggestion-picked name skips the round-trip", func(t *testing.T) {
+		requested := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requested = true
+			http.NotFound(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		validate := makeAgentValidateFn(context.Background(), blocksapi.NewClient(srv.URL, "k"))
+		if err := validate("echo2", true); err != nil {
+			t.Errorf("validate(suggestion pick) = %v, want nil", err)
+		}
+		if requested {
+			t.Error("a suggestion-picked name triggered a registry request")
+		}
+	})
+
+	t.Run("free-text not-found blocks with agent name and no command", func(t *testing.T) {
+		inNetworkContext(t)
+		srv := fakeRegistryServer(t, map[string]string{})
+		validate := makeAgentValidateFn(context.Background(), blocksapi.NewClient(srv.URL, "k"))
+		err := validate("adder", false)
+		if err == nil {
+			t.Fatal("validate(unknown free text) = nil, want not-found error")
+		}
+		if !strings.Contains(err.Error(), `"adder"`) {
+			t.Errorf("error %q does not name the agent", err.Error())
+		}
+		// The inline error slot renders one physical line, and the name is the
+		// user's own free text — no command may share the line with it.
+		assertNoValueOnACommandLine(t, err.Error())
+	})
+
+	t.Run("free-text not-found names the deployment on Enterprise", func(t *testing.T) {
+		inEnterpriseProfileContext(t)
+		srv := fakeRegistryServer(t, map[string]string{})
+		validate := makeAgentValidateFn(context.Background(), blocksapi.NewClient(srv.URL, "k"))
+		err := validate("adder", false)
+		if err == nil {
+			t.Fatal("validate(unknown free text) = nil, want not-found error")
+		}
+		// The deployment label names where the lookup actually went — the
+		// client's origin, which in this test is the fake server.
+		host := strings.TrimPrefix(srv.URL, "http://")
+		if !strings.Contains(err.Error(), "not found on "+host) {
+			t.Errorf("error %q does not name the queried deployment %q", err.Error(), host)
+		}
+	})
+
+	t.Run("network failure degrades to acceptance", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+		validate := makeAgentValidateFn(context.Background(), blocksapi.NewClient(srv.URL, "k"))
+		if err := validate("echo2", false); err != nil {
+			t.Errorf("validate(network failure) = %v, want nil (degrade)", err)
+		}
+	})
+
+	t.Run("regex rejection fires before any request", func(t *testing.T) {
+		requested := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requested = true
+			http.NotFound(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		validate := makeAgentValidateFn(context.Background(), blocksapi.NewClient(srv.URL, "k"))
+		if err := validate("acme/translator", false); err == nil {
+			t.Fatal("validate(namespaced name) = nil, want regex error")
+		}
+		if requested {
+			t.Error("a regex-rejected name triggered a registry request")
+		}
+	})
+}
+
+// multiOrgRegistryServer serves the echo2 card for any requested agent name,
+// with the caller-chosen listing and org identity stamped onto the envelope.
+// Agent names not in orgByID answer 404.
+func multiOrgRegistryServer(t *testing.T, listing string, orgByID map[string]string) *httptest.Server {
+	t.Helper()
+	dir := fixtureDir(t)
+	raw, err := os.ReadFile(filepath.Join(dir, "echo2.json"))
+	if err != nil {
+		t.Fatalf("read echo2 fixture: %v", err)
+	}
+	var env struct {
+		Agent struct {
+			Card json.RawMessage `json:"card"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("parse echo2 fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("agentName")
+		orgID, ok := orgByID[name]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		payload := map[string]any{
+			"agent": map[string]any{
+				"agentName": name,
+				"listing":   listing,
+				"orgId":     orgID,
+				"orgName":   "Org " + orgID,
+				"card":      env.Agent.Card,
+			},
+		}
+		body, _ := json.Marshal(payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestScaffoldWebappRefusesMultiOrgPrivateAgents covers the scaffold-time
+// mirror of the sign-in popup's MULTI_ORG_PRIVATE_AGENTS_NOT_SUPPORTED rule:
+// a page wiring private agents from more than one organization cannot sign
+// anyone in, so the scaffold refuses before writing anything instead of
+// letting every visitor discover it at the sign-in step.
+func TestScaffoldWebappRefusesMultiOrgPrivateAgents(t *testing.T) {
+	newCase := func(agents []string, orgByID map[string]string) (*httptest.Server, wizard.Config) {
+		srv := multiOrgRegistryServer(t, "private", orgByID)
+		cfg := wizard.Config{
+			Name:           "page",
+			Mode:           "webapp",
+			Agents:         agents,
+			BlocksBaseURL:  srv.URL,
+			BackendBaseURL: srv.URL,
+		}
+		return srv, cfg
+	}
+
+	t.Run("private agents from two orgs are refused before any file is written", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		srv, cfg := newCase([]string{"a_private", "b_private"}, map[string]string{
+			"a_private": "org-1",
+			"b_private": "org-2",
+		})
+		err := scaffoldWebappProject(context.Background(), cfg, blocksapi.NewClient(srv.URL, "k"))
+		if err == nil {
+			t.Fatal("scaffold succeeded for a page no visitor could sign in to")
+		}
+		for _, want := range []string{"a_private", "b_private", "blocks publish --listing public"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal missing %q: %v", want, err)
+			}
+		}
+		// Registry-sourced names and org labels stay off the remedy's command
+		// line — the paste-safety rule the not-found wording follows.
+		assertNoValueOnACommandLine(t, err.Error(), "a_private", "b_private", "Org org-1", "Org org-2")
+		if _, statErr := os.Stat("page"); !os.IsNotExist(statErr) {
+			t.Errorf("refused scaffold still created a directory: %v", statErr)
+		}
+	})
+
+	t.Run("private agents from one org scaffold fine", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		srv, cfg := newCase([]string{"a_private", "b_private"}, map[string]string{
+			"a_private": "org-1",
+			"b_private": "org-1",
+		})
+		if err := scaffoldWebappProject(context.Background(), cfg, blocksapi.NewClient(srv.URL, "k")); err != nil {
+			t.Fatalf("single-org private scaffold: %v", err)
+		}
+		if _, statErr := os.Stat("page"); statErr != nil {
+			t.Errorf("expected scaffolded directory: %v", statErr)
+		}
+	})
+
+	t.Run("private agents with no org id do not join the conflict set", func(t *testing.T) {
+		// Mirrors the controller's null-orgId filter: a private agent with no
+		// org is not a second organization.
+		t.Chdir(t.TempDir())
+		srv, cfg := newCase([]string{"a_private", "legacy_private"}, map[string]string{
+			"a_private":      "org-1",
+			"legacy_private": "",
+		})
+		if err := scaffoldWebappProject(context.Background(), cfg, blocksapi.NewClient(srv.URL, "k")); err != nil {
+			t.Fatalf("null-org private mix scaffold: %v", err)
+		}
+	})
+
+	t.Run("public agents from other orgs do not conflict", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		srv := multiOrgRegistryServer(t, "public", map[string]string{
+			"a_public": "org-1",
+			"b_public": "org-2",
+		})
+		cfg := wizard.Config{
+			Name: "page", Mode: "webapp",
+			Agents:         []string{"a_public", "b_public"},
+			BlocksBaseURL:  srv.URL,
+			BackendBaseURL: srv.URL,
+		}
+		if err := scaffoldWebappProject(context.Background(), cfg, blocksapi.NewClient(srv.URL, "k")); err != nil {
+			t.Fatalf("public multi-org scaffold: %v", err)
+		}
+	})
+}
+
+// The Enter-time lookup runs inside the raw-mode event loop, so a stalled
+// request would park the wizard with Ctrl+C queued behind it. The lookup is
+// bounded by cardValidateTimeout and degrades to acceptance on expiry —
+// this pins that a hanging server cannot hold the prompt hostage.
+func TestMakeAgentValidateFn_StalledLookupIsBounded(t *testing.T) {
+	// cancelled records that the client actually cancelled the in-flight
+	// request when the bound expired — pinning the timeout plumbing itself,
+	// not just an elapsed-time ceiling.
+	cancelled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // stall until the client gives up
+		close(cancelled)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	orig := cardValidateTimeout
+	cardValidateTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { cardValidateTimeout = orig })
+
+	validate := makeAgentValidateFn(context.Background(), blocksapi.NewClient(srv.URL, "k"))
+
+	start := time.Now()
+	if err := validate("echo2", false); err != nil {
+		t.Fatalf("stalled lookup must degrade to acceptance, got: %v", err)
+	}
+	// The bound must actually bind: 10x the configured timeout is generous
+	// against scheduler jitter while still failing fast if the lookup context
+	// is ever dropped (a reverted timeout parks the wizard until the server
+	// responds — forever, for a server that never does).
+	if elapsed := time.Since(start); elapsed > 10*cardValidateTimeout {
+		t.Fatalf("stalled lookup returned after %v — the wizard's event loop was parked past the bound", elapsed)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("the request context was never cancelled — the bound is not plumbed through to the HTTP client")
+	}
+}

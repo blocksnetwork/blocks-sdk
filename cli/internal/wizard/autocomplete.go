@@ -22,8 +22,10 @@ var ErrCanceled = errors.New("canceled")
 // rather than one per character.
 const debounceDelay = 180 * time.Millisecond
 
-// maxVisibleSuggestions caps how many suggestion rows are rendered.
-const maxVisibleSuggestions = 8
+// maxVisibleSuggestions caps how many suggestion rows are rendered. Matches
+// the backend suggest endpoint's max and the CLI's requested limit, so the
+// dropdown shows every result the registry returned.
+const maxVisibleSuggestions = 10
 
 // Suggestion is one autocomplete candidate. Value is what gets accepted
 // (the bare agent name); Label is the human-readable annotation shown beside it.
@@ -203,6 +205,9 @@ type rawInput struct {
 	fd       int
 	oldState *term.State
 	events   chan acEvent
+	// width is the terminal column count captured at raw-mode entry, used to
+	// count physical rows so wrapped lines don't corrupt the cursor-up math.
+	width int
 }
 
 // newRawInput puts the terminal into raw mode and starts the key reader.
@@ -217,7 +222,7 @@ func newRawInput() (*rawInput, bool) {
 	if err != nil {
 		return nil, false
 	}
-	ri := &rawInput{fd: fd, oldState: st, events: make(chan acEvent, 8)}
+	ri := &rawInput{fd: fd, oldState: st, events: make(chan acEvent, 8), width: terminalWidth(fd)}
 	rawBytes := make(chan byte, 16)
 	go ri.byteLoop(rawBytes)
 	go ri.decodeLoop(rawBytes)
@@ -262,8 +267,10 @@ type queryResult struct {
 // autocomplete runs the type-ahead prompt for a single value. It debounces
 // keystrokes, queries suggest asynchronously, and renders a live dropdown.
 // Enter accepts the highlighted suggestion or the typed text (validated via
-// validate). Esc cancels (ErrCanceled); Ctrl+C exits the process.
-func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest SuggestFunc, validate func(string) error) (string, error) {
+// validate, which is told whether the value came from the suggestion list —
+// a list-picked name needs no existence check, the registry vouched for it).
+// Esc cancels (ErrCanceled); Ctrl+C exits the process.
+func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest SuggestFunc, validate func(value string, fromSuggestion bool) error) (string, error) {
 	m := newACModel()
 	resultCh := make(chan queryResult, 1)
 	// querySeq tags each fired query so an in-flight query whose result arrives
@@ -322,14 +329,14 @@ func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest Sug
 			case acDown:
 				m.moveDown()
 			case acEnter:
-				value, _ := m.selected()
+				value, fromSuggestion := m.selected()
 				if value == "" {
 					errMsg = "Enter an agent name (type to search)."
 					ri.renderAutocomplete(prompt, m, errMsg)
 					continue
 				}
 				if validate != nil {
-					if err := validate(value); err != nil {
+					if err := validate(value, fromSuggestion); err != nil {
 						errMsg = err.Error()
 						ri.renderAutocomplete(prompt, m, errMsg)
 						continue
@@ -386,43 +393,77 @@ func (ri *rawInput) confirm(prompt string, def bool) (bool, error) {
 	}
 }
 
+// refreshWidth re-reads the terminal column count so a resize while the
+// prompt is open is picked up on the next render. It only overwrites the
+// captured width when the size read succeeds, so test harnesses that inject
+// a width directly (no real TTY behind the fd) keep theirs.
+func (ri *rawInput) refreshWidth() {
+	if w, _, err := term.GetSize(ri.fd); err == nil && w > 0 {
+		ri.width = w
+	}
+}
+
 // renderAutocomplete draws the prompt, the typed buffer, the suggestion list,
 // and an optional error line, leaving the cursor at the top of the block so
-// the next render can clear and redraw in place.
+// the next render can clear and redraw in place. Row counting is in physical
+// terminal rows (ANSI escapes stripped, wrapping at ri.width accounted for) —
+// a long error or suggestion that wraps would otherwise corrupt the cursor-up
+// math and leave residue that walks the prompt down the screen.
 func (ri *rawInput) renderAutocomplete(prompt string, m *acModel, errMsg string) {
+	// A terminal resized while the prompt is open must not strand the row
+	// math at the old width — every render re-reads it.
+	ri.refreshWidth()
 	const hideCursor = "\x1b[?25l"
 	fmt.Fprint(os.Stdout, hideCursor)
 	// Clear from the top of the block to the end of the screen.
 	fmt.Fprint(os.Stdout, "\r\x1b[J")
 
-	lines := 1
+	// Every row is counted in physical lines: on a narrow terminal a long
+	// prompt, input, suggestion, or error wraps, and counting it as one row
+	// would land the cursor-up short, leaving residue that walks the prompt
+	// down the screen on every redraw.
+	rows := func(raw string) int { return physicalLines(visibleLen(raw), ri.width) }
+
 	hint := "(type to search, \xe2\x86\x91\xe2\x86\x93 pick, enter accept, esc cancel)"
 	fmt.Fprintf(os.Stdout, "\x1b[1m%s\x1b[0m \x1b[2m%s\x1b[0m\r\n", prompt, hint)
+	lines := rows(prompt + " " + hint)
 
-	// Input line.
+	// Input line. The caret cell is counted only when rendered — with a
+	// suggestion highlighted the caret is not drawn, so always counting it
+	// would over-count the row by one cell at the wrap boundary and push the
+	// cursor-up above the block.
 	caret := ""
 	if m.highlight == -1 {
 		caret = "\x1b[7m \x1b[0m" // reverse-video block as a caret
 	}
 	fmt.Fprintf(os.Stdout, "  > %s%s\r\n", string(m.input), caret)
-	lines++
+	inputRow := "  > " + string(m.input)
+	if caret != "" {
+		inputRow += " " // the caret renders as one cell
+	}
+	lines += rows(inputRow)
 
 	for i, s := range m.suggestions {
 		label := s.Value
 		if s.Label != "" && s.Label != s.Value {
 			label = fmt.Sprintf("%s \x1b[2m— %s\x1b[0m", s.Value, s.Label)
 		}
+		// The counted string must be the content without the line terminator
+		// — counting "\r\n" adds two phantom columns and can push a
+		// boundary-length row into a wrap the terminal does not perform.
+		var row string
 		if i == m.highlight {
-			fmt.Fprintf(os.Stdout, "    \x1b[36m\xe2\x80\xba %s\x1b[0m\r\n", label)
+			row = fmt.Sprintf("    \x1b[36m\xe2\x80\xba %s\x1b[0m", label)
 		} else {
-			fmt.Fprintf(os.Stdout, "      %s\r\n", label)
+			row = fmt.Sprintf("      %s", label)
 		}
-		lines++
+		fmt.Fprintf(os.Stdout, "%s\r\n", row)
+		lines += rows(row)
 	}
 
 	if errMsg != "" {
 		fmt.Fprintf(os.Stdout, "  \x1b[31m%s\x1b[0m\r\n", errMsg)
-		lines++
+		lines += rows("  " + errMsg)
 	}
 
 	// Move the cursor back up to the top of the block.

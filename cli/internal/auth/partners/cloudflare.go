@@ -72,14 +72,17 @@ func (f *CloudflareFlow) Ensure(ctx context.Context) (*auth.ProviderCredentials,
 	}
 
 	// 3. Interactive prompt.
-	token, err := promptToken(
+	token, err := promptTokenOpenBrowser(
 		fmt.Sprintf(
 			"To deploy to Cloudflare Pages, create an API token at %s\n"+
-				"with 'Cloudflare Pages: Edit' and 'Account: Read' scopes.\n"+
-				"Paste the token here: ",
+				"with 'Cloudflare Pages: Edit' and 'Account: Read' scopes.\n",
 			cloudflareTokenURL,
 		),
+		"Paste the token here: ",
+		cloudflareTokenURL,
 		f.readerOrStdin(),
+		interactiveStdin(f.Reader),
+		openBrowser,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cloudflare: read token: %w", err)

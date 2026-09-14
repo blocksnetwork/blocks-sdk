@@ -53,10 +53,14 @@ func runDev(ctx context.Context) error {
 		return backendNotConfigured("BLOCKS_BACKEND_URL must be set (or configure via CDM)")
 	}
 
-	// Build and run server.
+	// Build and run server. ProjectDir is banner-only: the server serves the
+	// web/ directory of the project it was started in, and naming it spares
+	// the user the "which directory am I in?" guess after the scaffold
+	// created a subdirectory.
 	srv := devserver.New(devserver.Config{
 		Port:           devPort,
 		BackendBaseURL: backendURL,
+		ProjectDir:     mustCwd(),
 		Agents:         blocksCfg.Agents,
 	})
 

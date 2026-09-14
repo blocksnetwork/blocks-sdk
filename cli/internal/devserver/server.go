@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
+	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 type Server struct {
 	port           int
 	backendBaseURL string
+	projectDir     string   // absolute path of the project being served, banner-only
 	agents         []string // sorted bare agent names
 
 	sseClients map[chan struct{}]struct{}
@@ -42,6 +44,7 @@ type Server struct {
 type Config struct {
 	Port           int
 	BackendBaseURL string
+	ProjectDir     string   // absolute path of the webapp project being served, shown in the banner
 	Agents         []string // bare agent names (will be sorted internally)
 }
 
@@ -54,6 +57,7 @@ func New(cfg Config) *Server {
 	return &Server{
 		port:           cfg.Port,
 		backendBaseURL: cfg.BackendBaseURL,
+		projectDir:     cfg.ProjectDir,
 		agents:         agents,
 		sseClients:     make(map[chan struct{}]struct{}),
 	}
@@ -274,6 +278,10 @@ func (s *Server) watchWebDir() func() {
 // printBanner prints startup info.
 func (s *Server) printBanner(origin string) {
 	fmt.Printf("blocks dev — local embed dev server\n")
+	// The project path is termsafe'd — a directory name can carry control or
+	// bidi characters, and the banner is what the operator reads to confirm
+	// which project is being served.
+	fmt.Printf("  Project: %s\n", termsafe.Text(s.projectDir))
 	fmt.Printf("  Origin:  %s\n", origin)
 	fmt.Printf("  Agents:  %s\n", strings.Join(s.agents, ", "))
 	fmt.Printf("  Hot reload:    %s%s\n", origin, devSSEPath)

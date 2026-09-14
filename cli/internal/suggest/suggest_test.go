@@ -21,7 +21,7 @@ const sampleBody = `{
 }`
 
 func TestAgents_ParsesAndSetsQuery(t *testing.T) {
-	var gotQuery, gotField, gotLimit string
+	var gotQuery, gotField, gotLimit, gotListing string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/registry/suggest" {
 			t.Errorf("unexpected path %q", r.URL.Path)
@@ -31,6 +31,7 @@ func TestAgents_ParsesAndSetsQuery(t *testing.T) {
 		gotQuery = r.URL.Query().Get("q")
 		gotField = r.URL.Query().Get("field")
 		gotLimit = r.URL.Query().Get("limit")
+		gotListing = r.URL.Query().Get("listing")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(sampleBody))
 	}))
@@ -49,6 +50,11 @@ func TestAgents_ParsesAndSetsQuery(t *testing.T) {
 	}
 	if gotLimit != "10" {
 		t.Errorf("limit = %q, want 10", gotLimit)
+	}
+	// A credentialed caller asks for private listings too, so agents the
+	// user owns (not just ones granted to them) appear in suggestions.
+	if gotListing != "public,private" {
+		t.Errorf("listing = %q, want public,private", gotListing)
 	}
 	// The empty-agentName entry is dropped.
 	if len(got) != 2 {
@@ -103,5 +109,27 @@ func TestAgents_PropagatesAPIError(t *testing.T) {
 	client := blocksapi.NewClient(srv.URL, "k")
 	if _, err := Agents(context.Background(), client, "trans"); err == nil {
 		t.Fatal("expected error from 500 response, got nil")
+	}
+}
+
+// An anonymous caller omits the listing parameter: the backend rejects any
+// private-including listing without authentication, and an anonymous
+// request gets public agents only either way. Omitting it keeps the
+// public-only suggestions working instead of degrading to free text.
+func TestAgents_AnonymousCallOmitsListing(t *testing.T) {
+	var gotListing string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotListing = r.URL.Query().Get("listing")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(sampleBody))
+	}))
+	defer srv.Close()
+
+	client := blocksapi.NewClient(srv.URL, "")
+	if _, err := Agents(context.Background(), client, "trans"); err != nil {
+		t.Fatalf("Agents: %v", err)
+	}
+	if gotListing != "" {
+		t.Errorf("listing = %q, want empty for anonymous client", gotListing)
 	}
 }

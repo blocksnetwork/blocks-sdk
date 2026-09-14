@@ -52,8 +52,63 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
   offering the project-kind choice, and includes an Enterprise hint for fresh
   Network users. Runs that already name a project or a mode go straight to the
   wizard as before.
+- Every menu can be backed out of with Esc. Pressing Esc at a project-kind,
+  mode, language or deploy-target menu cancels it and returns you to the
+  shell — previously only Ctrl+C worked. A menu selection now also asks for
+  confirmation before a deploy uploads anything ("Deploy web/ to cloudflare?
+  (Y/n)"), so one Enter on the wrong row does not publish.
+- The webapp wizard checks an agent name as you accept it. Typing a name the
+  deployment does not have is rejected at the prompt with the reason, instead
+  of answering every remaining question and failing at scaffold time. A name
+  picked from the suggestion list is already known to exist and is not asked
+  for again. The check is bounded — a deployment that stalls on the lookup no
+  longer leaves the wizard frozen (Ctrl+C queued behind it, nothing responds
+  until another keypress); after five seconds it degrades to the same
+  behavior as any network failure, with the scaffold's own fetch as the
+  authority.
+- The wizard's menus and the agent-search prompt redraw correctly on a narrow
+  terminal. Long messages (the agent-not-found reasons) used to wrap to a
+  second row the renderer did not count, so each keystroke walked the prompt
+  down the screen leaving stale text behind. Rows are now counted in the
+  terminal cells they actually occupy — including wrapped lines, wide CJK
+  characters, and ANSI color codes — and a terminal resized while a prompt is
+  open is picked up on the next redraw.
+- After adding agents, the webapp wizard shows the collected list and lets
+  you remove any of them before scaffolding. A wrong pick used to cost a
+  Ctrl+C and a restart; it now costs one removal.
+- The API-token prompt for deploy partners (Cloudflare, Vercel, Netlify)
+  offers to open the token-creation page in your browser: press Enter and
+  the page opens, or paste a token you already have at the same prompt. The
+  prompt only appears when no token is already stored or set for the
+  partner.
 
 ### Changed
+
+- The webapp wizard's agent search now finds the agents you own. Signing in
+  before running `blocks init --mode webapp` used to leave your own private
+  agents out of the suggestions — only public agents and ones someone had
+  shared with you appeared. Yours now show too, and an exact or prefix match
+  on an agent's name ranks above fuzzy matches on descriptions and tags. The
+  wizard also shows up to ten suggestions at a time, where the backend used
+  to cut the list off at five.
+- A webapp scaffold that no visitor could sign in to is now refused before
+  any file is written. A page wiring private agents from more than one
+  organization cannot work — a sign-in session is bound to a single
+  organization, and the sign-in popup rejects the combination — so the
+  scaffold now stops with the conflicting agents named by organization, and
+  the steps to fix it (keep private agents from one organization, or make
+  the others public).
+- The "Next steps" printed after a webapp scaffold no longer tell a signed-in
+  user to log in again, and no longer send an unsigned Enterprise user to
+  Blocks Network with a bare `blocks login`: on Enterprise the step names
+  your instance (`blocks login <your-instance> --write-env`), and when the
+  page only uses public agents the step is marked optional, because only
+  updating agent cards at deploy time needs it. `blocks dev` and `blocks
+  deploy` now also print the project directory they are operating on.
+- The wizard's prompts describe the choice in your deployment's terms: the
+  "What are you building?" help names the product you are signed in to, and
+  on Enterprise an agent project is described as a client calling other
+  agents on your deployment rather than in marketplace vocabulary.
 
 - Error messages on Enterprise deployments now name the deployment you are
   working with and say what to do next. Where a message told you to "run
@@ -162,6 +217,10 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
 
 ### Fixed
 
+- A lone Esc press in a menu now takes effect immediately. It previously did
+  nothing until your next keypress — whatever you pressed next completed the
+  cancel, and that keypress was consumed and lost. Arrow keys are unaffected
+  and still navigate.
 - A mistyped command's "Did you mean this?" suggestions are indented
   correctly again. The tab characters indenting each suggestion were being
   rendered as a literal `\x09`, so every typo produced a garbled hint instead

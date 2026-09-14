@@ -362,6 +362,13 @@ func promptDeploymentIfFirstLogin() (deploymentChoice, error) {
 		helpDeploymentChoice,
 	)
 	if err != nil {
+		// Esc is the picker's own way out and reports itself as a cancel;
+		// anything else is a read failure, and the refusal wording naming
+		// the flags that answer this question without a terminal is the
+		// more useful report for those.
+		if errors.Is(err, wizard.ErrCanceled) {
+			return deploymentChoice{}, err
+		}
 		return deploymentChoice{}, errors.New(deploymentNoInputError)
 	}
 	if idx == 0 {

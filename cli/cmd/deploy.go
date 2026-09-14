@@ -169,6 +169,13 @@ func runDeploy(ctx context.Context, target string) error {
 		return fmt.Errorf("blocks.config.json: %w", err)
 	}
 
+	// Name the directory being deployed before anything uploads: the scaffold
+	// creates a subdirectory, so it is easy to be one directory off and not
+	// notice until the wrong page is live. The path is termsafe'd — a
+	// directory name can carry control or bidi characters, and this is a
+	// line the operator reads to confirm what is about to be published.
+	fmt.Printf("Project: %s\n", termsafe.Text(mustCwd()))
+
 	// Surface what backend the bundle will talk to, and loudly warn if the
 	// current environment intends a different backend than what was baked in
 	// at `blocks init` time (the profile-switch footgun). We never rewrite —
@@ -232,9 +239,27 @@ func runDeploy(ctx context.Context, target string) error {
 		if isTTY() && !noInputMode {
 			selected, err := selectDeployTarget(cfg.DeployTarget)
 			if err != nil {
+				// Esc at the picker is a deliberate walk-away, not a failure:
+				// report it as a cancel and deploy nothing.
+				if errors.Is(err, wizard.ErrCanceled) {
+					return fmt.Errorf("canceled")
+				}
 				return err
 			}
-			target = selected
+			if selected != "" {
+				// A picked target is one Enter away from an upload the user may
+				// not have intended — the picker accepts the highlighted row on
+				// Enter, and the default row is the last-used target. One
+				// explicit confirmation before anything leaves the machine.
+				// A positional target confirms nothing: it names the target in
+				// the invocation itself.
+				if !confirmYesNo(os.Stdin, fmt.Sprintf("  Deploy web/ to %s? (Y/n): ", selected)) {
+					return fmt.Errorf("canceled")
+				}
+				target = selected
+			}
+			// selected == "" (nothing registered to pick) falls through to
+			// the no-target error below, which names --list.
 		} else {
 			target = cfg.DeployTarget
 		}

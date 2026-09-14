@@ -53,6 +53,17 @@ func TestFetch_FullCard_echo2(t *testing.T) {
 	if card.AgentName != "echo2" {
 		t.Errorf("AgentName = %q, want echo2", card.AgentName)
 	}
+	// Envelope metadata the scaffold's multi-org check reads. Listing and
+	// OrgID are documented contract fields; OrgName is display-only.
+	if card.Listing != "public" {
+		t.Errorf("Listing = %q, want public", card.Listing)
+	}
+	if card.OrgID != "019e0604-b011-74c6-a86f-6c160b513680" {
+		t.Errorf("OrgID = %q, want the fixture's orgId", card.OrgID)
+	}
+	if card.OrgName != "Example Owner" {
+		t.Errorf("OrgName = %q, want Example Owner", card.OrgName)
+	}
 	if got, want := len(card.TaskKinds), 1; got != want {
 		t.Fatalf("TaskKinds len = %d, want %d", got, want)
 	}
