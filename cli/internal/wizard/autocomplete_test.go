@@ -222,10 +222,23 @@ func TestACModel_Selected(t *testing.T) {
 	}
 }
 
-// withPipeStdout swaps os.Stdout for a pipe for the duration of the test and
-// returns everything written once f has run. Restoration is deferred so a
-// panic or t.Fatal inside f cannot leave the package's stdout pointed at a
-// dead pipe for later tests.
+// fdNoTTY is a descriptor term.GetSize always fails on, so a fixture's
+// injected width survives refreshWidth.
+const fdNoTTY = -1
+
+// A transient size-read failure mid-prompt must not reset a live terminal's
+// width. 37 is deliberately not defaultTermWidth, so substituting
+// terminalWidth here fails.
+func TestRefreshWidthKeepsInjectedWidthWhenSizeReadFails(t *testing.T) {
+	ri := &rawInput{fd: fdNoTTY, width: 37}
+	ri.refreshWidth()
+	if ri.width != 37 {
+		t.Errorf("width = %d, want 37 (a failed size read must not overwrite it)", ri.width)
+	}
+}
+
+// withPipeStdout restores os.Stdout via t.Cleanup as well as inline, so a
+// panic in f cannot strand the package's stdout for later tests.
 func withPipeStdout(t *testing.T, f func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -240,7 +253,7 @@ func withPipeStdout(t *testing.T, f func()) string {
 	})
 	f()
 	w.Close()
-	os.Stdout = old // restore on the normal path too, so nothing between here and Cleanup writes into a closed fd
+	os.Stdout = old
 	out, err := io.ReadAll(r)
 	r.Close()
 	if err != nil {
@@ -249,8 +262,7 @@ func withPipeStdout(t *testing.T, f func()) string {
 	return string(out)
 }
 
-// cursorUp parses the trailing \x1b[NA from a rendered block — the number of
-// physical rows the renderer believes it drew.
+// cursorUp is the row count the renderer claims, parsed from its trailing \x1b[NA.
 func cursorUp(t *testing.T, out string) int {
 	t.Helper()
 	var n int
@@ -260,22 +272,14 @@ func cursorUp(t *testing.T, out string) int {
 	return n
 }
 
-// The cursor-up count at the end of renderAutocomplete must equal the number
-// of physical rows drawn — including rows where a long error, prompt, or
-// suggestion wraps at the terminal width. Counting a wrapped line as one row
-// lands the cursor short, so the \x1b[J clear starts too low and each redraw
-// walks the prompt down the screen leaving residue.
-//
-// The expected count is hard-coded, not derived from physicalLines/visibleLen:
-// deriving it from the helpers under test would let a regression in those
-// helpers move the expectation with the implementation and stay green.
-func TestRenderAutocomplete_WrappedRowsCountedPhysically(t *testing.T) {
-	ri := &rawInput{width: 80}
+// Every expected count in the renderer tests below is hard-coded: deriving one
+// from physicalLines or visibleLen would move the expectation with a
+// regression in them.
 
-	// The not-found messages the wizard emits are ~120-135 columns before the
-	// two-space indent, so at 80 columns they wrap to two physical rows. The
-	// em dash is 3 bytes but one column — this fixture also pins that the
-	// counting is by column, not byte.
+func TestRenderAutocomplete_WrappedRowsCountedPhysically(t *testing.T) {
+	ri := &rawInput{fd: fdNoTTY, width: 80}
+
+	// 149 cells + the 2-space indent = 151: wraps to 2 rows at 80.
 	longErr := `agent "transcription-pipeline-v2" not found — check the spelling (if it is a private agent your account can access, cancel with Esc and log in first)`
 
 	m := newACModel()
@@ -283,85 +287,92 @@ func TestRenderAutocomplete_WrappedRowsCountedPhysically(t *testing.T) {
 		ri.renderAutocomplete("Agent name", m, longErr)
 	})
 
-	// prompt+hint row, input row, error wrapping to 2 rows → 4 total.
 	if n := cursorUp(t, out); n != 4 {
 		t.Errorf("cursor-up = %d rows, want 4 (prompt, input, error wrapped to 2)", n)
 	}
 }
 
-// A suggestion row whose visible length sits exactly at the wrap boundary
-// must count as ONE row — counting its trailing \r\n or counting bytes
-// instead of columns both inflate it to two and push the cursor-up above the
-// block, erasing the line the previous wizard step printed.
 func TestRenderAutocomplete_BoundarySuggestionNotOvercounted(t *testing.T) {
-	// Width 80 keeps the prompt+hint row (~61 cols) unwrapped, isolating the
-	// suggestion row. Highlighted-row prefix: 4 spaces + "› " = 6 visible
-	// columns, so a 74-column value lands the row exactly at 80.
+	// 6-cell prefix + 74 = exactly 80: shortening the value stops testing the boundary.
 	const width = 80
 	value := strings.Repeat("a", 74)
 	m := newACModel()
 	m.suggestions = []Suggestion{{Value: value}}
 	m.highlight = 0
-	ri := &rawInput{width: width}
+	ri := &rawInput{fd: fdNoTTY, width: width}
 
 	out := withPipeStdout(t, func() {
 		ri.renderAutocomplete("Agent name", m, "")
 	})
 
-	// prompt+hint, input, one suggestion row → 3 total. The pre-fix bugs
-	// (CRLF/byte inflation) counted 4+ here.
 	if n := cursorUp(t, out); n != 3 {
 		t.Errorf("cursor-up = %d rows, want 3 (boundary suggestion must be one row)", n)
 	}
 }
 
-// Multi-byte glyphs in a suggestion label must be measured in display CELLS,
-// not bytes or runes: an East Asian Wide glyph like 組 occupies two cells
-// (Unicode TR11 / UAX #11). The label below is 11 runes of 組 = 22 cells, so
-// the row's true width is 6 + 60 + 3 + 22 = 91 cells — one physical row at
-// width 91, two at width 80. Rune-counting would read 80 cells and fit it on
-// one row, under-counting; byte-counting would read ~113.
+// A 4-cell prefix + 76 leaves the input row at exactly 80, so the caret is the
+// one cell that decides whether it wraps.
+func TestRenderAutocomplete_CaretCellCountedOnlyWhenDrawn(t *testing.T) {
+	cases := []struct {
+		name      string
+		highlight int
+		want      int
+	}{
+		{"suppressed by a highlighted suggestion", 0, 3},
+		{"drawn while the caret is in the buffer", -1, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newACModel()
+			m.input = []rune(strings.Repeat("a", 76))
+			m.suggestions = []Suggestion{{Value: "agent"}}
+			m.highlight = tc.highlight
+			ri := &rawInput{fd: fdNoTTY, width: 80}
+
+			out := withPipeStdout(t, func() {
+				ri.renderAutocomplete("Agent name", m, "")
+			})
+
+			if n := cursorUp(t, out); n != tc.want {
+				t.Errorf("cursor-up = %d rows, want %d", n, tc.want)
+			}
+		})
+	}
+}
+
 func TestRenderAutocomplete_UnicodeLabelCountedByCell(t *testing.T) {
+	// 11 wide glyphs are 22 cells, not 11: 6+60+3+22 = 91 wraps at 80, 80 would not.
 	label := strings.Repeat("組", 11)
 	m := newACModel()
 	m.suggestions = []Suggestion{{Value: strings.Repeat("v", 60), Label: label}}
-	ri := &rawInput{width: 80}
+	ri := &rawInput{fd: fdNoTTY, width: 80}
 
 	out := withPipeStdout(t, func() {
 		ri.renderAutocomplete("Agent name", m, "")
 	})
 
-	// prompt+hint, input, suggestion wrapped to 2 rows → 4 total.
 	if n := cursorUp(t, out); n != 4 {
 		t.Errorf("cursor-up = %d rows, want 4 (wide CJK label counted by cell)", n)
 	}
 }
 
-// A long wrapped suggestion must still count all its physical rows — the
-// undercount direction (the original bug) walks the prompt down the screen.
 func TestRenderAutocomplete_WrappedSuggestionCounted(t *testing.T) {
-	// 6-col prefix + 74-char value = 80... deliberately past the boundary:
-	// value 78 cols → row = 84 visible → 2 physical rows at width 80.
+	// 6-cell prefix + 75 = 81: one cell past the boundary, so the row wraps.
+	// Paired with the 80-cell case above, this is the off-by-one either side.
 	m := newACModel()
-	m.suggestions = []Suggestion{{Value: strings.Repeat("w", 78)}}
+	m.suggestions = []Suggestion{{Value: strings.Repeat("w", 75)}}
 	m.highlight = 0
-	ri := &rawInput{width: 80}
+	ri := &rawInput{fd: fdNoTTY, width: 80}
 
 	out := withPipeStdout(t, func() {
 		ri.renderAutocomplete("Agent name", m, "")
 	})
 
-	// prompt+hint, input, suggestion wrapped to 2 → 4. Exact, not a lower
-	// bound: an overcount (CRLF/byte inflation) fails here just as the
-	// undercount does.
 	if n := cursorUp(t, out); n != 1+1+2 {
 		t.Errorf("cursor-up = %d rows, want %d (prompt, input, suggestion wrapped to 2)", n, 1+1+2)
 	}
 }
 
-// visibleLen itself, pinned directly: ANSI stripping (including the private
-// \x1b[?25l form) and one-cell-per-rune counting, independent of the renderer
-// math that consumes it.
 func TestVisibleLen(t *testing.T) {
 	cases := []struct {
 		name string

@@ -7,6 +7,12 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ## [Unreleased]
 
+### Security
+
+- The SDK now resolves a patched build of one of its dependencies. Nothing about
+  how the SDK behaves changes. A project that pins that dependency itself, in its
+  own lockfile or an `overrides` entry, keeps whatever its pin resolves.
+
 ### Added
 
 - Registry read helpers accept a credential. `fetchAgentRegistry()`,

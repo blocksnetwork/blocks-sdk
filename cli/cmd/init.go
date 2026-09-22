@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
 	"github.com/pubnub/blocks-sdk/cli/internal/cardfetch"
+	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/config"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
@@ -185,6 +187,12 @@ will call). Pass a name and/or flags to skip the wizard.
 			return fmt.Errorf("directory %q already exists", cfg.Name)
 		}
 
+		// Before any file is written (TestInitScaffoldFailsOnInvalidChosenBackendURL).
+		pin, err := resolveScaffoldEnvPin()
+		if err != nil {
+			return err
+		}
+
 		if !nonInteractive {
 			fmt.Printf("\n  This will create ./%s/ with your %s project files.\n", cfg.Name, cfg.Language)
 			if err := confirmScaffold(); err != nil {
@@ -195,10 +203,56 @@ will call). Pass a name and/or flags to skip the wizard.
 		if err := scaffold.Project(dir, cfg, nil); err != nil {
 			return fmt.Errorf("scaffold failed: %w", err)
 		}
+		pinScaffoldEnvToActiveDeployment(dir, pin)
 
 		printNextSteps(cfg)
 		return nil
 	},
+}
+
+// resolveScaffoldEnvPin reads only the tiers that record a deployment the user
+// chose; the build-time default is not one, because it describes how a build
+// finds a target nobody named
+// (TestInitScaffoldLeavesEnvUnpinnedWhenOnlyTheBuildDefaultAnswers).
+func resolveScaffoldEnvPin() (string, error) {
+	if pin := clictx.ChosenBackendURL(); pin != "" {
+		if _, err := clictx.EffectiveBackendURL(); err != nil {
+			return "", scaffoldPinError(err)
+		}
+		return pin, nil
+	}
+	pin, err := redirectedCDMDeploymentErr()
+	if err != nil {
+		return "", scaffoldPinError(err)
+	}
+	return pin, nil
+}
+
+func scaffoldPinError(err error) error {
+	return fmt.Errorf("cannot pin the scaffolded .env: %w", err)
+}
+
+// pinScaffoldEnvToActiveDeployment writes the pin a directly-run trigger or
+// consumer needs to reach the same deployment as the CLI. Which shapes write
+// nothing: TestInitScaffoldLeavesEnvUnpinnedForNetwork and
+// TestInitScaffoldPinWithoutKeyLeavesPlaceholder.
+//
+// A write failure is a warning: the project is complete without the pin, and
+// `blocks login --write-env` fills it in.
+func pinScaffoldEnvToActiveDeployment(dir string, pin string) {
+	if pin == "" {
+		return
+	}
+	mutations := []auth.EnvMutation{
+		{Key: blocksBackendURLEnv, Value: pin},
+		{Key: cdm.URLEnv, Value: cdm.EndpointFor(pin)},
+	}
+	if cred := clictx.EffectiveCredential(); cred.Key != "" {
+		mutations = append(mutations, auth.EnvMutation{Key: blocksAPIKeyEnv, Value: cred.Key})
+	}
+	if err := auth.ApplyEnvAt(dir, mutations...); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not pin .env to your deployment: %v\n", err)
+	}
 }
 
 // confirmScaffold asks the final "write these files?" question. It is the only
@@ -616,12 +670,9 @@ func makeAgentSuggestFn(client *blocksapi.Client) wizard.SuggestFunc {
 	}
 }
 
-// cardValidateTimeout bounds the Enter-time card lookup. It is a var so
-// tests can shrink it. The lookup runs inside the raw-mode event loop, so a
-// stalled request would park the wizard — Ctrl+C queues behind it and the
-// prompt dead-ends until some keypress arrives. Five seconds is generous
-// for a small JSON GET; on expiry the value degrades to acceptance like
-// any other network failure (the scaffold fetch is the authority).
+// cardValidateTimeout bounds the Enter-time lookup, which runs inside the
+// raw-mode event loop where a stall would leave Ctrl+C queued behind it. A var
+// so tests can shrink it; see TestMakeAgentValidateFn_StalledLookupIsBounded.
 var cardValidateTimeout = 5 * time.Second
 
 // makeAgentValidateFn adapts cardfetch into the wizard's Enter-time
@@ -630,14 +681,12 @@ var cardValidateTimeout = 5 * time.Second
 // wizard question has been answered. A name picked from the suggestion list
 // is known to exist and skips the round-trip.
 //
-// Only a definitive not-found blocks acceptance. A network failure — or a
-// lookup that outlives cardValidateTimeout — returns nil and degrades the
-// same way live suggestions do: the scaffold's own card fetch is the
-// authority there, and it reports failures with the full remedy text.
+// Only a definitive not-found blocks acceptance; a failed or timed-out lookup
+// degrades to acceptance, leaving the scaffold's own fetch as the authority.
 //
 // The wording carries no command the user is invited to paste: it renders
 // inside the autocomplete's inline error slot, and the name is the user's
-// own free text. (Wrapping is fine — the renderer counts physical rows.)
+// own free text.
 func makeAgentValidateFn(ctx context.Context, client *blocksapi.Client) wizard.AgentValidateFunc {
 	return func(value string, fromSuggestion bool) error {
 		if err := wizard.ValidateAgentName(value); err != nil {

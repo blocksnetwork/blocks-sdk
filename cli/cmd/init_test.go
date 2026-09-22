@@ -48,6 +48,10 @@ func runInitArgs(t *testing.T, stdin string, args ...string) (string, string, er
 	restoreCLIState(t)
 	t.Cleanup(isolateProfiles(t))
 	isolateAmbientState(t)
+	// No redirect by default: a dead one is a hard scaffold error, not ambient
+	// noise. Redirect tests set it themselves.
+	t.Setenv("BLOCKS_CDM_URL", "")
+	cdm.Reset()
 	forceTTY(t)
 	resetNoInput(t)
 	pipeStdin(t, stdin)
@@ -2320,14 +2324,536 @@ func TestScaffoldWebappRefusesMultiOrgPrivateAgents(t *testing.T) {
 	})
 }
 
-// The Enter-time lookup runs inside the raw-mode event loop, so a stalled
-// request would park the wizard with Ctrl+C queued behind it. The lookup is
-// bounded by cardValidateTimeout and degrades to acceptance on expiry —
-// this pins that a hanging server cannot hold the prompt hostage.
+func TestInitScaffoldPinsEnvToActiveProfileDeployment(t *testing.T) {
+	// Inlined rather than runInitArgs: the profile must exist before Execute.
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv(blocksBackendURLEnv, "")
+
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:      "https://blocks.acme.example",
+		DefaultOrgID: "o1",
+		Orgs:         map[string]profiles.OrgKey{"o1": {OrgName: "Eng", ApiKey: "bk_profile_key"}},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL=https://blocks.acme.example") {
+		t.Errorf("scaffolded .env missing BLOCKS_BACKEND_URL pin:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_CDM_URL=https://blocks.acme.example/api/v1/cdm") {
+		t.Errorf("scaffolded .env missing BLOCKS_CDM_URL pin:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_API_KEY=bk_profile_key") {
+		t.Errorf("scaffolded .env missing BLOCKS_API_KEY from active profile:\n%s", env)
+	}
+}
+
+func TestInitScaffoldPinWithoutKeyLeavesPlaceholder(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv(blocksBackendURLEnv, "")
+
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL: "https://blocks.acme.example",
+		Orgs:    map[string]profiles.OrgKey{},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL=https://blocks.acme.example") {
+		t.Errorf("URL pin must still be written:\n%s", env)
+	}
+	if strings.Contains(env, "BLOCKS_API_KEY=") && !strings.Contains(env, "BLOCKS_API_KEY=\n") {
+		t.Errorf("key placeholder must survive untouched, got:\n%s", env)
+	}
+}
+
+// A key the environment supplies is copied as-is, expiry unknown: the CLI has
+// no expiry for it, and the scaffold applies the resolver's credential policy
+// rather than a stricter one of its own — the child then behaves exactly as the
+// directory it was scaffolded from, and `blocks login --write-env` repairs both.
+// A supplied key outranks the profile for every command, so the scaffold pairs
+// it with the resolved target even when no profile accounts for it — the same
+// pairing `blocks register` would send, and the reason the context banner has an
+// `organization unknown` state rather than a refusal.
+func TestInitScaffoldPairsSuppliedKeyWithResolvedTarget(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv("BLOCKS_CDM_URL", "")
+	t.Setenv(blocksBackendURLEnv, "")
+
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:      "https://a.blocks.example",
+		DefaultOrgID: "o1",
+		Orgs:         map[string]profiles.OrgKey{"o1": {OrgName: "Eng", ApiKey: "bk_belongs_to_a"}},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+	t.Setenv(blocksAPIKeyEnv, "bk_unbound_from_shell")
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if !strings.Contains(env, "BLOCKS_API_KEY=bk_unbound_from_shell") {
+		t.Errorf("the supplied key must win, as it does for every other command:\n%s", env)
+	}
+	if strings.Contains(env, "bk_belongs_to_a") {
+		t.Errorf("the profile's key must not displace the supplied one:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL=https://a.blocks.example") {
+		t.Errorf("the resolved target still pins:\n%s", env)
+	}
+}
+
+func TestInitScaffoldCopiesEnvKeyWithoutJudgingExpiry(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv("BLOCKS_CDM_URL", "")
+
+	const deployment = "https://blocks.acme.example"
+	// The profile caches the same key and records it expired, so the only thing
+	// standing between the scaffold and a stale key is the tier order.
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:      deployment,
+		DefaultOrgID: "o1",
+		Orgs: map[string]profiles.OrgKey{"o1": {
+			OrgName:   "Eng",
+			ApiKey:    "bk_stale_key",
+			ExpiresAt: time.Now().Add(-time.Hour),
+		}},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	dir := writeProjectEnv(t, t.TempDir(),
+		"BLOCKS_BACKEND_URL="+deployment+"\nBLOCKS_API_KEY=bk_stale_key\n")
+	t.Chdir(dir)
+	loadProjectEnv(t, blocksBackendURLEnv, blocksAPIKeyEnv)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if !strings.Contains(env, "BLOCKS_API_KEY=bk_stale_key") {
+		t.Errorf("an environment-supplied key is copied whatever its age:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL="+deployment) {
+		t.Errorf("URL pin must still be written:\n%s", env)
+	}
+}
+
+func TestInitScaffoldSkipsExpiredProfileKey(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv(blocksBackendURLEnv, "")
+
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		BaseURL:      "https://blocks.acme.example",
+		DefaultOrgID: "o1",
+		Orgs: map[string]profiles.OrgKey{"o1": {
+			OrgName:   "Eng",
+			ApiKey:    "bk_expired_key",
+			ExpiresAt: time.Now().Add(-time.Hour),
+		}},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if strings.Contains(env, "bk_expired_key") {
+		t.Errorf("expired key must not be written to the scaffolded .env:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_API_KEY=") {
+		t.Errorf("key placeholder must survive for login --write-env to refill:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL=https://blocks.acme.example") {
+		t.Errorf("URL pin must still be written:\n%s", env)
+	}
+}
+
+// Failing-redirect shape: TestInitScaffoldFailsOnUnreachableRedirectedCDM.
+func TestInitScaffoldLeavesEnvUnpinnedForNetwork(t *testing.T) {
+	out, dir, err := runInitArgs(t, "", "my_agent", "--mode", "provider", "--language", "python", "--no-input")
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if strings.Contains(env, "BLOCKS_BACKEND_URL=") || strings.Contains(env, "BLOCKS_CDM_URL=") {
+		t.Errorf("Network scaffold must not pin a deployment:\n%s", env)
+	}
+}
+
+func TestInitScaffoldHonoursProjectEnvOverActiveProfile(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+
+	// B needs a profile too, or the trust gate declines the pin.
+	if err := profiles.Upsert("deployment-a", deploymentAProfile(), true); err != nil {
+		t.Fatalf("seed profile A: %v", err)
+	}
+	if err := profiles.Upsert("deployment-b", profiles.Profile{
+		BaseURL: "https://b.blocks.example",
+		Orgs:    map[string]profiles.OrgKey{},
+	}, false); err != nil {
+		t.Fatalf("seed profile B: %v", err)
+	}
+
+	dir := writeProjectEnv(t, t.TempDir(),
+		"BLOCKS_BACKEND_URL=https://b.blocks.example\nBLOCKS_API_KEY=bk_b\n")
+	t.Chdir(dir)
+	loadProjectEnv(t, blocksBackendURLEnv, blocksAPIKeyEnv)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL=https://b.blocks.example") {
+		t.Errorf("pin must come from the project .env (deployment B), not the active profile:\n%s", env)
+	}
+	if strings.Contains(env, "a.blocks.example") || strings.Contains(env, "bk_a") {
+		t.Errorf("active profile (deployment A) must not leak into the scaffolded .env:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_API_KEY=bk_b") {
+		t.Errorf("exported/project key must fill the placeholder:\n%s", env)
+	}
+}
+
+func TestInitScaffoldHonoursExportedDeploymentOverActiveProfile(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+
+	if err := profiles.Upsert("deployment-a", deploymentAProfile(), true); err != nil {
+		t.Fatalf("seed profile A: %v", err)
+	}
+	t.Setenv(blocksBackendURLEnv, "https://b.blocks.example")
+	t.Setenv(blocksAPIKeyEnv, "bk_b")
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL=https://b.blocks.example") {
+		t.Errorf("pin must come from the exported deployment, not the active profile:\n%s", env)
+	}
+	if strings.Contains(env, "a.blocks.example") || strings.Contains(env, "bk_a") {
+		t.Errorf("active profile (deployment A) must not leak into the scaffolded .env:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_API_KEY=bk_b") {
+		t.Errorf("exported key must fill the placeholder:\n%s", env)
+	}
+}
+
+func TestInitScaffoldPinsDeploymentNamedOnlyByRedirectedCDM(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv(blocksBackendURLEnv, "")
+
+	const deployment = "https://enterprise.acme.example"
+
+	// No local tier names a target, so only the remote tier can answer.
+	cdmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"api":{"baseUrl":%q},"pubnub":{"publishKey":"pub","subscribeKey":"sub"}}`, deployment)
+	}))
+	t.Cleanup(cdmSrv.Close)
+	t.Setenv("BLOCKS_CDM_URL", cdmSrv.URL)
+	cdm.Reset()
+	t.Cleanup(cdm.Reset)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if !strings.Contains(env, "BLOCKS_BACKEND_URL="+deployment) {
+		t.Errorf("redirected CDM's deployment must pin the scaffold:\n%s", env)
+	}
+	if !strings.Contains(env, "BLOCKS_CDM_URL="+deployment+"/api/v1/cdm") {
+		t.Errorf("CDM pin must follow the deployment the redirect named:\n%s", env)
+	}
+}
+
+func TestInitScaffoldLeavesEnvUnpinnedWhenOnlyTheBuildDefaultAnswers(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv(blocksBackendURLEnv, "")
+
+	// Without a profile the earlier guard short-circuits and this test would
+	// pass with the build-default tier deleted.
+	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
+		DefaultOrgID: "o1",
+		Orgs:         map[string]profiles.OrgKey{"o1": {OrgName: "Eng", ApiKey: "bk_net_key"}},
+	}, true); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	orig := defaultBackendURL
+	defaultBackendURL = "https://packaged.blocks.example"
+	t.Cleanup(func() { defaultBackendURL = orig })
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	out := captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	envBytes, rerr := os.ReadFile(filepath.Join(dir, "my_agent", ".env"))
+	if rerr != nil {
+		t.Fatalf("read scaffolded .env: %v", rerr)
+	}
+	env := string(envBytes)
+	if strings.Contains(env, "BLOCKS_BACKEND_URL=") || strings.Contains(env, "BLOCKS_CDM_URL=") {
+		t.Errorf("build-time default must not be pinned into a scaffolded project:\n%s", env)
+	}
+}
+
+func TestInitScaffoldFailsOnInvalidChosenBackendURL(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+
+	t.Setenv(blocksBackendURLEnv, "ht!tp://not-a-url")
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	_ = captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err == nil {
+		t.Fatal("init must surface the invalid target rather than scaffold around it")
+	}
+	if !strings.Contains(err.Error(), "backend URL") {
+		t.Errorf("error must name what was rejected, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "my_agent")); statErr == nil {
+		t.Error("no project directory may be left behind by a failed target validation")
+	}
+}
+
+func TestInitScaffoldFailsOnUnreachableRedirectedCDM(t *testing.T) {
+	restoreCLIState(t)
+	t.Cleanup(isolateProfiles(t))
+	isolateAmbientState(t)
+	forceTTY(t)
+	resetNoInput(t)
+	pipeStdin(t, "")
+	resetInitFlags()
+	t.Cleanup(resetInitFlags)
+	t.Setenv(blocksBackendURLEnv, "")
+
+	// Fetch succeeds; the payload decodes with no api.baseUrl, which cdm.fetch
+	// rejects.
+	cdmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"not":"a cdm payload"}`)
+	}))
+	t.Cleanup(cdmSrv.Close)
+	t.Setenv("BLOCKS_CDM_URL", cdmSrv.URL)
+	cdm.Reset()
+	t.Cleanup(cdm.Reset)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var err error
+	_ = captureStdout(func() {
+		rootCmd.SetArgs([]string{"init", "my_agent", "--mode", "provider", "--language", "python", "--no-input"})
+		err = rootCmd.Execute()
+	})
+	if err == nil {
+		t.Fatal("init must report the failed explicit redirect rather than scaffold Network")
+	}
+	if !strings.Contains(err.Error(), "cannot pin the scaffolded .env") {
+		t.Errorf("error must name the step that failed, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "my_agent")); statErr == nil {
+		t.Error("no project directory may be left behind by a failed target resolution")
+	}
+}
+
+// The server stalls until the client cancels: a fixed sleep would pass with
+// the bound removed.
 func TestMakeAgentValidateFn_StalledLookupIsBounded(t *testing.T) {
-	// cancelled records that the client actually cancelled the in-flight
-	// request when the bound expired — pinning the timeout plumbing itself,
-	// not just an elapsed-time ceiling.
 	cancelled := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done() // stall until the client gives up
@@ -2346,10 +2872,7 @@ func TestMakeAgentValidateFn_StalledLookupIsBounded(t *testing.T) {
 	if err := validate("echo2", false); err != nil {
 		t.Fatalf("stalled lookup must degrade to acceptance, got: %v", err)
 	}
-	// The bound must actually bind: 10x the configured timeout is generous
-	// against scheduler jitter while still failing fast if the lookup context
-	// is ever dropped (a reverted timeout parks the wizard until the server
-	// responds — forever, for a server that never does).
+	// 10x the bound absorbs scheduler jitter; tighter multiples flake in CI.
 	if elapsed := time.Since(start); elapsed > 10*cardValidateTimeout {
 		t.Fatalf("stalled lookup returned after %v — the wizard's event loop was parked past the bound", elapsed)
 	}

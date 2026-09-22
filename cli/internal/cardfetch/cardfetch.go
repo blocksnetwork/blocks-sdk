@@ -39,11 +39,8 @@ type AgentCard struct {
 	Streams map[string]StreamDecl
 
 	// Listing, OrgID and OrgName come from the response envelope, not the
-	// card. All three are documented contract fields of the registry's
-	// single-agent response; OrgName is display-only by contract — callers
-	// keying orgs must use OrgID, which is the stable identifier. An empty
-	// Listing means the payload did not state one, and consumers fail open
-	// on it.
+	// card. OrgName is display-only: key organizations by OrgID. An empty
+	// Listing means the payload did not state one, and consumers fail open.
 	Listing string
 	OrgID   string
 	OrgName string

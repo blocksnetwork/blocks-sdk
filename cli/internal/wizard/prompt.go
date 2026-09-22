@@ -112,25 +112,16 @@ func readKey() (string, error) {
 	return string(buf[0]), nil
 }
 
-// ansiEscapes matches CSI sequences (ESC [ params final-byte), including
-// private-parameter forms like \x1b[?25l, the only escape forms the
-// renderers emit. Row counting needs visible widths, not byte counts.
+// CSI only — the sole escape form the renderers emit.
 var ansiEscapes = regexp.MustCompile("\x1b\\[[0-9;:?]*[a-zA-Z]")
 
-// visibleLen returns the terminal-cell width of s with ANSI escapes removed —
-// what physicalLines needs, since the renderers embed color codes and
-// non-ASCII glyphs. Cell width, not byte or rune count: an East Asian Wide
-// character like 組 occupies two cells per Unicode TR11 (UAX #11), a
-// combining mark occupies zero, and a byte count would inflate every
-// multi-byte glyph. Counting wrong in either direction corrupts the
-// cursor-up math — under-counting leaves residue below, over-counting erases
-// the line above the block.
+// visibleLen returns the width of s in terminal display cells; see TestVisibleLen.
 func visibleLen(s string) int {
 	return runewidth.StringWidth(ansiEscapes.ReplaceAllString(s, ""))
 }
 
 // physicalLines returns the number of terminal rows a string of the given
-// visible character count occupies on a terminal of the given width.
+// visible cell count occupies on a terminal of the given width.
 func physicalLines(visibleLen, termWidth int) int {
 	if visibleLen <= 0 || termWidth <= 0 {
 		return 1
@@ -138,13 +129,8 @@ func physicalLines(visibleLen, termWidth int) int {
 	return (visibleLen + termWidth - 1) / termWidth
 }
 
-// defaultTermWidth is the fallback column count when the terminal size cannot
-// be read (non-TTY, or a kernel that answers without one). Both renderers
-// share it so their wrap math cannot drift apart.
 const defaultTermWidth = 80
 
-// terminalWidth reads the column count for fd, falling back to
-// defaultTermWidth when it cannot.
 func terminalWidth(fd int) int {
 	width, _, err := term.GetSize(fd)
 	if err != nil || width <= 0 {
@@ -177,11 +163,8 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText
 	// Get terminal width so we can account for line wrapping.
 	width := terminalWidth(fd)
 
-	// Calculate total physical rows used by the rendered block,
-	// accounting for lines that wrap at the terminal width. Widths are
-	// display cells (visibleLen strips the color codes and counts East Asian
-	// Wide glyphs as two cells), not bytes — the arrows in the hint are
-	// multi-byte.
+	// Cells, not bytes: the hint's arrows are multi-byte and wide glyphs are
+	// two cells, so len() would over-count and wrap rows the terminal does not.
 	hint := "(\xe2\x86\x91\xe2\x86\x93 navigate, enter select, esc cancel, ? help)"
 	totalRows := physicalLines(visibleLen(prompt)+1+visibleLen(hint), width) // +1 for the space
 	for _, opt := range options {

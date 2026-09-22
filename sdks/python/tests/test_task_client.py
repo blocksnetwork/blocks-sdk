@@ -1820,6 +1820,29 @@ class TestCreateTaskClient:
             create_task_client()
             mock_ld.assert_called_once()
 
+    @patch("blocks_network.task_client.TaskClient.create")
+    def test_loads_env_from_cwd_not_install_dir(self, mock_create, monkeypatch, tmp_path):
+        """A .env only reachable from cwd, so a site-packages-anchored search misses it."""
+        mock_create.return_value = MagicMock()
+        (tmp_path / ".env").write_text(
+            "BLOCKS_API_KEY=bk_cwd_key\n"
+            "BLOCKS_BACKEND_URL=https://blocks.acme.example\n"
+            "BLOCKS_CDM_URL=https://blocks.acme.example/api/v1/cdm\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("BLOCKS_API_KEY", raising=False)
+        monkeypatch.delenv("BLOCKS_BACKEND_URL", raising=False)
+        monkeypatch.delenv("BLOCKS_CDM_URL", raising=False)
+
+        create_task_client()
+
+        mock_create.assert_called_once_with(
+            billing_mode="free",
+            api_key="bk_cwd_key",
+            token_endpoint=None,
+            token_provider=None,
+        )
+
     def test_importable_from_package(self):
         from blocks_network import create_task_client as fn
         assert callable(fn)

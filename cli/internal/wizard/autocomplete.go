@@ -205,9 +205,7 @@ type rawInput struct {
 	fd       int
 	oldState *term.State
 	events   chan acEvent
-	// width is the terminal column count captured at raw-mode entry, used to
-	// count physical rows so wrapped lines don't corrupt the cursor-up math.
-	width int
+	width    int // display cells
 }
 
 // newRawInput puts the terminal into raw mode and starts the key reader.
@@ -394,9 +392,7 @@ func (ri *rawInput) confirm(prompt string, def bool) (bool, error) {
 }
 
 // refreshWidth re-reads the terminal column count so a resize while the
-// prompt is open is picked up on the next render. It only overwrites the
-// captured width when the size read succeeds, so test harnesses that inject
-// a width directly (no real TTY behind the fd) keep theirs.
+// prompt is open is picked up on the next render.
 func (ri *rawInput) refreshWidth() {
 	if w, _, err := term.GetSize(ri.fd); err == nil && w > 0 {
 		ri.width = w
@@ -405,33 +401,20 @@ func (ri *rawInput) refreshWidth() {
 
 // renderAutocomplete draws the prompt, the typed buffer, the suggestion list,
 // and an optional error line, leaving the cursor at the top of the block so
-// the next render can clear and redraw in place. Row counting is in physical
-// terminal rows (ANSI escapes stripped, wrapping at ri.width accounted for) —
-// a long error or suggestion that wraps would otherwise corrupt the cursor-up
-// math and leave residue that walks the prompt down the screen.
+// the next render can clear and redraw in place.
 func (ri *rawInput) renderAutocomplete(prompt string, m *acModel, errMsg string) {
-	// A terminal resized while the prompt is open must not strand the row
-	// math at the old width — every render re-reads it.
 	ri.refreshWidth()
 	const hideCursor = "\x1b[?25l"
 	fmt.Fprint(os.Stdout, hideCursor)
 	// Clear from the top of the block to the end of the screen.
 	fmt.Fprint(os.Stdout, "\r\x1b[J")
 
-	// Every row is counted in physical lines: on a narrow terminal a long
-	// prompt, input, suggestion, or error wraps, and counting it as one row
-	// would land the cursor-up short, leaving residue that walks the prompt
-	// down the screen on every redraw.
 	rows := func(raw string) int { return physicalLines(visibleLen(raw), ri.width) }
 
 	hint := "(type to search, \xe2\x86\x91\xe2\x86\x93 pick, enter accept, esc cancel)"
 	fmt.Fprintf(os.Stdout, "\x1b[1m%s\x1b[0m \x1b[2m%s\x1b[0m\r\n", prompt, hint)
 	lines := rows(prompt + " " + hint)
 
-	// Input line. The caret cell is counted only when rendered — with a
-	// suggestion highlighted the caret is not drawn, so always counting it
-	// would over-count the row by one cell at the wrap boundary and push the
-	// cursor-up above the block.
 	caret := ""
 	if m.highlight == -1 {
 		caret = "\x1b[7m \x1b[0m" // reverse-video block as a caret
@@ -448,9 +431,6 @@ func (ri *rawInput) renderAutocomplete(prompt string, m *acModel, errMsg string)
 		if s.Label != "" && s.Label != s.Value {
 			label = fmt.Sprintf("%s \x1b[2m— %s\x1b[0m", s.Value, s.Label)
 		}
-		// The counted string must be the content without the line terminator
-		// — counting "\r\n" adds two phantom columns and can push a
-		// boundary-length row into a wrap the terminal does not perform.
 		var row string
 		if i == m.highlight {
 			row = fmt.Sprintf("    \x1b[36m\xe2\x80\xba %s\x1b[0m", label)

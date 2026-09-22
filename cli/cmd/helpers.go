@@ -107,6 +107,20 @@ func resolveBackendURLOffline() string {
 	return clictx.BackendURL()
 }
 
+// redirectedCDMDeploymentErr yields ("", nil) — not an error — when any other
+// tier named the target or none did. Each guard drops a tier that is not a
+// deployment the caller chose, so the build-time default never becomes one.
+// redirectedCDMDeployment (login.go) reads it with the error dropped.
+func redirectedCDMDeploymentErr() (string, error) {
+	if clictx.BackendURL() != "" {
+		return "", nil
+	}
+	if clictx.Profile() == "" || clictx.ProfileIsTarget() {
+		return "", nil
+	}
+	return clictx.EffectiveBackendURL()
+}
+
 // resolveWebappBackendURL picks the backend API origin baked into a webapp
 // scaffold at `blocks init --mode webapp` time.
 //
