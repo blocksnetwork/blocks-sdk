@@ -811,9 +811,9 @@ func resolveLoginDeployment(choice deploymentChoice) loginDeployment {
 	return loginDeployment{url: redirectedCDMDeployment()}
 }
 
-// redirectedCDMDeployment is the deployment named only by a CDM endpoint the
-// environment pointed this invocation at, and "" whenever some other tier named the
-// target or nothing named one at all.
+// redirectedCDMDeployment drops redirectedCDMDeploymentErr's error, which login
+// can afford because resolveLoginBackend falls through to resolveBackendURL —
+// the one place that reports a remote-config failure.
 //
 // It is a tier of the login's target precedence because the CDM payload carries
 // api.baseUrl: with a stock Blocks Network profile and BLOCKS_CDM_URL exported, that
@@ -821,41 +821,8 @@ func resolveLoginDeployment(choice deploymentChoice) loginDeployment {
 // request follows it — so it is also the deployment the login must record. Recording
 // anything else left the minted key in a profile that describes somewhere else, beside
 // no pin at all, which is a key no later command in that directory can spend.
-//
-// Whether the endpoint was redirected is asked of clictx rather than recomputed here.
-// With no local tier having named an origin, the active profile stops being the target
-// exactly when that endpoint names a deployment of its own, so ProfileIsTarget() is
-// that verdict — and it costs no round-trip, because the presence of a redirect is a
-// local fact. A second copy of the rule here would be free to drift from the one the
-// credential tiers apply, and the drift would show up as a login that stores a key in a
-// profile the next invocation refuses to spend it from.
-//
-// Each guard excludes a tier that is not a deployment the user chose:
-//
-//   - clictx.BackendURL() != "" — a local tier, or the build's own default, already
-//     named the origin. The local tiers are the case above; the build-time default
-//     describes how a build finds a target it was not told about, and recording it
-//     would freeze an answer the CLI is meant to resolve for itself.
-//   - no active profile — nothing was displaced, so there is no evidence that a
-//     redirect rather than the built-in default answered, and the login records what it
-//     recorded before this tier existed.
-//   - the profile is still the target — the endpoint is the build's own, the deployment
-//     behind it is Blocks Network, and Blocks Network needs no pin.
-//
-// A fetch that fails yields "", which leaves resolveLoginBackend to fall through to
-// resolveBackendURL — the one place that reports the failure, so it is not reported
-// twice for one invocation.
 func redirectedCDMDeployment() string {
-	if clictx.BackendURL() != "" {
-		return ""
-	}
-	if clictx.Profile() == "" || clictx.ProfileIsTarget() {
-		return ""
-	}
-	url, err := clictx.EffectiveBackendURL()
-	if err != nil {
-		return ""
-	}
+	url, _ := redirectedCDMDeploymentErr()
 	return url
 }
 

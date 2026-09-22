@@ -409,7 +409,9 @@ client = create_task_client(token_endpoint="https://my-backend/token")  # proxy 
   ```
 
   The list helpers (`fetch_agent_registry`, `fetch_agents_by_tag`, `fetch_agents_by_listing`) take the same `base_url` / `api_key` arguments.
-- When no auth mode is provided, falls back to `BLOCKS_API_KEY` from the environment
+- Loads the project `.env` first, anchoring the search on the working directory
+  (`load_dotenv(find_dotenv(usecwd=True))`), then falls back to `BLOCKS_API_KEY` from
+  the environment when no auth mode is provided
 - Accepts `token_endpoint` or `token_provider` as alternative auth modes (skips `BLOCKS_API_KEY`)
 - Extra `**kwargs` forwarded to `TaskClient.create()`
 

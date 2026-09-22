@@ -1978,9 +1978,13 @@ def create_task_client(
         If no auth mode is provided and ``BLOCKS_API_KEY`` is not set in
         the environment.
     """
-    from dotenv import load_dotenv
+    from dotenv import find_dotenv, load_dotenv
 
-    load_dotenv()
+    # usecwd anchors the search on the caller's directory, not this module's
+    # path inside site-packages, so a stray .env above the install directory
+    # cannot shadow the project's. Needs python-dotenv >= 1.0, where
+    # load_dotenv("") is a no-op.
+    load_dotenv(find_dotenv(usecwd=True))
 
     # Only fall back to BLOCKS_API_KEY when no auth mode was provided.
     if api_key is None and token_endpoint is None and token_provider is None:

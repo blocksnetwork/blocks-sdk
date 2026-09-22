@@ -217,6 +217,18 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
 
 ### Fixed
 
+- `blocks init` now pins a scaffolded project to the deployment the CLI is
+  actually targeting. Previously the generated `.env` contained only an empty
+  `BLOCKS_API_KEY=` even when you were logged in to a specific deployment, so
+  scripts run directly — a trigger or consumer outside `blocks run` — resolved
+  the default deployment instead. `BLOCKS_BACKEND_URL` and `BLOCKS_CDM_URL`
+  name the deployment every command answers to — whether that came from a
+  project `.env`, an exported variable, a redirected configuration endpoint,
+  or your active profile — and the credential for that deployment fills the
+  `BLOCKS_API_KEY` placeholder, all in the same single edit
+  `blocks login --write-env` uses. Without a usable credential the placeholder
+  survives for `blocks login --write-env` to fill, and the default deployment
+  writes nothing — the file is left as the stock template.
 - A lone Esc press in a menu now takes effect immediately. It previously did
   nothing until your next keypress — whatever you pressed next completed the
   cancel, and that keypress was consumed and lost. Arrow keys are unaffected
@@ -449,3 +461,9 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
   A shared `.env` one level up keeps working unchanged.
 - `blocks logout` and `blocks profile remove` no longer report a credential removed from
   a project `.env` while a working one survives in the same file.
+- A Python agent image built from the generated `Dockerfile` now applies the operating
+  system's published security updates as it builds, so a newly scaffolded agent no longer
+  starts from packages the base image tag predates. The Python version is unchanged. On a
+  builder that has the layer cached, pass `--build-arg SECURITY_REFRESH=$(date +%F)` to
+  re-run it. A project scaffolded earlier keeps its existing `Dockerfile` until you copy
+  the new `ARG` and `RUN` block into it.

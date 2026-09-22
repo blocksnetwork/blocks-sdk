@@ -18,6 +18,16 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ### Fixed
 
+- ``create_task_client()`` now loads the project ``.env`` relative to the
+  working directory. Its ``load_dotenv()`` call previously anchored the file
+  search on the SDK's own module inside site-packages, so it walked up from the
+  install directory and could load a stray ``.env`` above it (for example the
+  user's home directory) instead of the project ``.env`` — picking up a stale
+  ``BLOCKS_API_KEY`` while leaving ``BLOCKS_BACKEND_URL`` and
+  ``BLOCKS_CDM_URL`` unset, so a script run directly resolved the default
+  deployment and sent its tasks to the wrong network. The search now starts
+  from the directory the script was run in (still walking upward, so a script
+  run from a project subdirectory finds the project's ``.env``).
 - ``ConsumerAuth.get_last_auth_error()`` now reports a failed **reactive**
   refresh, not only a permanently-failed proactive one. ``on_auth_failure()``
   signals failure as a bare ``False``, which is indistinguishable from a provider

@@ -78,7 +78,7 @@
     "orgId": {
       "type": "string",
       "format": "uuid",
-      "description": "Org UUID the JWT acts under. Forced to the private agent's org if any requested agent is private; otherwise either the user's only org or the org chosen by the popup picker (see HOST_PAGES_PLAN §5.3)."
+      "description": "Org UUID the JWT acts under. Forced to the private agent's org if any requested agent is private; otherwise either the user's only org or the org chosen by the popup picker."
     },
     "userId": {
       "type": "string",

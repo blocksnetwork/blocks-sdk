@@ -529,6 +529,32 @@ func TestProjectPyprojectContent(t *testing.T) {
 	}
 }
 
+func TestProjectPythonDockerfileAppliesOSSecurityUpdates(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "test_agent")
+	if err := Project(dir, pythonConfig(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "apt-get upgrade") {
+		t.Error("Dockerfile should upgrade OS packages; the base tag ships packages older than the distro's published security fixes")
+	}
+	if !strings.Contains(content, "rm -rf /var/lib/apt/lists/*") {
+		t.Error("Dockerfile should drop apt lists in the same layer as the upgrade")
+	}
+	if strings.Index(content, "apt-get upgrade") > strings.Index(content, "pip install") {
+		t.Error("OS packages should be upgraded before pip install so the dependency layer builds on patched libraries")
+	}
+	if !strings.Contains(content, "ARG SECURITY_REFRESH") || !strings.Contains(content, "${SECURITY_REFRESH}") {
+		t.Error("Dockerfile should declare SECURITY_REFRESH and reference it inside the upgrade RUN; an unreferenced ARG does not invalidate the cached layer")
+	}
+}
+
 func TestProjectEnvContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
 	if err := Project(dir, pythonConfig(), nil); err != nil {
