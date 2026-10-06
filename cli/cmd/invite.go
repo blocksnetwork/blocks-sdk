@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"text/tabwriter"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
@@ -47,8 +48,8 @@ func init() {
 	inviteCmd.AddCommand(inviteAcceptCmd)
 
 	inviteCmd.AddCommand(inviteRevokeCmd)
-	inviteRevokeCmd.Flags().StringVar(&inviteRevokeEmail, "email", "", "Email of the user to revoke")
-	inviteRevokeCmd.Flags().StringVar(&inviteRevokeOrg, "org", "", "Organization ID to revoke")
+	inviteRevokeCmd.Flags().StringVar(&inviteRevokeEmail, "email", "", "Email of the person or agent whose access and pending invitations to withdraw")
+	inviteRevokeCmd.Flags().StringVar(&inviteRevokeOrg, "org", "", "Slug or ID of the organization whose access and pending invitations to withdraw")
 
 	inviteCmd.AddCommand(inviteGrantsCmd)
 }
@@ -125,7 +126,7 @@ var inviteAcceptCmd = &cobra.Command{
 
 var inviteRevokeCmd = &cobra.Command{
 	Use:   "revoke <agentName>",
-	Short: "Revoke access to a private agent",
+	Short: "Revoke access to a private agent and cancel pending invitations",
 	Args:  agentNameArg,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if inviteRevokeEmail == "" && inviteRevokeOrg == "" {
@@ -346,17 +347,19 @@ func runInviteRevoke(agentName string) error {
 		return backendNotConfigured("BLOCKS_BACKEND_URL must be set")
 	}
 
-	// First list grants to find the one matching the email/org
-	grantsURL := fmt.Sprintf("%s/api/v1/agents/%s/grants", backendURL, agentPathSegment(agentName))
-	req, err := http.NewRequest("GET", grantsURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+	revokeURL := fmt.Sprintf("%s/api/v1/agents/%s/access/revoke", backendURL, agentPathSegment(agentName))
+	var resp *http.Response
+	for _, payload := range revokeTargetPayloads() {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		resp, err = postAccessRevoke(revokeURL, apiKey, payload)
+		if err != nil {
+			return err
+		}
+		if !orgTargetMissed(resp.StatusCode) {
+			break
+		}
 	}
 	defer resp.Body.Close()
 
@@ -364,67 +367,65 @@ func runInviteRevoke(agentName string) error {
 		return handleErrorResponse(resp)
 	}
 
-	var grantsResult struct {
-		Grants []struct {
-			ID          string `json:"id"`
-			Scope       string `json:"scope"`
-			GranteeUser *struct {
-				Email string `json:"email"`
-			} `json:"granteeUser"`
-			GranteeOrg *struct {
-				ID   string `json:"id"`
-				Slug string `json:"slug"`
-			} `json:"granteeOrg"`
-		} `json:"grants"`
+	var result struct {
+		GrantsRevoked        int `json:"grantsRevoked"`
+		InvitationsCancelled int `json:"invitationsCancelled"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&grantsResult); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	var grantID string
-	for _, g := range grantsResult.Grants {
-		if inviteRevokeEmail != "" && g.GranteeUser != nil && g.GranteeUser.Email == inviteRevokeEmail {
-			grantID = g.ID
-			break
-		}
-		if inviteRevokeOrg != "" && g.GranteeOrg != nil &&
-			(g.GranteeOrg.ID == inviteRevokeOrg || g.GranteeOrg.Slug == inviteRevokeOrg) {
-			grantID = g.ID
-			break
-		}
+	target := termsafe.Text(inviteRevokeEmail)
+	if inviteRevokeOrg != "" {
+		target = "org " + termsafe.Text(inviteRevokeOrg)
 	}
-
-	if grantID == "" {
-		if inviteRevokeEmail != "" {
-			return fmt.Errorf("no active grant found for email %s", termsafe.Text(inviteRevokeEmail))
-		}
-		return fmt.Errorf("no active grant found for org %s", termsafe.Text(inviteRevokeOrg))
+	if result.GrantsRevoked > 0 {
+		fmt.Printf("Access revoked for %s\n", target)
 	}
-
-	// Delete the grant
-	deleteURL := fmt.Sprintf("%s/api/v1/agents/%s/grants/%s", backendURL, agentPathSegment(agentName), agentPathSegment(grantID))
-	delReq, err := http.NewRequest("DELETE", deleteURL, nil)
-	if err != nil {
-		return err
-	}
-	delReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	delResp, err := http.DefaultClient.Do(delReq)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer delResp.Body.Close()
-
-	if delResp.StatusCode < 200 || delResp.StatusCode >= 300 {
-		return handleErrorResponse(delResp)
-	}
-
-	if inviteRevokeEmail != "" {
-		fmt.Printf("Access revoked for %s\n", termsafe.Text(inviteRevokeEmail))
-	} else {
-		fmt.Printf("Access revoked for org %s\n", termsafe.Text(inviteRevokeOrg))
+	switch n := result.InvitationsCancelled; {
+	case n == 1:
+		fmt.Printf("Pending invitation for %s cancelled; its link no longer works\n", target)
+	case n > 1:
+		fmt.Printf("%d pending invitations for %s cancelled; their links no longer work\n", n, target)
 	}
 	return nil
+}
+
+var orgIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// A UUID-shaped --org is tried as an ID first, then as a slug, since a slug can look like a UUID.
+func revokeTargetPayloads() []map[string]string {
+	switch {
+	case inviteRevokeEmail != "":
+		return []map[string]string{{"email": inviteRevokeEmail}}
+	case orgIDPattern.MatchString(inviteRevokeOrg):
+		return []map[string]string{{"targetOrgId": inviteRevokeOrg}, {"targetOrgSlug": inviteRevokeOrg}}
+	default:
+		return []map[string]string{{"targetOrgSlug": inviteRevokeOrg}}
+	}
+}
+
+// 400 as well as 404: the deployment refuses a hex string that is not an RFC 4122 UUID as an ID.
+func orgTargetMissed(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusBadRequest
+}
+
+func postAccessRevoke(revokeURL, apiKey string, payload map[string]string) (*http.Response, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequest("POST", revokeURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	return resp, nil
 }
 
 func runInviteGrants(agentName string) error {

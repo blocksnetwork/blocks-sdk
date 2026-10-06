@@ -2,7 +2,10 @@ package deploy
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,6 +39,9 @@ type vercelMockState struct {
 	filesPOST       atomic.Int32
 	deploymentsPOST atomic.Int32
 	deploymentsGET  atomic.Int32
+	// digestMismatches counts file uploads whose x-vercel-digest header is not the
+	// SHA-1 of the body sent with it.
+	digestMismatches atomic.Int32
 
 	uploadedFiles []string
 	uploadedRefs  []vercelFileRef
@@ -59,6 +65,10 @@ func newVercelMockServer(t *testing.T, state *vercelMockState) *httptest.Server 
 	mux.HandleFunc("/v2/files", func(w http.ResponseWriter, r *http.Request) {
 		state.filesPOST.Add(1)
 		sha := r.Header.Get("x-vercel-digest")
+		body, _ := io.ReadAll(r.Body)
+		if sum := sha1.Sum(body); hex.EncodeToString(sum[:]) != sha {
+			state.digestMismatches.Add(1)
+		}
 		state.uploadedFiles = append(state.uploadedFiles, sha)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -126,11 +136,17 @@ func TestVercelUpload_HappyPath(t *testing.T) {
 	if len(state.uploadedRefs) != 2 {
 		t.Errorf("uploadedRefs len = %d, want 2", len(state.uploadedRefs))
 	}
-	// Vercel uploads expect SHA-1 hashes — verify the file-upload header digest
-	// matches the digest of the file body.
+	if n := state.digestMismatches.Load(); n != 0 {
+		t.Errorf("%d uploads carried an x-vercel-digest that is not the SHA-1 of their body", n)
+	}
+	// The deployment references each file by the digest it was uploaded under.
+	want := map[string]string{
+		"index.html": "492e98eb754b58892b2ed3d29283117d55903a5d",
+		"app.js":     "ccb093eb807e7f7d86709fcbf7f11a85a4c065d4",
+	}
 	for _, ref := range state.uploadedRefs {
-		if len(ref.SHA) != 40 {
-			t.Errorf("SHA-1 digest length = %d, want 40 (hex of SHA-1): %s", len(ref.SHA), ref.SHA)
+		if want[ref.File] != ref.SHA {
+			t.Errorf("deployment references %s by SHA %s, want the SHA-1 of its content", ref.File, ref.SHA)
 		}
 	}
 }

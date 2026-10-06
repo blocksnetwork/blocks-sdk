@@ -1,0 +1,60 @@
+#!/usr/bin/env node
+"use strict";
+
+const { spawn } = require("child_process");
+const { resolveBinary } = require("../lib/platform");
+
+function fail(binary, err) {
+  console.error(`Failed to run ${binary}: ${err.message}`);
+  process.exit(1);
+}
+
+// The binary takes over this PID, so every signal sent to `blocks` reaches it directly.
+function execInPlace(binary, args) {
+  try {
+    process.execve(binary, [binary, ...args], process.env);
+  } catch (err) {
+    fail(binary, err);
+  }
+}
+
+// Fallback for Windows and for Node versions without process.execve.
+function spawnAndForward(binary, args) {
+  // Handlers go in before spawn: the child can print, and be signalled, before spawn returns.
+  let child;
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(signal, () => {
+      // Windows sends Ctrl-C to every console process, and child.kill there terminates outright.
+      if (signal === "SIGINT" && process.platform === "win32") {
+        return;
+      }
+      child.kill(signal);
+    });
+  }
+  child = spawn(binary, args, { stdio: "inherit" });
+
+  child.on("error", (err) => fail(binary, err));
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      process.removeAllListeners(signal);
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code);
+  });
+}
+
+let binary;
+try {
+  binary = resolveBinary();
+} catch (err) {
+  console.error(err.message);
+  process.exit(1);
+}
+
+const args = process.argv.slice(2);
+if (typeof process.execve === "function" && process.platform !== "win32") {
+  execInPlace(binary, args);
+} else {
+  spawnAndForward(binary, args);
+}

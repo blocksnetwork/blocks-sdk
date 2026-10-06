@@ -112,12 +112,11 @@ the harness wires stdin:
   flag — or the environment variable — that answers it, whether or not stdin
   is a terminal. It covers the three questions above, so pair it with the
   flags in this list — a key in `BLOCKS_API_KEY` does not answer them, while
-  `--api-key` / `--api-key-stdin` does. It does **not** cover the
-  organization picker the browser login shows when the account belongs to
-  more than one organization — pass `--api-key` / `--api-key-stdin` to skip
-  the browser flow and that picker — nor the token paste prompt of
-  `blocks login --provider cloudflare|vercel|netlify`. Those two are the only
-  gaps: `blocks deploy` reads no stdin under the flag. Not every read there
+  `--api-key` / `--api-key-stdin` does. The organization picker the browser
+  login shows for a multi-organization account is answered by `--org <id or
+  name>`, and fails naming it under `--no-input`. It does **not** cover the
+  token paste prompt of `blocks login --provider cloudflare|vercel|netlify`.
+  That is the only gap: `blocks deploy` reads no stdin under the flag. Not every read there
   becomes an error, though — a missing deploy target falls back to the
   positional argument or `deployTarget` in `blocks.config.json`, and the
   post-deploy agent-card question is skipped with a note on stderr while the
@@ -237,8 +236,8 @@ blocks invite send <agentName> --email user@example.com   # invite a user
 blocks invite send <agentName> --org consumer-org-slug    # invite an org
 blocks invite list <agentName>                            # list unaccepted invitations, including expired
 blocks invite grants <agentName>                          # list active grants
-blocks invite revoke <agentName> --email user@example.com # revoke a user grant
-blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org grant
+blocks invite revoke <agentName> --email user@example.com # revoke a user's access and pending invitations
+blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org's access and pending invitations
 blocks invite accept <token>                              # consumer-side: accept an invitation
 ```
 
@@ -264,10 +263,9 @@ fails with an error naming the flag — or, for a hosting partner's API token,
 the environment variable — that answers it, instead of hanging. It is not
 universal, so the flag's own help text (`blocks --help`) — kept in step with
 the code — is the current list rather than a formality. In the recipes above,
-the one gap is the organization picker the browser login shows when the
-account belongs to more than one organization, and it has no answer flag at
-all; the `--api-key` / `--api-key-stdin` forms skip the browser flow and that
-picker.
+the organization picker the browser login shows for a multi-organization
+account is answered by `blocks login --org <id or name>`; the `--api-key` /
+`--api-key-stdin` forms skip the browser flow and that picker.
 
 `blocks invite send` and `blocks invite revoke` print
 `[deployment / agent <name> → <grantee>]` before acting;
@@ -352,6 +350,7 @@ blocks init my-agent --yes --language node
 ```bash
 blocks init <name> --yes --language node                  # Provider scaffold (default --mode provider)
 blocks init <name> --yes --language node --mode consumer  # Consumer script (calls agents via TaskClient)
+blocks search <query> --json                              # Find agents you can call; agentName is the name to call
 blocks check                                              # Validate agent-card.json + handler existence
 blocks run                                                # Start agent (Go CLI delegates to language runner)
 ```
@@ -364,7 +363,9 @@ that calls other agents via `TaskClient`; consumer projects have no
 
 `blocks check` validates the card JSON **and** verifies that the file
 referenced by `runtime.handler` exists on disk; missing handlers
-produce a `[FAIL]` even when the JSON is valid.
+produce a `[FAIL]` even when the JSON is valid. When you are logged in it also compares the card with the version
+registered on the deployment and warns about fields that differ; the
+comparison never fails the check.
 
 The default run path after scaffolding is `npm start` (which runs
 `blocks run`). This loads `agent-card.json`, resolves the handler

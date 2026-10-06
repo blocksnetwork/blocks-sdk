@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,6 +210,9 @@ func TestLogoutNamesTheProfileEvenWhenRequestsWouldGoElsewhere(t *testing.T) {
 	if strings.Contains(out, "127.0.0.1:8899") {
 		t.Errorf("logout must not name a deployment it did not touch:\n%s", out)
 	}
+	if !strings.Contains(out, "BLOCKS_API_KEY is still exported in your shell") {
+		t.Errorf("logout must say that the exported key keeps working:\n%s", out)
+	}
 }
 
 // A profile name is attacker-influenceable: it is derived from the host of whatever
@@ -234,7 +238,7 @@ func TestTheLogoutSummaryOffersNoPastableCommandBuiltFromTheProfile(t *testing.T
 	})
 	resolveCLIContext(t, logoutCmd)
 
-	out := captureStdout(printLogoutSummary)
+	out := captureStdout(func() { printLogoutSummary(injectedProfileName, true, false) })
 
 	assertNoInjectedValueInCommandLines(t, out, injectedProfileName, injectedProfileBaseURL)
 	// The name is still reported — a kept deployment the user cannot identify is not
@@ -290,5 +294,43 @@ func TestLogoutSucceedsWhenThereIsNoLegacyCredentialFile(t *testing.T) {
 
 	if err := runBlocksLogout(); err != nil {
 		t.Fatalf("a missing legacy store is not a failure: %v", err)
+	}
+}
+
+// Logout has to name what it removed — which profile's keys, from which file, and the
+// project's .env key — and must not claim a removal when there was nothing to remove.
+func TestLogoutNamesTheProfileAndTheProjectKeyItRemoved(t *testing.T) {
+	restoreCLIState(t)
+	isolateCredentials(t)
+	defer isolateProfiles(t)()
+	isolateAmbientState(t)
+	seedProfile(t, profiles.DefaultProfile, loggedInProfile())
+	enterProject(t, blocksAPIKeyEnv+"=bk_project\n")
+	resolveCLIContext(t, logoutCmd)
+
+	logout := func() string {
+		return captureStdout(func() {
+			if err := runBlocksLogout(); err != nil {
+				t.Fatalf("logout: %v", err)
+			}
+		})
+	}
+
+	first := logout()
+	for _, want := range []string{
+		fmt.Sprintf("Removed the API keys of profile %q from %s.", profiles.DefaultProfile, storePath(t)),
+		"Removed BLOCKS_API_KEY from ./.env.",
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("logout output is missing %q:\n%s", want, first)
+		}
+	}
+
+	second := logout()
+	if strings.Contains(second, "  Removed ") {
+		t.Errorf("a second logout removed nothing and must not say it did:\n%s", second)
+	}
+	if !strings.Contains(second, "had no stored API key") {
+		t.Errorf("a second logout should say the profile held no key:\n%s", second)
 	}
 }

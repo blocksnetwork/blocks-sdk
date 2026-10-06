@@ -318,9 +318,9 @@ const log = (
  * can stop further handling), false otherwise.
  *
  * A fatal error can surface from any AgentAuth call, not just the initial
- * connect: `authenticatedFetch` (used by RPC, file-upload, and registry
- * deletes) refreshes on 401, and `refresh()` throws AgentAuthFatalError on
- * AGENT_FORCED_OFFLINE / API_KEY_INVALID. Those calls run inside task handling,
+ * connect: `authenticatedFetch` (used by RPC and file upload) refreshes on
+ * 401, and `refresh()` throws AgentAuthFatalError on AGENT_FORCED_OFFLINE /
+ * API_KEY_INVALID. Those calls run inside task handling,
  * where the surrounding catch merely logs — so without this the process would
  * keep running as a banned zombie. Centralizes the connect-path `process.exit`
  * so every fatal-auth surface converges on the same shutdown. (BLOCKS-553.)
@@ -567,7 +567,8 @@ export const startAgentInstance = async (
   const apiKey = getEnv('BLOCKS_API_KEY');
   if (!apiKey) {
     throw new Error(
-      'BLOCKS_API_KEY is required. Run \'blocks login --write-env\' to set up credentials.',
+      'BLOCKS_API_KEY is required. Log in with \'blocks login\' and start the agent with \'blocks run\', ' +
+        'which uses the key stored in your CLI profile, or set BLOCKS_API_KEY in .env.',
     );
   }
   let agentAuth: AgentAuth | undefined;

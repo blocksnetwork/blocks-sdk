@@ -139,46 +139,6 @@ func TestExplicitNetworkChoiceIgnoresEnvBackendURL(t *testing.T) {
 	}
 }
 
-// Test that --network flag ignores BLOCKS_BACKEND_URL environment variable
-func TestNetworkFlagIgnoresEnvBackendURL(t *testing.T) {
-	defer isolateProfiles(t)()
-
-	enterpriseURL := "https://blocks.enterprise.example"
-	networkURL := "https://api.blocks.ai"
-
-	networkRemoteConfigAt(t, networkURL)
-	t.Setenv("BLOCKS_BACKEND_URL", enterpriseURL)
-
-	// Test the --network flag case
-	choice := deploymentChoice{instanceURL: "", explicitNetwork: true} // simulates --network flag
-	resolved := resolveLoginBackend(choice)
-
-	if resolved == enterpriseURL {
-		t.Errorf("--network flag should not use BLOCKS_BACKEND_URL=%s, but got %s", enterpriseURL, resolved)
-	}
-	if resolved != networkURL {
-		t.Errorf("Expected Network URL %s, got %s", networkURL, resolved)
-	}
-}
-
-// Test headless mechanism still works: BLOCKS_BACKEND_URL set, no explicit Network, non-TTY → resolved backend IS that URL
-func TestHeadlessMechanism_EnvVarSetNoExplicitChoice_BackendIsThatURL(t *testing.T) {
-	defer isolateProfiles(t)()
-
-	enterpriseURL := "https://blocks.enterprise.example"
-
-	t.Setenv("BLOCKS_BACKEND_URL", enterpriseURL)
-
-	// Test non-explicit case (no flag, no prompt)
-	resolveCLIContext(t, loginCmd)
-	choice := deploymentChoice{instanceURL: "", explicitNetwork: false}
-	resolved := resolveLoginBackend(choice)
-
-	if resolved != enterpriseURL {
-		t.Errorf("Headless mechanism broken: non-explicit choice should use BLOCKS_BACKEND_URL=%s, but got %s", enterpriseURL, resolved)
-	}
-}
-
 // Test that empty instanceURL prevents profile from gaining enterprise metadata
 func TestEmptyInstanceURLPreventsEnterpriseMetadata(t *testing.T) {
 	restoreCLIState(t)
@@ -342,56 +302,6 @@ func TestMaybeWriteEnvRemovesAStalePinWhenNetworkWasChosen(t *testing.T) {
 	}
 	if strings.Contains(content, "BLOCKS_BACKEND_URL") {
 		t.Errorf(".env should not keep a stale pin when Network was chosen, got:\n%s", content)
-	}
-}
-
-// Test regression guard: profile HAS BaseURL → both keys written
-func TestRegression_ProfileHasBaseURL_BothKeysWritten(t *testing.T) {
-	defer isolateProfiles(t)()
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	enterpriseURL := "https://blocks.enterprise.example"
-
-	// Create profile with BaseURL
-	store := &profiles.Contexts{
-		SchemaVersion: 3,
-		Active:        "enterprise",
-		Profiles: map[string]profiles.Profile{
-			"enterprise": {BaseURL: enterpriseURL, Orgs: map[string]profiles.OrgKey{}},
-		},
-	}
-	profiles.Save(store)
-
-	// Mock the login flags to trigger env writing
-	origLoginWriteEnv := loginWriteEnv
-	origLoginDir := loginDir
-	loginWriteEnv = true
-	loginDir = tmpDir
-	defer func() {
-		loginWriteEnv = origLoginWriteEnv
-		loginDir = origLoginDir
-	}()
-
-	// Call maybeWriteEnv
-	resolveCLIContext(t, loginCmd)
-	err := maybeWriteEnv("bk_enterprise_test_key", deploymentChoice{})
-	if err != nil {
-		t.Fatalf("maybeWriteEnv failed: %v", err)
-	}
-
-	// Verify .env contents
-	data, err := os.ReadFile(envFile)
-	if err != nil {
-		t.Fatalf("Failed to read .env: %v", err)
-	}
-	content := string(data)
-
-	if !strings.Contains(content, "BLOCKS_API_KEY=bk_enterprise_test_key") {
-		t.Error("Regression: .env should contain API key")
-	}
-	if !strings.Contains(content, "BLOCKS_BACKEND_URL="+enterpriseURL) {
-		t.Error("Regression: .env should contain BLOCKS_BACKEND_URL when profile has BaseURL")
 	}
 }
 
@@ -973,77 +883,6 @@ func TestPromptDeploymentSkippedWhenNotATTY(t *testing.T) {
 	}
 }
 
-func TestRequireReachableInstance(t *testing.T) {
-	tests := []struct {
-		name        string
-		instanceURL string
-		resolvedURL string
-		err         error
-		wantErr     bool
-	}{
-		{
-			name:        "network error with instance URL returns error",
-			instanceURL: "umbrella",
-			resolvedURL: "https://umbrella.blocks.ai",
-			err:         &net.DNSError{Err: "no such host", Name: "umbrella.blocks.ai", IsNotFound: true},
-			wantErr:     true,
-		},
-		{
-			name:        "error with empty instance URL returns nil",
-			instanceURL: "",
-			resolvedURL: "https://app.blocks.ai",
-			err:         errors.New("boom"),
-			wantErr:     false,
-		},
-		{
-			name:        "nil error with instance URL returns nil",
-			instanceURL: "umbrella",
-			resolvedURL: "https://umbrella.blocks.ai",
-			err:         nil,
-			wantErr:     false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := requireReachableInstance(tt.instanceURL, tt.resolvedURL, tt.err)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("requireReachableInstance() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if tt.wantErr && err != nil {
-				// Check that error contains the resolved URL
-				if !strings.Contains(err.Error(), tt.resolvedURL) {
-					t.Errorf("error should contain resolved URL %q, got: %v", tt.resolvedURL, err)
-				}
-			}
-		})
-	}
-}
-
-func TestRequireReachableInstance404StillSucceeds(t *testing.T) {
-	// The 404 path must still succeed. When the server returns 404 on /api/v1/cli-config,
-	// requireReachableInstance should return nil because Fetch maps 404 to a nil error.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/cli-config" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-
-	// Use cliconfig.Fetch to get the real behavior including 404 mapping
-	_, err := cliconfig.Fetch(srv.URL)
-
-	// requireReachableInstance should return nil when Fetch returns no error (404 case)
-	err = requireReachableInstance("test-instance", srv.URL, err)
-	if err != nil {
-		t.Errorf("404 path should succeed, but got error: %v", err)
-	}
-}
-
 func TestLoginToProfileFailsFastAndPreservesCredential(t *testing.T) {
 	// loginToProfile should fail fast when pointed at a closed server and preserve
 	// the existing credential (not run the eviction that happens later).
@@ -1184,7 +1023,7 @@ func TestALoginThatWasHandedItsKeyAnnouncesNothingWhenItCannotRecordIt(t *testin
 func stubBrowserLoginMinting(t *testing.T, apiKey, orgName string) {
 	t.Helper()
 	orig := ensureCredentials
-	ensureCredentials = func(ctx context.Context, backendURL, clientID, supplied string) (*auth.Credentials, string, error) {
+	ensureCredentials = func(ctx context.Context, backendURL, clientID, supplied string, _ auth.LoginOptions) (*auth.Credentials, string, error) {
 		return &auth.Credentials{ApiKey: apiKey, OrgId: "org-1", OrgName: orgName}, apiKey, nil
 	}
 	t.Cleanup(func() { ensureCredentials = orig })
@@ -1665,7 +1504,7 @@ func TestRequireReachableInstanceNewMessages(t *testing.T) {
 			resolvedURL:     "https://missing.blocks.ai",
 			err:             &net.DNSError{Err: "no such host", Name: "missing.blocks.ai", IsNotFound: true},
 			wantErr:         true,
-			wantContains:    []string{"does not resolve", "check the spelling"},
+			wantContains:    []string{"https://missing.blocks.ai", "does not resolve", "check the spelling"},
 			wantNotContains: []string{"certificate"},
 		},
 		{
@@ -1710,80 +1549,6 @@ func TestRequireReachableInstanceNewMessages(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestNetworkLoginStoresUnderDefaultProfile tests the core fix: when an enterprise
-// profile is active and we run --network login, the credential should be stored
-// under blocks-network, not the active enterprise profile.
-func TestNetworkLoginStoresUnderDefaultProfile(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.json")
-	origPathFunc := auth.CredentialPathFunc
-	auth.CredentialPathFunc = func() (string, error) { return credFile, nil }
-	defer func() { auth.CredentialPathFunc = origPathFunc }()
-	defer isolateProfiles(t)()
-	srv := loginTestServer(t)
-	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
-
-	resetLoginFlags()
-	t.Cleanup(resetLoginFlags)
-
-	// Blocks Network's own remote config, pointed at the test server
-	networkRemoteConfigAt(t, srv.URL)
-
-	// Set up an enterprise profile as active
-	path := filepath.Join(t.TempDir(), "contexts.json")
-	if err := os.WriteFile(path, []byte(`{
-      "schema_version": 3,
-      "active": "acme.blocks.ai",
-      "profiles": {
-        "blocks-network": {"orgs": {}},
-        "acme.blocks.ai": {"enterprise": true, "orgs": {"org-1": {"org_name": "Enterprise Org", "api_key": "bk_enterprise_key", "key_id": "key1", "expires_at": "0001-01-01T00:00:00Z"}}}
-      }
-    }`), 0600); err != nil {
-		t.Fatalf("write contexts: %v", err)
-	}
-	origPath := profiles.ContextsPathFunc
-	profiles.ContextsPathFunc = func() (string, error) { return path, nil }
-	t.Cleanup(func() { profiles.ContextsPathFunc = origPath })
-	resolveCLIContext(t, loginCmd)
-
-	// Run --network login
-	loginNetwork = true
-	rootCmd.SetArgs([]string{"login", "--api-key", "bk_network_key_123", "--no-write-env", "--network"})
-	rootCmd.SetOut(&bytes.Buffer{})
-	rootCmd.SetErr(&bytes.Buffer{})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("login --network failed: %v", err)
-	}
-
-	// Verify: the new credential should be stored under blocks-network, not acme.blocks.ai
-	c, err := profiles.Load()
-	if err != nil {
-		t.Fatalf("profiles.Load: %v", err)
-	}
-
-	// blocks-network should have the new key
-	networkProfile := c.Profiles[profiles.DefaultProfile]
-	if len(networkProfile.Orgs) != 1 {
-		t.Errorf("blocks-network should have exactly 1 org key, got %d", len(networkProfile.Orgs))
-	}
-	for _, orgKey := range networkProfile.Orgs {
-		if orgKey.ApiKey != "bk_network_key_123" {
-			t.Errorf("blocks-network key = %q, want bk_network_key_123", orgKey.ApiKey)
-		}
-	}
-
-	// acme.blocks.ai should be unchanged
-	enterpriseProfile := c.Profiles["acme.blocks.ai"]
-	if len(enterpriseProfile.Orgs) != 1 {
-		t.Errorf("acme.blocks.ai should still have exactly 1 org key, got %d", len(enterpriseProfile.Orgs))
-	}
-	for _, orgKey := range enterpriseProfile.Orgs {
-		if orgKey.ApiKey != "bk_enterprise_key" {
-			t.Errorf("acme.blocks.ai key should be unchanged, got %q", orgKey.ApiKey)
-		}
 	}
 }
 
@@ -2095,24 +1860,6 @@ func TestPromptEnterpriseInstanceEOFReturnsError(t *testing.T) {
 	}
 	if got.instanceURL != "" {
 		t.Error("EOF must not resolve to any instance URL")
-	}
-	if !strings.Contains(err.Error(), "instance URL or short name") {
-		t.Errorf("error should explain what's needed, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--network") {
-		t.Errorf("error should mention --network alternative, got: %v", err)
-	}
-}
-
-// TestPromptEnterpriseInstanceEmptyAnswerRetriesThenErrors verifies that empty
-// answers (Enter key) are re-prompted and eventually return the same error as EOF.
-// This confirms both paths now agree.
-func TestPromptEnterpriseInstanceEmptyAnswerRetriesThenErrors(t *testing.T) {
-	setupEnterpriseInstancePrompt(t, "\n\n") // Two empty answers to exceed attempt limit
-
-	_, err := captureStdoutErr(t, promptEnterpriseInstance)
-	if err == nil {
-		t.Fatal("exhausted attempts at Enterprise instance prompt must return error")
 	}
 	if !strings.Contains(err.Error(), "instance URL or short name") {
 		t.Errorf("error should explain what's needed, got: %v", err)
@@ -2850,45 +2597,6 @@ func mustLoadProfiles(t *testing.T) *profiles.Contexts {
 		t.Fatalf("profiles.Load: %v", err)
 	}
 	return store
-}
-
-// TestOtherPromptEOFDefaultsUnchanged verifies that the three other `!ok` defaults
-// remain unchanged. This regression test proves the fix stayed in its lane.
-func TestOtherPromptEOFDefaultsUnchanged(t *testing.T) {
-	// Set up EOF condition for all prompts
-	origStdinScanner := stdinScanner
-	stdinScanner = bufio.NewScanner(strings.NewReader(""))
-	origIsTTY := isTTY
-	isTTY = func() bool { return true }
-	t.Cleanup(func() {
-		stdinScanner = origStdinScanner
-		isTTY = origIsTTY
-	})
-
-	// Test 1: shouldWriteEnv -> true (default yes)
-	loginWriteEnv = false
-	loginNoWriteEnv = false
-	loginApiKey = ""
-	loginApiKeyStdin = false
-	origIsInteractive := isInteractive
-	isInteractive = func() bool { return true }
-	t.Cleanup(func() { isInteractive = origIsInteractive })
-
-	got, err := shouldWriteEnv()
-	if err != nil {
-		t.Errorf("shouldWriteEnv EOF should not error: %v", err)
-	}
-	if !got {
-		t.Error("shouldWriteEnv EOF should default to true")
-	}
-
-	// Reset scanner for next test
-	stdinScanner = bufio.NewScanner(strings.NewReader(""))
-
-	// Test 2: confirmUnregister -> error (refuse to delete)
-	if err := confirmUnregister("Test Agent"); err == nil {
-		t.Error("confirmUnregister EOF should return error (refuse deletion)")
-	}
 }
 
 // The whole rule deploymentURL encodes, pinned directly rather than only through

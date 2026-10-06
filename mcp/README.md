@@ -9,7 +9,7 @@ Get API Key: https://app.blocks.ai/manage/api-keys
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `BLOCKS_API_KEY` | Yes | Your Blocks Network API key |
-| `BLOCKS_ORG_ID` | For billing tools | Your consumer org ID (required by `check_balance` and `request_topup`). Find it in the dashboard URL or `blocks whoami --json`. |
+| `BLOCKS_ORG_ID` | For billing tools | Your consumer org ID (required by `check_balance` and `request_topup`). It must be the org `BLOCKS_API_KEY` was created in: a key is refused on any other org. Find it in the dashboard URL or `blocks whoami --json`. |
 | `BLOCKS_MCP_FILE_ROOT` | No | Allowed root directory for file uploads (default: cwd) |
 
 All other configuration (keys, endpoints) is resolved automatically from CDM.

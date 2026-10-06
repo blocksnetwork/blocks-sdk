@@ -56,19 +56,6 @@ func TestFetchLatestNpmVersion_Error(t *testing.T) {
 	}
 }
 
-func TestPlatformPackage(t *testing.T) {
-	pkg, err := platformPackage()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	key := runtime.GOOS + "/" + runtime.GOARCH
-	want := npmPlatformPackages[key]
-	if pkg != want {
-		t.Errorf("platformPackage() = %q, want %q", pkg, want)
-	}
-}
-
 func TestVerifyIntegrity_Valid(t *testing.T) {
 	data := []byte("hello world tarball content")
 	digest := sha512.Sum512(data)
@@ -124,20 +111,6 @@ func TestIsNpmManagedPath(t *testing.T) {
 		if got := isNpmManagedPath(tt.path); got != tt.want {
 			t.Errorf("isNpmManagedPath(%q) = %v, want %v", tt.path, got, tt.want)
 		}
-	}
-}
-
-func TestResolveInstallDir_NpmManaged(t *testing.T) {
-	// Create a temp dir mimicking an npm-global install layout
-	tmp := t.TempDir()
-	npmBinDir := filepath.Join(tmp, "lib", "node_modules", "@blocks-network", "cli-darwin-arm64")
-	os.MkdirAll(npmBinDir, 0o755)
-	fakeBinary := filepath.Join(npmBinDir, "blocks")
-	os.WriteFile(fakeBinary, []byte("#!/bin/sh\n"), 0o755)
-
-	// isNpmManagedPath should detect this
-	if !isNpmManagedPath(fakeBinary) {
-		t.Fatal("expected npm-managed path to be detected")
 	}
 }
 

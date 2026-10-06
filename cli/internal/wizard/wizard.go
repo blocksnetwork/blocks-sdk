@@ -23,6 +23,7 @@ var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 const (
 	agentNameFlagHint  = "the name as the first argument (blocks init <name>)"
 	webappNameFlagHint = "the name as the first argument (blocks init <name> --mode webapp --agent <agent>)"
+	callerNameFlagHint = "the name as the first argument (blocks init <name> --mode consumer --yes)"
 )
 
 // helpAgentNameText is the agent-name prompt help. Like helpDisplayNameText it
@@ -51,6 +52,14 @@ func helpDisplayNameText() string {
 // agentNameRe — a directory may contain '.' and '-'.
 var projectNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
+// callerProjectNameRe is stricter than projectNameRe because a caller project
+// name becomes the pyproject.toml / package.json package name, which must start
+// and end with a letter or digit.
+var callerProjectNameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
+
+// minExpectedInstances is the agent-card schema minimum (TestExpectedInstancesMinimumMatchesAgentCardSchema).
+const minExpectedInstances = 0
+
 // maxAgentsPerWebapp caps how many agents a single webapp page may wire up.
 // Mirrors the limit enforced by internal/config.Validate and cmd/init.go.
 const maxAgentsPerWebapp = 25
@@ -63,10 +72,6 @@ type AgentValidateFunc func(value string, fromSuggestion bool) error
 
 // Help text constants for inline ? help across wizard prompts.
 const (
-	helpType = "  Provider: You're building an agent that processes tasks.\n" +
-		"  Consumer: You're building a client that calls other agents.\n" +
-		"  Choose Provider if you're unsure."
-
 	helpDescription = "  A short sentence describing what your agent does. Shown on the Discover page\n" +
 		"  and in agent cards. Helps others understand when to use your agent."
 
@@ -75,12 +80,21 @@ const (
 		"  Node: Uses @blocks-network/sdk, npm, and a TypeScript handler.\n" +
 		"  Both have full feature parity."
 
+	helpCallerLanguage = "  The programming language for your calling script.\n" +
+		"  Python: main.py calls agents with TaskClient from the blocks_network SDK (pip).\n" +
+		"  Node: index.ts calls agents with TaskClient from @blocks-network/sdk (npm).\n" +
+		"  Both have full feature parity."
+
+	helpCallerName = "  A name for your project. This becomes the directory the calling script is\n" +
+		"  scaffolded into. Letters, numbers, dots, dashes, and underscores only."
+
 	helpConcurrency = "  How many tasks your agent can process simultaneously per instance.\n" +
 		"  Set to 1 for sequential processing (simplest)."
 
 	helpInstances = "  How many copies of your agent you plan to run. Set to 1 if running on a\n" +
 		"  single machine. Higher values tell the network to distribute tasks across\n" +
-		"  multiple instances for load balancing."
+		"  multiple instances for load balancing. 0 is broadcast: every running instance\n" +
+		"  receives every task, so use it only if duplicate processing is fine."
 
 	helpStreaming = "  Adds real-time streaming support so your agent can send incremental results\n" +
 		"  to callers as it works. If your agent just returns a final result, you don't\n" +
@@ -95,6 +109,15 @@ const (
 		"  If you're just running locally with 'blocks run', you don't need this.\n" +
 		"  You can add it later."
 
+	helpAddAnotherAgent = "  Yes searches for another agent to add to this page. No, or Enter, finishes\n" +
+		"  the list; you can still remove agents in the next step."
+
+	helpRemoveAgent = "  Yes lets you pick an added agent to drop from this page. No, or Enter, keeps\n" +
+		"  the list as it is."
+
+	helpAgentToRemove = "  Type to filter the agents you added, then press Enter to drop the highlighted\n" +
+		"  one from this page. Esc keeps the list as it is."
+
 	helpWebappName = "  A name for your web app project. This becomes the directory the files are\n" +
 		"  scaffolded into. Letters, numbers, dots, dashes, and underscores only."
 )
@@ -108,18 +131,26 @@ func HelpWebappAgentsText() string {
 		"  your account can access. You can add several agents to one page."
 }
 
+func HelpAgentToCallText() string {
+	return "  The bare name of the " + branding.ProductName() + " agent your script will call (e.g. 'translator').\n" +
+		"  Start typing to search the registry — public agents plus any private ones\n" +
+		"  your account can access. Esc skips this; the script then tells you how to\n" +
+		"  pick an agent before it sends anything."
+}
+
 // HelpProjectKindText is the project-kind prompt help. It reads the active
 // product name and deployment kind at call time so an enterprise deployment
-// describes the choice in its own vocabulary — there is no marketplace of
-// consumers there, only other agents on the same deployment.
+// describes reachability on that deployment rather than a marketplace.
 func HelpProjectKindText() string {
-	widget := "  Web app: scaffold a static page pre-wired with the " + branding.ProductName() + " embed-auth widget\n" +
-		"  that calls one or more existing agents."
+	reach := "so others on " + branding.ProductName() + " can call it."
 	if clictx.Enterprise() {
-		return "  Agent: build an agent that processes tasks, or a client that calls other\n" +
-			"  agents on this deployment.\n" + widget
+		reach = "so other agents and apps on this deployment can call it."
 	}
-	return "  Agent: build an agent that processes tasks, or a consumer that calls agents.\n" + widget
+	return "  Call an agent: a short script that sends a task to an existing agent and\n" +
+		"  prints the result. You don't need an agent of your own.\n" +
+		"  Build an agent: a handler that processes tasks, registered " + reach + "\n" +
+		"  Build a web app: a static page pre-wired with the " + branding.ProductName() + " embed-auth widget\n" +
+		"  that calls one or more existing agents."
 }
 
 // Config holds all wizard answers needed to scaffold a project.
@@ -135,10 +166,24 @@ type Config struct {
 	TaskKinds         []string // "request", "pipe", or both
 	Docker            bool
 
+	// TargetAgent is the agent a consumer script calls; empty leaves the script's placeholder.
+	TargetAgent string
+	// TargetBillingMode is TargetAgent's registered billingMode; empty when it could not be looked up.
+	TargetBillingMode string
+
 	// Webapp-scaffold fields (only used when Mode == "webapp").
 	Agents         []string // one or more bare agent names (each ^[a-zA-Z0-9_]+$)
 	BlocksBaseURL  string   // defaults to "https://app.blocks.ai" when empty
 	BackendBaseURL string   // backend API origin baked into web/app.js; empty → resolved to the asset base URL at scaffold time
+}
+
+// CallerBillingMode is the billingMode a consumer script passes to TaskClient.create,
+// which the backend rejects unless it matches the agent's. An unknown mode renders "free".
+func (c Config) CallerBillingMode() string {
+	if c.TargetBillingMode == "paid" {
+		return "paid"
+	}
+	return "free"
 }
 
 // ValidateAgentName checks that name matches /^[a-zA-Z0-9_]+$/.
@@ -159,6 +204,17 @@ func ValidateProjectName(name string) error {
 	}
 	if !projectNameRe.MatchString(name) {
 		return fmt.Errorf("use only letters, numbers, '.', '-', and '_' (no spaces or slashes)")
+	}
+	return nil
+}
+
+// ValidateCallerProjectName checks that name is usable as both a directory and a package name.
+func ValidateCallerProjectName(name string) error {
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if !callerProjectNameRe.MatchString(name) {
+		return fmt.Errorf("use only letters, numbers, '.', '-', and '_', starting and ending with a letter or number (no spaces or slashes)")
 	}
 	return nil
 }
@@ -185,16 +241,6 @@ func NormalizeMode(raw string) (string, bool) {
 	return canonical, ok
 }
 
-// modeLabels returns the display labels for the Mode prompt. Enterprise
-// deployments have no marketplace, so Provider/Consumer is replaced by wording
-// that describes what the user is doing.
-func modeLabels(enterprise bool) []string {
-	if enterprise {
-		return []string{"Connect agent", "Call agent"}
-	}
-	return []string{"Provider", "Consumer"}
-}
-
 // DefaultConfig returns the default non-interactive configuration.
 // DisplayName defaults to the agentName (Name).
 func DefaultConfig(name string) Config {
@@ -212,15 +258,22 @@ func DefaultConfig(name string) Config {
 	}
 }
 
-// Run executes the interactive wizard, prompting the user for project config.
+func DefaultCallerConfig(name string) Config {
+	return Config{
+		Name:        name,
+		Description: "A script that calls agents",
+		Language:    "python",
+		Mode:        "consumer",
+	}
+}
+
+// Run executes the interactive wizard for an agent project; Caller projects use RunCaller.
 // If nameFromArgs is non-empty, the name prompt is skipped.
 // If langFromFlag is non-empty ("node" or "python"), the language prompt is skipped.
-// If modeFromFlag is non-empty ("provider" or "consumer"), the mode prompt is skipped.
-func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config, error) {
+func Run(nameFromArgs string, langFromFlag string) (Config, error) {
 	r := bufio.NewReader(os.Stdin)
-	var cfg Config
+	cfg := Config{Mode: "provider"}
 
-	// Name
 	if nameFromArgs != "" {
 		if err := ValidateAgentName(nameFromArgs); err != nil {
 			return cfg, err
@@ -234,69 +287,20 @@ func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config,
 		cfg.Name = name
 	}
 
-	// Mode (provider or consumer). Skip prompt if --mode flag was passed.
-	labels := modeLabels(clictx.Enterprise())
-	if modeFromFlag != "" {
-		canonical, ok := NormalizeMode(modeFromFlag)
-		if !ok {
-			return cfg, fmt.Errorf("invalid mode %q — must be one of: provider, consumer, connect-agent, call-agent", modeFromFlag)
-		}
-		cfg.Mode = canonical
-		display := labels[0]
-		if canonical == "consumer" {
-			display = labels[1]
-		}
-		fmt.Printf("+ Mode: %s\n", display)
-	} else {
-		modeIdx, err := InteractiveSelect("Mode", labels, 0, helpType)
-		if err != nil {
-			return cfg, err
-		}
-		cfg.Mode = modeFromIndex(modeIdx)
+	displayName, err := readLine(r, "Display name", cfg.Name, helpDisplayNameText())
+	if err != nil {
+		return cfg, err
 	}
+	cfg.DisplayName = displayName
 
-	// DisplayName and Description are provider-only; consumers have no
-	// agent identity and don't publish an agent-card.
-	if cfg.Mode == "provider" {
-		displayName, err := readLine(r, "Display name", cfg.Name, helpDisplayNameText())
-		if err != nil {
-			return cfg, err
-		}
-		cfg.DisplayName = displayName
-
-		desc, err := readLine(r, "Description", cfg.Name+" agent", helpDescription)
-		if err != nil {
-			return cfg, err
-		}
-		cfg.Description = desc
-	} else {
-		// Consumer: fill a sensible default for pyproject.toml metadata.
-		cfg.Description = cfg.Name + " consumer"
+	desc, err := readLine(r, "Description", cfg.Name+" agent", helpDescription)
+	if err != nil {
+		return cfg, err
 	}
+	cfg.Description = desc
 
-	// Language (both provider and consumer need it)
-	if langFromFlag != "" {
-		cfg.Language = langFromFlag
-		lang := "Python"
-		if langFromFlag == "node" {
-			lang = "Node"
-		}
-		fmt.Printf("+ Language: %s\n", lang)
-	} else {
-		lang, err := InteractiveSelect("Language", []string{"Python", "Node"}, 0, helpLanguage)
-		if err != nil {
-			return cfg, err
-		}
-		if lang == 0 {
-			cfg.Language = "python"
-		} else {
-			cfg.Language = "node"
-		}
-	}
-
-	if cfg.Mode == "consumer" {
-		// Consumer scaffolds don't use concurrency/instances/streaming/task-kinds/docker.
-		return cfg, nil
+	if cfg.Language, err = selectLanguage(langFromFlag, helpLanguage); err != nil {
+		return cfg, err
 	}
 
 	// Concurrency
@@ -307,14 +311,14 @@ func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config,
 	cfg.Concurrency = conc
 
 	// Expected instances
-	inst, err := readInt(r, "Expected instances", 1, 1, helpInstances)
+	inst, err := readInt(r, "Expected instances", 1, minExpectedInstances, helpInstances)
 	if err != nil {
 		return cfg, err
 	}
 	cfg.ExpectedInstances = inst
 
 	// Streaming
-	streaming, err := readConfirm(r, "Enable streaming?", false, helpStreaming)
+	streaming, err := Confirm(r, "Enable streaming?", false, helpStreaming)
 	if err != nil {
 		return cfg, err
 	}
@@ -335,7 +339,7 @@ func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config,
 	}
 
 	// Docker
-	docker, err := readConfirm(r, "Add Docker support?", false, helpDocker)
+	docker, err := Confirm(r, "Add Docker support?", false, helpDocker)
 	if err != nil {
 		return cfg, err
 	}
@@ -344,17 +348,108 @@ func Run(nameFromArgs string, langFromFlag string, modeFromFlag string) (Config,
 	return cfg, nil
 }
 
-// Project-kind indices returned by SelectProjectKind.
+func selectLanguage(langFromFlag, helpText string) (string, error) {
+	if langFromFlag != "" {
+		display := "Python"
+		if langFromFlag == "node" {
+			display = "Node"
+		}
+		fmt.Printf("+ Language: %s\n", display)
+		return langFromFlag, nil
+	}
+	idx, err := InteractiveSelect("Language", []string{"Python", "Node"}, 0, helpText)
+	if err != nil {
+		return "", err
+	}
+	if idx == 1 {
+		return "node", nil
+	}
+	return "python", nil
+}
+
 const (
-	ProjectKindAgent  = 0
-	ProjectKindWebapp = 1
+	ProjectKindCaller = iota
+	ProjectKindAgent
+	ProjectKindWebapp
 )
 
-// SelectProjectKind asks the top-level "Agent vs Web app" question and returns
-// ProjectKindAgent or ProjectKindWebapp. On a non-terminal stdin it returns
-// the default (ProjectKindAgent), preserving the historical agent behavior.
+func projectKindLabels() []string {
+	call := "Call an agent on the network"
+	if clictx.Enterprise() {
+		call = "Call an agent on Blocks Enterprise"
+	}
+	return []string{call, "Build an agent that others can call", "Build a web app that calls agents"}
+}
+
 func SelectProjectKind() (int, error) {
-	return InteractiveSelect("What are you building?", []string{"Agent", "Web app"}, ProjectKindAgent, HelpProjectKindText())
+	return InteractiveSelect("What do you want to do?", projectKindLabels(), ProjectKindCaller, HelpProjectKindText())
+}
+
+type CallerOptions struct {
+	Name     string
+	Language string
+	Agent    string
+	Suggest  SuggestFunc
+	Validate AgentValidateFunc
+}
+
+// RunCaller asks for the agent last: its raw-mode reader leaves a goroutine parked on stdin, so no line prompt may follow.
+func RunCaller(ctx context.Context, opts CallerOptions) (Config, error) {
+	r := bufio.NewReader(os.Stdin)
+
+	name := opts.Name
+	var err error
+	if name != "" {
+		err = ValidateCallerProjectName(name)
+	} else {
+		name, err = readRequiredLine(r, "Project name", callerNameFlagHint, helpCallerName, ValidateCallerProjectName)
+	}
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := DefaultCallerConfig(name)
+
+	if cfg.Language, err = selectLanguage(opts.Language, helpCallerLanguage); err != nil {
+		return cfg, err
+	}
+
+	if opts.Agent != "" {
+		fmt.Printf("+ Agent to call: %s\n", opts.Agent)
+		cfg.TargetAgent = opts.Agent
+		return cfg, nil
+	}
+	cfg.TargetAgent, err = pickAgentToCall(ctx, r, opts.Suggest, opts.Validate)
+	return cfg, err
+}
+
+func pickAgentToCall(ctx context.Context, r *bufio.Reader, suggest SuggestFunc, validate AgentValidateFunc) (string, error) {
+	ri, ok := newRawInput()
+	if !ok {
+		for {
+			line, err := readLine(r, "Agent to call (blank to skip)", "", HelpAgentToCallText())
+			if err != nil {
+				return "", err
+			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				return "", nil
+			}
+			if err := ValidateAgentName(line); err != nil {
+				fmt.Printf("  Invalid: %v\n", err)
+				continue
+			}
+			return line, nil
+		}
+	}
+	defer ri.close()
+
+	fmt.Print("\r\nSearch for the agent this script will call (esc to skip):\r\n")
+	value, err := ri.autocomplete(ctx, "Agent to call", HelpAgentToCallText(), suggest, validate, AgentNoMatchHint)
+	if errors.Is(err, ErrCanceled) {
+		fmt.Print("  Skipped; the script explains how to pick an agent.\r\n")
+		return "", nil
+	}
+	return value, err
 }
 
 // RunWebapp executes the interactive webapp wizard: it prompts for a project
@@ -370,10 +465,16 @@ func SelectProjectKind() (int, error) {
 // The name prompt is unconditional and gated, so under --no-input this function
 // refuses before the raw-mode reader is ever started — the agent loop's own
 // keypress reads need no separate gate.
-func RunWebapp(ctx context.Context, suggest SuggestFunc, validate AgentValidateFunc) (Config, error) {
+func RunWebapp(ctx context.Context, nameFromArgs string, suggest SuggestFunc, validate AgentValidateFunc) (Config, error) {
 	r := bufio.NewReader(os.Stdin)
 
-	name, err := readRequiredLine(r, "Web app name", webappNameFlagHint, helpWebappName, ValidateProjectName)
+	name := nameFromArgs
+	var err error
+	if name != "" {
+		err = ValidateProjectName(name)
+	} else {
+		name, err = readRequiredLine(r, "Web app name", webappNameFlagHint, helpWebappName, ValidateProjectName)
+	}
 	if err != nil {
 		return Config{}, err
 	}
@@ -411,13 +512,17 @@ func RunWebapp(ctx context.Context, suggest SuggestFunc, validate AgentValidateF
 	return Config{Mode: "webapp", Name: name, Agents: agents}, nil
 }
 
+func AgentNoMatchHint(query string) string {
+	return fmt.Sprintf("No agents match %q. Try fewer or broader words, or run 'blocks search' to browse the catalog.", query)
+}
+
 // collectAgentsTTY is the interactive agent-collection loop: type-ahead
 // autocomplete per agent, then an add-another confirm, until Esc, a "no",
 // or the per-page limit.
 func collectAgentsTTY(ri *rawInput, ctx context.Context, suggest SuggestFunc, validate AgentValidateFunc) ([]string, error) {
 	var agents []string
 	for {
-		value, err := ri.autocomplete(ctx, "Agent to use", suggest, validate)
+		value, err := ri.autocomplete(ctx, "Agent to use", HelpWebappAgentsText(), suggest, validate, AgentNoMatchHint)
 		if err != nil {
 			if errors.Is(err, ErrCanceled) {
 				if len(agents) > 0 {
@@ -440,7 +545,7 @@ func collectAgentsTTY(ri *rawInput, ctx context.Context, suggest SuggestFunc, va
 			break
 		}
 
-		more, err := ri.confirm("Add another agent?", false)
+		more, err := ri.confirm("Add another agent?", false, helpAddAnotherAgent)
 		if err != nil {
 			if errors.Is(err, ErrCanceled) {
 				break
@@ -468,7 +573,7 @@ func reviewAgentsTTY(ri *rawInput, ctx context.Context, agents []string) ([]stri
 	}
 	printList()
 	for len(agents) > 0 {
-		remove, err := ri.confirm("Remove an agent?", false)
+		remove, err := ri.confirm("Remove an agent?", false, helpRemoveAgent)
 		if err != nil {
 			if errors.Is(err, ErrCanceled) {
 				return agents, nil
@@ -482,7 +587,7 @@ func reviewAgentsTTY(ri *rawInput, ctx context.Context, agents []string) ([]stri
 		// The pick reuses the autocomplete: suggestions are the collected
 		// names filtered by the query, and Enter on anything not in the
 		// list is rejected inline.
-		value, err := ri.autocomplete(ctx, "Agent to remove",
+		value, err := ri.autocomplete(ctx, "Agent to remove", helpAgentToRemove,
 			func(_ context.Context, q string) ([]Suggestion, error) {
 				var out []Suggestion
 				for _, a := range agents {
@@ -497,7 +602,7 @@ func reviewAgentsTTY(ri *rawInput, ctx context.Context, agents []string) ([]stri
 					return fmt.Errorf("%q is not in the list above", value)
 				}
 				return nil
-			})
+			}, nil)
 		if err != nil {
 			if errors.Is(err, ErrCanceled) {
 				continue
@@ -606,16 +711,6 @@ func removeString(xs []string, want string) []string {
 	return out
 }
 
-// modeFromIndex maps the InteractiveSelect index for the Mode prompt to
-// the canonical Config.Mode string. Kept as a free function so tests can
-// exercise it without driving stdin.
-func modeFromIndex(idx int) string {
-	if idx == 1 {
-		return "consumer"
-	}
-	return "provider"
-}
-
 func readLine(r *bufio.Reader, prompt string, defaultVal string, helpText string) (string, error) {
 	if noInputMode {
 		return "", fmt.Errorf("cannot ask %q with --no-input", prompt)
@@ -634,7 +729,7 @@ func readLine(r *bufio.Reader, prompt string, defaultVal string, helpText string
 			return "", err
 		}
 		line = strings.TrimSpace(line)
-		if line == "?" {
+		if IsHelpRequest(line) {
 			fmt.Println(helpText)
 			fmt.Println()
 			continue
@@ -660,7 +755,7 @@ func readInt(r *bufio.Reader, prompt string, defaultVal int, min int, helpText s
 			return 0, err
 		}
 		line = strings.TrimSpace(line)
-		if line == "?" {
+		if IsHelpRequest(line) {
 			fmt.Println(helpText)
 			fmt.Println()
 			continue
@@ -670,39 +765,62 @@ func readInt(r *bufio.Reader, prompt string, defaultVal int, min int, helpText s
 		}
 		n, err := strconv.Atoi(line)
 		if err != nil || n < min {
-			fmt.Printf("  Must be a number >= %d\n", min)
+			fmt.Printf("  Enter a whole number of %d or more.\n", min)
 			continue
 		}
 		return n, nil
 	}
 }
 
-func readConfirm(r *bufio.Reader, prompt string, defaultYes bool, helpText string) (bool, error) {
+func Confirm(r *bufio.Reader, prompt string, defaultYes bool, helpText string) (bool, error) {
 	if noInputMode {
 		return false, fmt.Errorf("cannot ask %q with --no-input", prompt)
 	}
+	var readErr error
+	answer, answered := AskYesNo(func() (string, bool) {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				readErr = err
+			}
+			return "", false
+		}
+		return line, true
+	}, prompt, defaultYes, helpText)
+	switch {
+	case readErr != nil:
+		return false, readErr
+	case !answered:
+		return defaultYes, nil
+	}
+	return answer, nil
+}
+
+// AskYesNo is the one y/n loop every prompt shares; answered is false when read reports end of input.
+func AskYesNo(read func() (line string, ok bool), prompt string, defaultYes bool, helpText string) (answer, answered bool) {
 	hint := "Y/n"
 	if !defaultYes {
 		hint = "y/N"
 	}
 	for {
 		fmt.Printf("%s [%s] (? for help): ", prompt, hint)
-		line, err := r.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				return defaultYes, nil
-			}
-			return false, err
+		line, ok := read()
+		if !ok {
+			return false, false
 		}
 		line = strings.TrimSpace(strings.ToLower(line))
-		if line == "?" {
+		switch {
+		case IsHelpRequest(line):
 			fmt.Println(helpText)
 			fmt.Println()
-			continue
+		case line == "":
+			return defaultYes, true
+		case line == "y" || line == "yes":
+			return true, true
+		case line == "n" || line == "no":
+			return false, true
+		default:
+			fmt.Println("  Please answer y or n.")
 		}
-		if line == "" {
-			return defaultYes, nil
-		}
-		return line == "y" || line == "yes", nil
 	}
 }

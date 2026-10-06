@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -409,18 +408,4 @@ func credentialSupplied() bool {
 // decision that is allowed to depend on interactivity must go through here.
 func interactiveSession() bool {
 	return isInteractive() && !noInputMode
-}
-
-// confirmYesNo prints prompt to stdout and reads one line from in. It returns
-// false only when the user explicitly answers "n"/"no" (case-insensitive);
-// empty input, EOF, and any other answer default to yes (true). Shared by the
-// init and deploy "(Y/n)" prompts so the default-yes semantics live in one place.
-func confirmYesNo(in io.Reader, prompt string) bool {
-	fmt.Print(prompt)
-	scanner := bufio.NewScanner(in)
-	if !scanner.Scan() {
-		return true
-	}
-	ans := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	return ans != "n" && ans != "no"
 }

@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -75,6 +76,14 @@ func TestDecodeLoop_ArrowSequence(t *testing.T) {
 	in <- '['
 	in <- 'B'
 	expectEvent(t, ri, acDown)
+	in <- 0x1b
+	in <- '['
+	in <- 'C'
+	expectEvent(t, ri, acRight)
+	in <- 0x1b
+	in <- '['
+	in <- 'D'
+	expectEvent(t, ri, acLeft)
 
 	close(in)
 	expectEvent(t, ri, acEOF)
@@ -162,14 +171,41 @@ func TestACModel_SetResultsStaleDrop(t *testing.T) {
 		m.insert(r)
 	}
 	// A response for an earlier query is dropped.
-	m.setResults("tra", []Suggestion{{Value: "stale"}})
+	m.setResults("tra", []Suggestion{{Value: "stale"}}, "")
 	if len(m.suggestions) != 0 {
 		t.Errorf("stale results were applied: %+v", m.suggestions)
 	}
 	// A response for the current query is applied.
-	m.setResults("tran", []Suggestion{{Value: "translator"}})
+	m.setResults("tran", []Suggestion{{Value: "translator"}}, "")
 	if len(m.suggestions) != 1 || m.suggestions[0].Value != "translator" {
 		t.Errorf("current results not applied: %+v", m.suggestions)
+	}
+}
+
+func TestACModel_StatusExplainsAnEmptyList(t *testing.T) {
+	hint := func(q string) string { return "nothing for " + q }
+	cases := []struct {
+		name string
+		res  queryResult
+		want string
+	}{
+		{"failed search shows its reason", queryResult{query: "we", err: errors.New("Search unavailable: offline")}, "Search unavailable: offline"},
+		{"no match shows the hint", queryResult{query: "we"}, "nothing for we"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newACModel()
+			m.insert('w')
+			m.insert('e')
+			m.setResults(tc.res.query, tc.res.sugg, resultStatus(tc.res, hint))
+			if m.status != tc.want {
+				t.Errorf("status = %q, want %q", m.status, tc.want)
+			}
+			m.insert('a')
+			if m.status != "" {
+				t.Errorf("status %q survived an edit", m.status)
+			}
+		})
 	}
 }
 
@@ -181,12 +217,12 @@ func TestACModel_SetResultsClampsHighlight(t *testing.T) {
 	m.suggestions = []Suggestion{{Value: "a"}, {Value: "b"}, {Value: "c"}}
 	m.highlight = 2
 	// New, shorter result set must clamp the highlight in-range.
-	m.setResults("x", []Suggestion{{Value: "a"}})
+	m.setResults("x", []Suggestion{{Value: "a"}}, "")
 	if m.highlight != 0 {
 		t.Errorf("highlight = %d, want 0 after clamp", m.highlight)
 	}
 	// Empty result set drives highlight back to the input buffer.
-	m.setResults("x", nil)
+	m.setResults("x", nil, "")
 	if m.highlight != -1 {
 		t.Errorf("highlight = %d, want -1 for empty results", m.highlight)
 	}
@@ -199,7 +235,7 @@ func TestACModel_SetResultsCapsList(t *testing.T) {
 	for i := range big {
 		big[i] = Suggestion{Value: "a"}
 	}
-	m.setResults("q", big)
+	m.setResults("q", big, "")
 	if len(m.suggestions) != maxVisibleSuggestions {
 		t.Errorf("suggestions len = %d, want %d", len(m.suggestions), maxVisibleSuggestions)
 	}

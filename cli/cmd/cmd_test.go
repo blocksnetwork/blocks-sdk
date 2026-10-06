@@ -380,8 +380,8 @@ func TestInitCommandConsumerPythonNonInteractiveDescription(t *testing.T) {
 		t.Fatalf("read pyproject.toml: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, `description = "myconsumer consumer"`) {
-		t.Errorf("pyproject.toml should describe the project as a consumer, got:\n%s", content)
+	if !strings.Contains(content, `description = "A script that calls agents"`) {
+		t.Errorf("pyproject.toml should describe the project as calling agents, got:\n%s", content)
 	}
 	if strings.Contains(content, `description = "myconsumer agent"`) {
 		t.Errorf("pyproject.toml leaked provider default description:\n%s", content)

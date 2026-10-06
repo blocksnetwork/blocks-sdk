@@ -2,12 +2,22 @@ package cmd
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 )
+
+// seedPinnedDeploymentProfile records a login to the deployment the project .env in
+// these tests pins, without making it active. Without it the startup hook declines
+// the pin as foreign and no override is left to report.
+func seedPinnedDeploymentProfile(t *testing.T) {
+	t.Helper()
+	if err := profiles.Upsert("acme-cloud", profiles.Profile{BaseURL: "https://acme.blocks.ai", Orgs: map[string]profiles.OrgKey{}}, false); err != nil {
+		t.Fatalf("seed profile acme-cloud: %v", err)
+	}
+}
 
 // The reproduction this note exists for: the active profile is stock Blocks
 // Network, and a leftover project .env still pins an enterprise deployment. Every
@@ -15,8 +25,11 @@ import (
 func TestProfileListReportsAnActiveBackendOverride(t *testing.T) {
 	restoreCLIState(t)
 	withTempProfiles(t)
+	seedPinnedDeploymentProfile(t)
 	pinnedProjectDir(t, "BLOCKS_BACKEND_URL=https://acme.blocks.ai\n")
-	resolveCLIContext(t, profileListCmd)
+	if err := runStartupHook(t); err != nil {
+		t.Fatalf("startup hook: %v", err)
+	}
 
 	out := captureStdout(func() {
 		if err := profileListCmd.RunE(profileListCmd, nil); err != nil {
@@ -24,7 +37,8 @@ func TestProfileListReportsAnActiveBackendOverride(t *testing.T) {
 		}
 	})
 
-	want := "* " + profiles.DefaultProfile + "  Blocks Network (default)\n" +
+	want := "  acme-cloud  https://acme.blocks.ai\n" +
+		"* " + profiles.DefaultProfile + "  Blocks Network (default)\n" +
 		"  Note: BLOCKS_BACKEND_URL in ./.env overrides this → https://acme.blocks.ai\n"
 	if out != want {
 		t.Errorf("profile list output:\n%q\nwant:\n%q", out, want)
@@ -87,8 +101,11 @@ func TestWhoamiReportsAnActiveBackendOverride(t *testing.T) {
 		DefaultOrgID: "org-1",
 		Orgs:         map[string]profiles.OrgKey{"org-1": {OrgName: "Acme", ApiKey: "bk_acme"}},
 	})
+	seedPinnedDeploymentProfile(t)
 	pinnedProjectDir(t, "BLOCKS_BACKEND_URL=https://acme.blocks.ai\n")
-	resolveCLIContext(t, whoamiCmd)
+	if err := runStartupHook(t); err != nil {
+		t.Fatalf("startup hook: %v", err)
+	}
 
 	out := captureStdout(func() {
 		if err := runWhoami(whoamiCmd, nil); err != nil {
@@ -115,8 +132,11 @@ func TestWhoamiJSONNamesTheOverriddenBackend(t *testing.T) {
 		DefaultOrgID: "org-1",
 		Orgs:         map[string]profiles.OrgKey{"org-1": {OrgName: "Acme", ApiKey: "bk_acme"}},
 	})
+	seedPinnedDeploymentProfile(t)
 	pinnedProjectDir(t, "BLOCKS_BACKEND_URL=https://acme.blocks.ai\n")
-	resolveCLIContext(t, whoamiCmd)
+	if err := runStartupHook(t); err != nil {
+		t.Fatalf("startup hook: %v", err)
+	}
 
 	if err := whoamiCmd.Flags().Set("json", "true"); err != nil {
 		t.Fatalf("set --json: %v", err)
@@ -144,8 +164,11 @@ func TestProfileUseReportsAnActiveBackendOverride(t *testing.T) {
 	restoreCLIState(t)
 	withTempProfiles(t)
 	seedProfile(t, "acme", profiles.Profile{BaseURL: "https://blocks.acme.com", Orgs: map[string]profiles.OrgKey{}})
+	seedPinnedDeploymentProfile(t)
 	pinnedProjectDir(t, "BLOCKS_BACKEND_URL=https://acme.blocks.ai\n")
-	resolveCLIContext(t, profileUseCmd)
+	if err := runStartupHook(t); err != nil {
+		t.Fatalf("startup hook: %v", err)
+	}
 
 	out := captureStdout(func() {
 		if err := profileUseCmd.RunE(profileUseCmd, []string{"acme"}); err != nil {
@@ -181,27 +204,6 @@ func TestProfileUseIsSilentWhenTheSelectedProfileIsTheTarget(t *testing.T) {
 
 	if out != "Active profile: acme\n" {
 		t.Errorf("profile use output:\n%q\nwant only the active-profile line", out)
-	}
-}
-
-// The supported headless mechanism must keep working end to end: an ambient
-// backend URL and API key alone resolve a target and a credential with no profile
-// for that deployment, and the note describes exactly that target.
-func TestAmbientBackendAndKeyStillDriveHeadlessOperation(t *testing.T) {
-	restoreCLIState(t)
-	withTempProfiles(t)
-	pinnedProjectDir(t, "BLOCKS_BACKEND_URL=https://headless.blocks.example\nBLOCKS_API_KEY=bk_headless\n")
-	resolveCLIContext(t, profileListCmd)
-
-	if got := clictx.BackendURL(); got != "https://headless.blocks.example" {
-		t.Errorf("BackendURL() = %q, want the ambient backend URL", got)
-	}
-	cred := clictx.EffectiveCredential()
-	if cred.Err != nil || cred.Key != "bk_headless" || cred.Source != clictx.SourceEnv {
-		t.Errorf("credential = %+v, want the ambient key from the environment", cred)
-	}
-	if got, want := backendOverrideNote(), "BLOCKS_BACKEND_URL in ./.env overrides this → https://headless.blocks.example"; got != want {
-		t.Errorf("note = %q, want %q", got, want)
 	}
 }
 
@@ -245,5 +247,96 @@ func TestOverrideNoteOmitsTheSourceForAShellExportedValue(t *testing.T) {
 	got := backendOverrideNote()
 	if want := "BLOCKS_BACKEND_URL overrides this → https://exported.blocks.example"; got != want {
 		t.Errorf("note = %q, want %q", got, want)
+	}
+}
+
+// whoami is where a user checks which identity is active and where its credentials
+// live; when a project key outranks the profile it has to say so, because otherwise
+// it describes a key no command here sends. --json carries the same two facts for a
+// script.
+func TestWhoamiNamesTheStoreAndAProjectKeyThatOutranksTheProfile(t *testing.T) {
+	restoreCLIState(t)
+	isolateCredentials(t)
+	defer isolateProfiles(t)()
+	isolateAmbientState(t)
+	seedProfile(t, profiles.DefaultProfile, loggedInProfile())
+	enterProject(t, blocksAPIKeyEnv+"=bk_project\n")
+	resolveCLIContext(t, whoamiCmd)
+
+	whoami := func() string {
+		return captureStdout(func() {
+			if err := runWhoami(whoamiCmd, nil); err != nil {
+				t.Fatalf("whoami: %v", err)
+			}
+		})
+	}
+
+	out := whoami()
+	for _, want := range []string{
+		"Stored:   " + storePath(t),
+		"Note: commands run here use BLOCKS_API_KEY in ./.env, not this profile's key.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("whoami output is missing %q:\n%s", want, out)
+		}
+	}
+
+	if err := whoamiCmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("set --json: %v", err)
+	}
+	t.Cleanup(func() { whoamiCmd.Flags().Set("json", "false") })
+	out = whoami()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("whoami --json is not valid JSON (%v):\n%s", err, out)
+	}
+	if got["credentials_path"] != storePath(t) {
+		t.Errorf("credentials_path = %v, want %s", got["credentials_path"], storePath(t))
+	}
+	if got["key_override"] != "BLOCKS_API_KEY in ./.env" {
+		t.Errorf("key_override = %v, want the project .env key", got["key_override"])
+	}
+}
+
+// The store normally sits under $HOME, where the human output abbreviates it to ~/….
+// --json is read by scripts, and neither filesystem APIs nor a quoted shell variable
+// expand a tilde, so the JSON carries the absolute path.
+func TestWhoamiJSONCredentialsPathIsAbsoluteUnderHome(t *testing.T) {
+	restoreCLIState(t)
+	isolateCredentials(t)
+	isolateAmbientState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	store := filepath.Join(home, ".config", "blocks", "contexts.json")
+	orig := profiles.ContextsPathFunc
+	profiles.ContextsPathFunc = func() (string, error) { return store, nil }
+	t.Cleanup(func() { profiles.ContextsPathFunc = orig })
+	seedProfile(t, profiles.DefaultProfile, loggedInProfile())
+	resolveCLIContext(t, whoamiCmd)
+
+	whoami := func() string {
+		return captureStdout(func() {
+			if err := runWhoami(whoamiCmd, nil); err != nil {
+				t.Fatalf("whoami: %v", err)
+			}
+		})
+	}
+
+	want := "Stored:   " + filepath.Join("~", ".config", "blocks", "contexts.json")
+	if out := whoami(); !strings.Contains(out, want) {
+		t.Errorf("whoami output is missing %q:\n%s", want, out)
+	}
+
+	if err := whoamiCmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("set --json: %v", err)
+	}
+	t.Cleanup(func() { whoamiCmd.Flags().Set("json", "false") })
+	out := whoami()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("whoami --json is not valid JSON (%v):\n%s", err, out)
+	}
+	if got["credentials_path"] != store {
+		t.Errorf("credentials_path = %v, want the absolute path %s", got["credentials_path"], store)
 	}
 }

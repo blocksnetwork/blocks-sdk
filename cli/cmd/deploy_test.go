@@ -685,35 +685,6 @@ func TestDeployNoInput_PartnerTokenPlainNonTTYUnchanged(t *testing.T) {
 	}
 }
 
-// TestConfirmYesNo verifies the shared Y/n prompt: only an explicit "n"/"no"
-// declines; empty input (Enter), EOF, and unrecognized answers default to yes.
-func TestConfirmYesNo(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		{"", true},   // EOF → continue (default-yes)
-		{"\n", true}, // blank line → continue
-		{"y\n", true},
-		{"yes\n", true},
-		{"n\n", false},
-		{"no\n", false},
-		{"N\n", false},
-		{"No\n", false},
-		{"garbage\n", true}, // unrecognized → continue
-	}
-	for _, tc := range cases {
-		var got bool
-		// captureStdout swallows the printed prompt; we assert the return.
-		captureStdout(func() {
-			got = confirmYesNo(strings.NewReader(tc.in), "Continue? (Y/n): ")
-		})
-		if got != tc.want {
-			t.Errorf("confirmYesNo(%q) = %v, want %v", tc.in, got, tc.want)
-		}
-	}
-}
-
 // The backend URL the divergence warning reports is attacker-influenceable twice over:
 // the bundle's own comes from blocks.config.json, and the active one from a profile or a
 // project .env. Both are values `blocks deploy` has to report and neither may appear

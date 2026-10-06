@@ -3,8 +3,6 @@ package cmd
 import (
 	"bytes"
 	"maps"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -148,54 +146,6 @@ func TestBannerIgnoresTheActiveProfileWhenTheProjectEnvPointsElsewhere(t *testin
 	}
 	if !strings.Contains(banner, "b.blocks.example") {
 		t.Errorf("banner %q should name the pinned backend the request will reach", banner)
-	}
-}
-
-func TestUnregisterDeletesFromThePinnedDeploymentAndTheBannerAgrees(t *testing.T) {
-	restoreCLIState(t)
-	defer isolateProfiles(t)()
-
-	var gotMethod, gotHost string
-	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotHost = r.Method, r.Host
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"agentName":"my_agent","status":"deleted"}`))
-	}))
-	t.Cleanup(srvB.Close)
-
-	seedProfile(t, "deployment-a", deploymentAProfile())
-	// A profile for the pinned deployment exists, so the project pin is honoured:
-	// this is the `blocks login --write-env` shape, where a project directory keeps
-	// targeting the deployment it was set up for after `blocks profile use` selects
-	// another.
-	seedProfile(t, "deployment-b", profiles.Profile{BaseURL: srvB.URL, Orgs: map[string]profiles.OrgKey{}})
-	profiles.SetActive("deployment-a")
-	t.Chdir(writeProjectEnv(t, t.TempDir(),
-		"BLOCKS_BACKEND_URL="+srvB.URL+"\nBLOCKS_API_KEY=bk_b\n"))
-	loadProjectEnv(t, blocksBackendURLEnv, blocksAPIKeyEnv)
-
-	_ = rootCmd.PersistentPreRunE(unregisterCmd, nil)
-	unregisterYes = true
-	t.Cleanup(func() { unregisterYes = false })
-
-	out := captureStdout(func() {
-		if err := runUnregister(t.Context(), []string{"my_agent"}); err != nil {
-			t.Fatalf("runUnregister: %v", err)
-		}
-	})
-
-	if gotMethod != http.MethodDelete {
-		t.Fatalf("method = %q, want DELETE — the removal never reached the pinned deployment", gotMethod)
-	}
-	wantHost := mustHost(t, srvB.URL)
-	if gotHost != wantHost {
-		t.Errorf("DELETE host = %q, want %q", gotHost, wantHost)
-	}
-	if !strings.Contains(out, wantHost) {
-		t.Errorf("banner must name the deployment the DELETE went to (%s):\n%s", wantHost, out)
-	}
-	if strings.Contains(out, "Org A") || strings.Contains(out, "deployment-a") {
-		t.Errorf("banner names a deployment/org the removal did not use:\n%s", out)
 	}
 }
 

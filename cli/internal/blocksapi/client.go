@@ -8,9 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 )
@@ -43,8 +41,6 @@ type APIError struct {
 	StatusCode int
 	Code       string
 	Message    string
-	Details    interface{}
-	RetryAfter time.Duration // populated from Retry-After header on 429
 }
 
 func (e *APIError) Error() string {
@@ -68,27 +64,7 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (*http.
 	return c.do(req)
 }
 
-// Post issues a POST request with a JSON-encoded body.
-func (c *Client) Post(ctx context.Context, path string, body interface{}) (*http.Response, error) {
-	return c.doWithBody(ctx, http.MethodPost, path, body)
-}
-
-// Patch issues a PATCH request with a JSON-encoded body.
-func (c *Client) Patch(ctx context.Context, path string, body interface{}) (*http.Response, error) {
-	return c.doWithBody(ctx, http.MethodPatch, path, body)
-}
-
-// Delete issues a DELETE request. body may be nil.
-func (c *Client) Delete(ctx context.Context, path string, body interface{}) (*http.Response, error) {
-	return c.doWithBody(ctx, http.MethodDelete, path, body)
-}
-
-// Do issues an arbitrary method request. body is JSON-encoded when non-nil.
-func (c *Client) Do(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
-	return c.doWithBody(ctx, method, path, body)
-}
-
-// DoJSON calls Do and JSON-decodes a 2xx response body into out.
+// DoJSON issues a method request, JSON-encoding body when non-nil, and JSON-decodes a 2xx response body into out.
 // Returns *APIError for non-2xx responses.
 func (c *Client) DoJSON(ctx context.Context, method, path string, body, out interface{}) error {
 	resp, err := c.doWithBody(ctx, method, path, body)
@@ -152,26 +128,16 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 
 	apiErr := &APIError{StatusCode: resp.StatusCode}
 
-	// Parse Retry-After header for 429 responses.
-	if resp.StatusCode == http.StatusTooManyRequests {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil {
-				apiErr.RetryAfter = time.Duration(secs) * time.Second
-			}
-		}
-	}
-
 	// Try to decode the backend's error envelope shapes.
 	//
 	// Primary shape (the Blocks backend's shared error envelope):
-	//   { "error": "<message>", "code": "<code>", "details": [...] }
+	//   { "error": "<message>", "code": "<code>" }
 	// Fallback shape (legacy endpoints):
 	//   { "message": "<message>" }
 	var envelope struct {
 		Error   interface{} `json:"error"`
 		Code    string      `json:"code"`
 		Message string      `json:"message"`
-		Details interface{} `json:"details"`
 	}
 
 	if len(raw) > 0 && json.Unmarshal(raw, &envelope) == nil {
@@ -188,7 +154,6 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 			apiErr.Message = envelope.Message
 		}
 		apiErr.Code = envelope.Code
-		apiErr.Details = envelope.Details
 	}
 
 	// Final fallback: raw body as text.

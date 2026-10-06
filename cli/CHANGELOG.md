@@ -9,6 +9,56 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
 
 ### Added
 
+- `blocks login --no-browser` prints the login URL and step-by-step instructions
+  instead of opening a browser, then accepts the address your browser lands on
+  pasted back into the terminal. Use it over SSH, in containers, or on any
+  machine whose browser you are not sitting at.
+- `blocks login --org <id or name>` picks the organization to create the API key
+  in, so a login for an account with several organizations needs no prompt.
+- `blocks check` now compares your `agent-card.json` with the version registered
+  on the deployment and lists the fields that differ, so you know when callers
+  still see an older card. It names the command that syncs the card without
+  changing how the agent is listed or priced: `blocks register` for a private,
+  free agent, otherwise `blocks publish` with the agent's current listing,
+  billing mode and pricing. If you changed the card's task kinds so its prices
+  no longer apply, `blocks publish` asks for new prices instead. The comparison is
+  skipped when you are offline or not logged in, and a card that is not
+  registered yet is not an error.
+- OpenBSD (x64 and ARM64) installs with `npm install -g @blocks-network/cli`,
+  like every other supported platform. Until now OpenBSD was pointed at a
+  shell installer that itself installed through npm, so it could not
+  install at all.
+- `blocks search [query]` finds agents you can call. Results show each agent's
+  name, display name, summary, visibility and whether it is online. Like the
+  dashboard's Discover page, it lists online agents by default; `--status
+  offline` lists only offline ones and `--status all` lists both. Once you are logged in, results include your private
+  agents and agents shared with you. With no query it lists the agents you can
+  see alphabetically. Queries take the dashboard's search syntax: `tag:`,
+  `provider:`, `category:`, `agentname:` and `desc:` qualifiers, quoted phrases
+  and `-` exclusions, listed in `blocks search --help`. When a query's operators
+  cannot be parsed, it says so and searches the query as plain text. In a
+  terminal, results page in place with the ← and → arrow keys (? shows the
+  search syntax, q quits), sized to the window. Elsewhere it prints one page and
+  the command for the next, and `--json` gives script-friendly output with the
+  next page's cursor as `next`, which `--cursor` accepts. The `blocks init` agent picker now
+  shows the same results in the same order as `blocks search --status all`, so
+  you can pick an agent that is offline right now, with each agent's visibility
+  and online status. When nothing matches, or the search fails, the picker says why
+  instead of showing an empty list.
+- A first-class path for calling an agent. `blocks init` now opens by asking
+  what you want to do: call an agent on the network, build an agent that others
+  can call, or build a web app that calls agents. Calling an agent asks for a
+  project name, a language, and the agent to call, found by searching the
+  registry. `blocks init <name> --mode consumer --agent <agent> --yes` does
+  the same without prompts.
+- The generated calling script calls the agent you chose without edits. If you
+  chose none, it stops with one message explaining how to pick an agent. An
+  agent that does not exist, or that your key cannot call, is one message
+  rather than a stack trace. The Python script prints the task's final state
+  instead of an object address.
+- `blocks run`, `check`, `register`, and `publish` recognize a project that
+  calls agents and explain how to run it, instead of reporting a missing
+  `agent-card.json`.
 - `blocks unregister` removes an agent from the deployment you are currently
   targeting, the inverse of `blocks register`. Takes the name from
   `agent-card.json` in the current directory, or as an argument. Prompts for
@@ -43,15 +93,14 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
 - Global `--no-input` flag — asks commands not to read stdin. Where it is
   honoured, a prompt that would otherwise be required becomes an error naming the
   flag — or, for a hosting partner's API token, the environment variable — that
-  answers it, instead of a hang. Coverage is not universal, and the organization
-  picker shown during a browser login has no answer flag at all, so the flag is
+  answers it, instead of a hang. Coverage is not universal, so the flag is
   not a guarantee that a command cannot block. Its own help text names the current
   exceptions and is kept in step with the CLI: run `blocks --help`.
 - `blocks init` deployment header — an interactive `blocks init` run with no name
   argument and no `--mode` now shows which deployment you are targeting before
   offering the project-kind choice, and includes an Enterprise hint for fresh
-  Network users. Runs that already name a project or a mode go straight to the
-  wizard as before.
+  Network users. Runs that pass `--mode`, or run non-interactively, skip the
+  project-kind choice as before.
 - Every menu can be backed out of with Esc. Pressing Esc at a project-kind,
   mode, language or deploy-target menu cancels it and returns you to the
   shell — previously only Ctrl+C worked. A menu selection now also asks for
@@ -83,6 +132,63 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
   partner.
 
 ### Changed
+
+- `blocks run`, `blocks register` and `blocks publish` say when they are using
+  the API key stored by `blocks login` because the project `.env` sets no
+  `BLOCKS_API_KEY`, name the profile and file it comes from, and explain how to
+  use a different key for the project.
+- `blocks login` reports whether it actually opened your browser and prints the
+  login URL whenever the login proceeds. When no browser can be opened, such as
+  in an SSH session or on Linux without a display, it shows the same manual
+  steps as `--no-browser`. Without a terminal, or with `--no-input`, a login that
+  cannot open a browser fails at once with the headless alternatives
+  (`BLOCKS_API_KEY`, `blocks login --api-key-stdin`) instead of waiting. With
+  `--no-input`, an account with several organizations fails naming `--org`
+  instead of prompting.
+- `blocks whoami` shows where the active profile's credentials are stored and,
+  when `BLOCKS_API_KEY` in `.env` or your environment outranks the profile, which
+  key commands actually use. `--json` adds `credentials_path` and
+  `key_override`.
+- `blocks logout` names what it removed: the profile whose keys were cleared and
+  the file they were in, and `BLOCKS_API_KEY` in `./.env`. It also tells you when
+  a `BLOCKS_API_KEY` exported in your shell is still in effect.
+- Scripts generated by `blocks init` that run without the CLI (`trigger.ts`,
+  `trigger.py` and caller scripts) explain that they cannot use your `blocks
+  login` profile and how to put a key in `.env`. The generated `.env` explains
+  when a key is needed and leaves `BLOCKS_API_KEY` commented out until you set
+  one.
+- CLI GitHub Releases no longer attach `install.sh` and `install.ps1`. npm
+  is the install path on every platform; the release keeps the per-platform
+  archives and `checksums.txt` for direct downloads.
+- `npm install -g @blocks-network/cli` now installs `blocks` the way npm
+  installs any other command, into npm's own global bin directory. It no
+  longer copies the binary to `~/.blocks/bin` or adds a `PATH` line to your
+  shell profile, so `blocks` works in every shell right after install, and
+  `npm uninstall -g @blocks-network/cli` removes it completely. If you
+  installed with npm before this release, an old copy in `~/.blocks/bin` can
+  keep answering to `blocks` after you upgrade. Delete `~/.blocks/bin/blocks`
+  and the `# Blocks CLI` line with the `PATH` export below it from your shell
+  profile. On Windows, delete `%USERPROFILE%\.blocks\bin\blocks.exe` and remove
+  `%USERPROFILE%\.blocks\bin` from your user `PATH` if you added it. If you
+  used the shell installer instead, keep both.
+- `blocks init` and `blocks publish` prompts now behave the same way. The
+  wizard opens by saying that `?` explains any prompt and Enter accepts the
+  value in brackets. An answer starting with `?` opens help at every prompt,
+  including the final `Continue?` and the webapp agent search, and the same
+  prompt comes back afterwards. A yes/no answer other than `y` or `n` asks
+  again instead of being read as no.
+- `blocks publish` asks for visibility, billing and, on multi-organization
+  accounts, the owning organization with the same arrow-key menus as
+  `blocks init`. Visibility starts on Private and billing on Free, so
+  publishing publicly or charging takes a deliberate choice. Flags such as
+  `--listing` and `--billing-mode` are unchanged.
+- `blocks login` asks which organization to use with the same arrow-key menu
+  when your account belongs to more than one. Without a terminal it keeps the
+  numbered list, which now asks again on an empty or out-of-range answer
+  instead of ending the login.
+- The `blocks init` wizard now accepts `0` for Expected instances, matching
+  what `agent-card.json` allows. `0` delivers every task to every running
+  instance, and the prompt's help says so.
 
 - The webapp wizard's agent search now finds the agents you own. Signing in
   before running `blocks init --mode webapp` used to leave your own private
@@ -216,6 +322,39 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
   variables on macOS and Linux and a project may keep both on purpose.
 
 ### Fixed
+
+- `blocks invite revoke` can now take back an invitation that has not been
+  accepted yet, such as one sent to a mistyped address. It used to fail with
+  `no active grant found`, and the invitation stayed valid for 30 days. Revoke
+  now withdraws both the access and every pending invitation for the address
+  or organization, and reports what it removed; a cancelled invitation leaves
+  `blocks invite list` and its link stops working. `--org` takes the
+  organization's slug or its ID. `--email` ignores case for a person's
+  address and matches an agent's name (`<agentName>@blocks.ai`) exactly.
+  Requires a deployment that supports revoking by address; an older one
+  answers `404`.
+- `blocks deploy` confirmations follow the same rules as every other prompt.
+  "Continue deploying anyway?" after a backend mismatch and "Deploy web/ to
+  …?" after picking a target used to read any answer other than `n` as yes, so
+  a typo or a `?` went ahead with the upload. They now show help for `?` and
+  ask again for anything that is not `y` or `n`.
+- Typing `?` no longer counts as yes at the final `Continue?` of
+  `blocks init`, the webapp wizard's offer to log in, or `blocks login`'s
+  offer to write credentials to `.env`; it shows help. Any other answer
+  besides `y` or `n` now asks again.
+- `blocks init` with stdin redirected from a file or `/dev/null` no longer
+  runs the wizard and silently accepts every default. Without a terminal it
+  prompts for nothing and says so, and `blocks init --help` describes the
+  flags that answer each question. `blocks publish` and `blocks register`
+  likewise stop prompting, and `blocks login` no longer writes `.env`
+  without asking; pass `--write-env` to keep that. Scripts that answered prompts on
+  stdin should pass flags instead, for example
+  `blocks init my_agent --language node --yes` or
+  `blocks publish --listing private --billing-mode free`.
+- The paid-agent attestations in `blocks publish` no longer display a `y/N`
+  default they refuse; they show `y/n` and ask again on an empty answer.
+- An empty or out-of-range answer to the `blocks publish` organization choice
+  asks again instead of ending the command.
 
 - `blocks init` now pins a scaffolded project to the deployment the CLI is
   actually targeting. Previously the generated `.env` contained only an empty

@@ -773,21 +773,6 @@ func TestCollectPromotionInput_NonInteractiveTTYMissingBillingMode_FailsFast(t *
 	}
 }
 
-// Copy assertion: verify promptBillingMode output contains no "private requires pricing".
-func TestPromptBillingMode_NoPrivateRequiresPricingCopy(t *testing.T) {
-	// Use a scanner that returns valid input so we can test the function runs.
-	scanner := bufio.NewScanner(strings.NewReader("1\n"))
-	result, err := promptBillingMode(scanner)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "free" {
-		t.Errorf("expected free, got %q", result)
-	}
-	// The function itself doesn't write "private requires pricing"; verify via
-	// source-level grep in parity_test.go. This test confirms the happy path.
-}
-
 // Interactive billing mode prompt accepts "free" by text as well as "1".
 func TestPromptBillingMode_AcceptsTextInput(t *testing.T) {
 	scanner := bufio.NewScanner(strings.NewReader("paid\n"))

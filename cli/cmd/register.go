@@ -68,6 +68,7 @@ func runRegister(ctx context.Context, cmd *cobra.Command, args []string) error {
 	// of the target is settled earlier and the picker states it before it asks, so
 	// nothing here is the user's first sight of where the command is pointed.
 	clictx.PrintBanner()
+	noteStoredCredential(os.Stderr)
 
 	org, err := resolveOrgNameInput(cmd, prep, interactive, "org-name", registerOrgName)
 	if err != nil {

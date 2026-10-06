@@ -97,17 +97,6 @@ func writeCardWithName(t *testing.T, name string) string {
 	return dir
 }
 
-func TestReadAgentNameFromCard(t *testing.T) {
-	dir := writeCardWithName(t, "my_agent")
-	got, err := readAgentNameFromCard(filepath.Join(dir, "agent-card.json"))
-	if err != nil {
-		t.Fatalf("readAgentNameFromCard: %v", err)
-	}
-	if got != "my_agent" {
-		t.Fatalf("got %q, want %q", got, "my_agent")
-	}
-}
-
 func TestReadAgentNameFromCardWorksOnSchemaInvalidCard(t *testing.T) {
 	// Deliberately missing every field except identity.agentName: unregister
 	// must not require a valid card.

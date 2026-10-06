@@ -6,10 +6,7 @@
   "bin": {
     "blocks": "bin/blocks"
   },
-  "scripts": {
-    "postinstall": "node postinstall.js"
-  },
-  "files": ["bin/", "postinstall.js"],
+  "files": ["bin/", "lib/"],
   "optionalDependencies": {
     "@blocks-network/cli-darwin-arm64": "0.0.0",
     "@blocks-network/cli-darwin-x64": "0.0.0",
@@ -17,6 +14,8 @@
     "@blocks-network/cli-freebsd-x64": "0.0.0",
     "@blocks-network/cli-linux-arm64": "0.0.0",
     "@blocks-network/cli-linux-x64": "0.0.0",
+    "@blocks-network/cli-openbsd-arm64": "0.0.0",
+    "@blocks-network/cli-openbsd-x64": "0.0.0",
     "@blocks-network/cli-win32-x64": "0.0.0"
   },
   "repository": {

@@ -73,6 +73,8 @@ var runnableSegmentsThatMayInterpolate = map[string]string{
 	"  To use it, pin the deployment that does (%s in %s), or export %s in your shell.":                          "two variable names, both constants, and the project file path this process chose",
 	", or run 'blocks login --provider %s' once to store a token":                                                "the hosting adapter's own name, from the fixed set of adapters",
 	"authentication failed — run 'blocks login' to re-authenticate, then retry '%s'":                             "the command's own name, a constant in this package",
+	"       To register it privately, run `%s`.":                                                                 "blocks register, optionally with a <path> placeholder (withCardArg)",
+	"       Callers see the registered version until you run `%s`.":                                              "a command syncCommand builds from constants, a listing from a fixed pair and flag placeholders, optionally with a <path> placeholder (withCardArg)",
 	"blocks.config.json not found or invalid — run 'blocks init <name> --mode webapp --agent <agent>' first: %w": "the wrapped parse error, which no remedy is built from",
 }
 

@@ -3,6 +3,7 @@ module github.com/pubnub/blocks-sdk/cli
 go 1.24.0
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/evanw/esbuild v0.28.0
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1

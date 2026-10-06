@@ -8,16 +8,17 @@ Node SDK or npm.
 
 | Command | Description |
 |---------|-------------|
-| `blocks init` | Scaffold a new agent project (Node or Python) |
-| `blocks check` | Validate `agent-card.json` and handler file |
-| `blocks login [instanceUrl\|shortName]` | Authenticate and store credentials for future commands. An optional instance URL targets a specific deployment (the CLI auto-discovers whether it is enterprise). Short names like `acme` target `https://acme.blocks.ai`; a name matching an existing profile reuses that profile's deployment. Pass `--network` to target Blocks Network without prompting. In a terminal, with no argument and no deployment resolved for this invocation at all, prompts for which one to target. See [What `blocks login` accepts as a deployment](#what-blocks-login-accepts-as-a-deployment). |
+| `blocks init` | Scaffold a project: call an agent, build an agent, or build a web app |
+| `blocks search [query]` | Find agents you can call, best match first — the same order as the `blocks init` picker and the dashboard's Discover page. Like the Discover page it lists online agents by default; `--status offline` lists only offline ones and `--status all` lists both. Takes the dashboard's search syntax — `tag:`, `provider:`, `category:`, `agentname:` and `desc:` qualifiers, quoted phrases and `-exclusions`; `blocks search --help` lists it. Logged in, it includes your private agents and agents shared with you. In a terminal, page in place with ← → (? shows the search syntax, q to quit); in scripts, `--json` returns a `next` cursor for `--cursor`. `--limit` sets the page size; no query lists the agents visible to you alphabetically |
+| `blocks check` | Validate `agent-card.json` and handler file, and warn when the card differs from the registered version |
+| `blocks login [instanceUrl\|shortName]` | Authenticate and store credentials for future commands. An optional instance URL targets a specific deployment (the CLI auto-discovers whether it is enterprise). Short names like `acme` target `https://acme.blocks.ai`; a name matching an existing profile reuses that profile's deployment. Pass `--network` to target Blocks Network without prompting. In a terminal, with no argument and no deployment resolved for this invocation at all, prompts for which one to target. `--no-browser` logs in from a browser on another device; `--org <id or name>` picks the organization. See [What `blocks login` accepts as a deployment](#what-blocks-login-accepts-as-a-deployment) and [Credentials and headless login](#credentials-and-headless-login). |
 | `blocks register` | Register an agent privately and free — the recommended first step (requires prior `blocks login` or `--api-key`) |
 | `blocks unregister` | Remove an agent from the deployment you are targeting, the inverse of `blocks register`. Requires `--yes` in non-interactive use (CI, scripts). |
 | `blocks publish` | Publish an agent to the network, choosing public/private and free/paid (requires prior `blocks login` or `--api-key`) |
-| `blocks run` | Start an agent (delegates to the SDK's `blocks-run` binary for Node, venv Python `-m blocks_network` for Python) |
+| `blocks run` | Start an agent (delegates to the SDK's `blocks-run` binary for Node, venv Python `-m blocks_network` for Python). Passes the agent the key stored by `blocks login` when `.env` sets no `BLOCKS_API_KEY`, and says so |
 | `blocks logout` | Clear the selected profile's cached org keys and strip `BLOCKS_API_KEY` from the project `.env`. Keeps the profile's deployment target and says so, so a later `blocks login` returns to it; use `blocks profile remove` to forget the deployment. Does not revoke the key on the server. |
 | `blocks profile` | Manage deployment profiles — `list`, `use <name>`, `rename <old> <new>`, `remove <name>` |
-| `blocks whoami` | Display current authenticated identity |
+| `blocks whoami` | Display the active profile's identity, where its key is stored, and any `BLOCKS_API_KEY` in `.env` or the environment that outranks it (`--json` adds `credentials_path`, `key_override`) |
 | `blocks upgrade` | Upgrade the CLI to the latest release |
 
 `blocks run` is the canonical way to start any agent. It detects the
@@ -43,15 +44,22 @@ delegated process reads.
 
 ### Project modes
 
-`blocks init` can scaffold three kinds of projects via the `--mode` flag:
+Run `blocks init` in a terminal and it first asks what you want to do: call an
+agent on the network, build an agent that others can call, or build a web app
+that calls agents. It then asks only that path's questions. The `--mode` flag
+selects the same three paths without the wizard:
 
-- `--mode provider` (default): an agent handler project. Produces
-  `handler.{ts,py}`, `trigger.{ts,py}`, and `agent-card.json`.
+- `--mode consumer` (alias `call-agent`): call an agent. Produces a script
+  that calls one agent with `TaskClient`: `main.py` or `index.ts`. Pass
+  `--agent <name>` to choose the agent; the wizard searches the registry for
+  it instead. Without one, the script stops with a message explaining how to
+  pick an agent. Run it with `python main.py` or `npm run start`.
+  `blocks run`, `check`, `register`, and `publish` recognize this project and
+  explain that it is run directly.
+- `--mode provider` (default; alias `connect-agent`): build an agent.
+  Produces `handler.{ts,py}`, `trigger.{ts,py}`, and `agent-card.json`.
   Use `blocks register` (private + free, the recommended first step) or
   `blocks publish` (to choose public/paid) to deploy, and `blocks run` to run.
-- `--mode consumer`: a script that calls other agents via `TaskClient`.
-  Produces `index.ts` / `main.py`. Run with `npm run start` or
-  `python main.py`.
 - `--mode webapp`: a static page pre-wired with the Blocks embed-auth
   widget for one or more named agents. Pass `--agent <name>` (repeatable)
   to select which agents the page talks to. Scaffolded projects carry a
@@ -67,9 +75,10 @@ delegated process reads.
 Examples:
 
 ```bash
-blocks init my_agent                         # provider (default)
-blocks init my_consumer --mode consumer      # consumer, prompt for language
-blocks init my_consumer --mode consumer --language python --yes
+blocks init                                  # wizard: choose what you want to do
+blocks search translator                     # find an agent to call
+blocks init my_caller --mode consumer --agent echo --yes   # script that calls echo
+blocks init my_agent --yes                   # agent project (provider, the default)
 blocks init my_ui --mode webapp --agent echo # webapp wired to the echo agent
 ```
 
@@ -416,6 +425,8 @@ that answer them up front:
 - `blocks login --network` — target Blocks Network without the deployment prompt
   (or pass an instance URL / short name to target a specific deployment)
 - `blocks login --write-env` or `--no-write-env` — answer the .env write prompt
+- `blocks login --org <id or name>` — answer the organization prompt a browser
+  login shows for an account in several organizations
 - `blocks unregister --yes` — confirm a destructive removal
 - `blocks init --yes` — use all defaults without prompting
 - `blocks publish --listing … --billing-mode … --accept-terms` — answer the
@@ -466,21 +477,20 @@ is what answers the question: a hosting partner's API token, or the
 `credentialEnvVar` a user-defined deploy plugin declares.
 
 **The contract is not universal, and not every prompt has an answer flag.** Some
-prompts still read stdin under `--no-input`, and one of those has no flag that
-answers it at all — so do not treat the flag as a guarantee that a command
-cannot block. The flag names its own current exceptions, and that help text is
+prompts still read stdin under `--no-input` — so do not treat the flag as a
+guarantee that a command cannot block. The flag names its own current exceptions, and that help text is
 kept in step with the code, so it — not this README — is the live list:
 
 ```sh
 blocks --help | grep -A3 no-input
 ```
 
-At the time of writing they are: the organization picker shown at the tail of a
-browser login when your account belongs to more than one organization, and the
-token prompt for `blocks login --provider cloudflare|vercel|netlify`. The first
-can be avoided rather than answered — pass `--api-key` / `--api-key-stdin` to
-skip the browser flow, and with it the picker; the second *is* the paste prompt,
-so run that command without `--no-input` or export the token instead.
+At the time of writing it is the token prompt for `blocks login --provider
+cloudflare|vercel|netlify`, which *is* the paste prompt, so run that command
+without `--no-input` or export the token instead. The organization picker a
+browser login shows for an account in several organizations is answered by
+`blocks login --org <id or name>`; under `--no-input` without it, the login fails
+naming `--org`.
 
 `blocks deploy` reads no stdin at all under `--no-input`, but "closed" is not
 always "refused" — the five reads take three different shapes. A token prompt is
@@ -573,21 +583,59 @@ unreadable store would make each pin look unknown, including the ordinary one
 `blocks login --write-env` leaves in its own directory. Never having logged in is
 a different case and stays a silent, legitimate empty.
 
+### Credentials and headless login
+
+The key `blocks login` stores is the one `blocks run`, `blocks register` and
+`blocks publish` send whenever neither the project `.env` nor your environment
+sets `BLOCKS_API_KEY`. They say so on stderr, naming the profile and the file the
+key lives in, so a freshly scaffolded project runs without `--write-env`. Put
+`BLOCKS_API_KEY` in `.env` to give a project a different key, or for scripts run
+without the CLI (a scaffolded `trigger.ts` / `trigger.py` or caller script),
+which cannot reach the profile and say so when the key is missing.
+
+- **Inspect:** `blocks whoami` names the active profile, the file its key is
+  stored in, and any `.env` or exported key that outranks it; `blocks profile
+  list` lists every profile.
+- **Remove:** `blocks logout` clears the active profile's keys (choose another
+  with `--profile`) and `BLOCKS_API_KEY` in `./.env`, and names each thing it
+  removed. A key exported in your shell is left alone, and logout says so.
+  `blocks profile remove <name>` forgets a whole profile. Neither revokes the key
+  on the server.
+
+`blocks login` reports whether it actually opened a browser. When it does not —
+`--no-browser`, an SSH session, a Linux or BSD host without a display, or an opener that
+is missing or fails — it prints the full login URL and these steps: open the URL
+on any device, sign in, then paste the address the browser lands on (a
+`127.0.0.1` page that may fail to load) back into the terminal. A pasted address
+from a different login attempt is refused — an error it reports included, so it
+cannot end this login. Without a terminal, or under
+`--no-input`, such a login fails at once instead of waiting, and names the
+paths that need no browser, alongside `blocks login --no-browser` run in an
+interactive terminal:
+
+```sh
+export BLOCKS_API_KEY=bk_...                         # CI, AI agents: every command uses it; no login
+blocks login --api-key-stdin --no-write-env < key    # or store a dashboard key in the profile
+```
+
+An account in several organizations picks one with `--org <id or name>`;
+under `--no-input` without it, the login fails naming `--org`.
+
 ## Installation
 
-Install the latest release via npm (Linux, macOS, Windows, FreeBSD):
+Install the latest release via npm (Linux, macOS, Windows, FreeBSD, OpenBSD):
 
 ```sh
 npm install -g @blocks-network/cli
 ```
 
-Or via shell script (works on every supported platform, including
-FreeBSD and OpenBSD — the installer is POSIX `sh`-compatible, so no
-bash is required):
+npm links `blocks` into its global bin directory like any other package
+command and leaves your shell profile alone. `npm uninstall -g
+@blocks-network/cli` removes it.
 
-```sh
-curl -fsSL https://config.blocks.ai/install.sh | sh
-```
+The `curl -fsSL https://config.blocks.ai/install.sh | sh` one-liner in the
+dashboard runs the same `npm i -g` for you. npm packages are published for
+macOS, Linux, Windows (x64), FreeBSD and OpenBSD.
 
 ### Upgrading
 
@@ -596,11 +644,10 @@ checks the npm registry for new versions every 2 hours and prints a
 notice to stderr when an update is available. Upgrade behavior by install
 method:
 
-- **`~/.blocks/bin` (install.sh, `make install`)** — `blocks upgrade`
+- **`~/.blocks/bin` (`make install`)** — `blocks upgrade`
   replaces the binary in place.
 - **npm global (`npm i -g`)** — `blocks upgrade` detects this and
   directs you to run `npm i -g @blocks-network/cli@latest` instead.
-- **OpenBSD** — npm packages are not published; use `install.sh`.
 
 Environment variables:
 

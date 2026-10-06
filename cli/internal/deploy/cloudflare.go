@@ -88,11 +88,6 @@ func cfClassifyStage(stageName, stageStatus string) cfDeploymentStage {
 	}
 }
 
-// Upload deploys the assetsDir to Cloudflare Pages.
-func Upload(ctx context.Context, creds *auth.ProviderCredentials, assetsDir string) (string, error) {
-	return CloudflareUpload(ctx, creds, assetsDir)
-}
-
 // CloudflareUpload deploys the assetsDir to Cloudflare Pages and returns the
 // deployed URL. Uses the manifest-first direct-upload protocol (mirroring
 // Wrangler): account/project setup, upload-token grant, check-missing,

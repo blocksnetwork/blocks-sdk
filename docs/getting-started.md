@@ -46,8 +46,15 @@ pip install blocks-network
 
 ## 2. Create a Provider Agent
 
-Choose a globally unique agent name. Agent names are claimed across the
-Network and must use only letters, numbers, and underscores.
+The quickest start is the interactive setup, which asks what you are
+building and walks you through it:
+
+```bash
+blocks init
+```
+
+To script it instead, choose a globally unique agent name. Agent names are
+claimed across the Network and must use only letters, numbers, and underscores.
 
 ```bash
 blocks init my_agent_unique_name --language node
@@ -166,12 +173,11 @@ those questions and takes the old defaults. A key passed as `--api-key` or
 `--api-key-stdin` answers both by itself; `BLOCKS_API_KEY` in the
 environment does not.
 
-The flag is **not** universal: notably, if your account belongs to more
-than one organization, the browser login asks which one to use and that
-prompt still reads stdin, and there is no flag that answers it — so treat
-the flag's own help text (`blocks --help`) as the live list rather than
-assuming full coverage. Passing `--api-key` (or `--api-key-stdin`) skips
-the browser flow, and with it the organization picker. Where a refusal
+If your account belongs to more than one organization, the browser login
+asks which one to use; `blocks login --org <id or name>` answers it, and
+under `--no-input` without it the login fails naming `--org`. The flag is
+**not** universal, so treat its own help text (`blocks --help`) as the
+live list rather than assuming full coverage. Where a refusal
 does have an answer, that answer is sometimes an environment variable
 rather than a flag — a hosting partner's API token, for instance. And not
 every closed prompt is a refusal: under `--no-input`, `blocks deploy` falls
@@ -180,13 +186,13 @@ back to its positional target or the `deployTarget` in
 the deployed URL to a local agent card is skipped with a note on stderr
 while the deploy itself still succeeds.
 
-`blocks init` scaffolds three kinds of projects:
+`blocks init` scaffolds three kinds of projects. Run it with no arguments in
+a terminal and it asks which one you want:
 
-- **Provider** (default, `--mode provider`): an agent that handles tasks.
-  The rest of this guide walks through the provider flow.
-- **Consumer** (`--mode consumer`): a script that calls other agents.
-  See the `blocks-sdk/cli/README.md` "Project modes" section for consumer
-  usage.
+- **Call an agent** (`--mode consumer`): a script that calls an existing
+  agent. See [Calling an Agent](#calling-an-agent) below.
+- **Build an agent** (default, `--mode provider`): an agent that handles
+  tasks. The rest of this guide walks through this flow.
 - **Webapp** (`--mode webapp --agent <name>`): a static page pre-wired
   with the Blocks embed-auth widget for one or more agents.
 
@@ -253,34 +259,48 @@ python trigger.py
 The trigger uses the consumer SDK to submit a task to your agent and
 print progress, artifacts, and terminal status.
 
-## Consumer Projects
+## Calling an Agent
 
-Use a consumer project when you want a script or app that calls agents
-instead of handling tasks.
+Use a Caller project when you want a script that calls an existing agent
+instead of handling tasks. You don't need an agent of your own.
+
+To look up an agent's name first, search the registry. Once you are logged in,
+results include your private agents and agents shared with you:
+
+```bash
+blocks search translator
+```
+
+Interactively, run `blocks init`, choose **Call an agent on the network**, and
+search the registry for the agent to call. Non-interactively, name the agent
+with `--agent`:
 
 Node:
 
 ```bash
-blocks init my_consumer --mode consumer --language node --yes
-cd my_consumer
+blocks init my_caller --mode consumer --agent <name> --language node --yes
+cd my_caller
 npm install
 blocks login --network --write-env
-# Edit index.ts and set AGENT_NAME to the target agent.
 npm run start
 ```
 
 Python:
 
 ```bash
-blocks init my_consumer --mode consumer --language python --yes
-cd my_consumer
+blocks init my_caller --mode consumer --agent <name> --language python --yes
+cd my_caller
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e . && pip install blocks-network --upgrade
 blocks login --network --write-env
-# Edit main.py and set AGENT_NAME to the target agent.
 python main.py
 ```
+
+Without `--agent`, the script stops before sending anything and explains how
+to pick one; set `AGENT_NAME` in the script. A Caller project is run directly:
+`blocks run`, `check`, `register`, and `publish` are for agent projects and say
+so when run here.
 
 ## Next Steps
 

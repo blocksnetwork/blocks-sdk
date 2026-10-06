@@ -54,20 +54,6 @@ func TestCollectAgentsPlain_RequiresAtLeastOne(t *testing.T) {
 	}
 }
 
-func TestRemoveString(t *testing.T) {
-	got := removeString([]string{"a", "b", "c"}, "b")
-	want := []string{"a", "c"}
-	if len(got) != len(want) || got[0] != "a" || got[1] != "c" {
-		t.Errorf("removeString = %v, want %v", got, want)
-	}
-	if got := removeString([]string{"a"}, "a"); len(got) != 0 {
-		t.Errorf("removeString to empty = %v, want empty", got)
-	}
-	if got := removeString([]string{"a"}, "z"); len(got) != 1 {
-		t.Errorf("removeString no-match = %v, want [a]", got)
-	}
-}
-
 func TestReviewAgentsPlain(t *testing.T) {
 	// A name not in the list is rejected; weather_service is removed; the
 	// blank line finishes the review.

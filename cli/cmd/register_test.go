@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
-	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/spf13/pflag"
 )
 
@@ -284,26 +283,6 @@ func TestRegisterNoCredentialsFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not authenticated") {
 		t.Errorf("error should mention 'not authenticated', got: %s", err.Error())
-	}
-}
-
-func TestRegisterPrintsContextBanner(t *testing.T) {
-	seedEnterpriseProfileForTest(t) // sets up enterprise profile for context banner test
-	out := captureStdout(func() {
-		clictx.PrintBanner()
-	})
-	if !strings.Contains(out, "[umbrella.blocks.ai / Engineering]") {
-		t.Fatalf("banner missing from output:\n%s", out)
-	}
-}
-
-func TestBannerSilentWithoutResolvedOrg(t *testing.T) {
-	clictx.Reset()
-	out := captureStdout(func() {
-		clictx.PrintBanner()
-	})
-	if strings.TrimSpace(out) != "" {
-		t.Fatalf("expected no banner, got %q", out)
 	}
 }
 

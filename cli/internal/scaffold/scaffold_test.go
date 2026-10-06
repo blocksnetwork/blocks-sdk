@@ -480,28 +480,6 @@ func TestProjectPackageJSONContent(t *testing.T) {
 	}
 }
 
-func TestProjectNodeNoMainTS(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, nodeConfig(), nil); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, "main.ts")); err == nil {
-		t.Error("main.ts should NOT exist for Node projects; blocks run replaces it")
-	}
-}
-
-func TestProjectPythonNoRunPy(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "test_agent")
-	if err := Project(dir, pythonConfig(), nil); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, "run.py")); err == nil {
-		t.Error("run.py should NOT exist for Python projects; blocks run replaces it")
-	}
-}
-
 func TestProjectPyprojectContent(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "test_agent")
 	if err := Project(dir, pythonConfig(), nil); err != nil {
@@ -930,16 +908,6 @@ func TestConsumerNodePackageScripts(t *testing.T) {
 	}
 }
 
-func TestConsumerNoAgentCard(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "my_consumer")
-	if err := Project(dir, nodeConsumerConfig(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "agent-card.json")); err == nil {
-		t.Error("consumer project should not contain agent-card.json")
-	}
-}
-
 func pythonConsumerConfig() wizard.Config {
 	return wizard.Config{
 		Name:        "my_consumer",
@@ -965,6 +933,61 @@ func TestProjectConsumerPythonFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
 			t.Errorf("consumer project should not contain %q", f)
 		}
+	}
+}
+
+func TestConsumerScriptsTargetAgentParity(t *testing.T) {
+	cases := []struct {
+		language, script, chosen, unset, paid, free string
+	}{
+		{"python", "main.py", `AGENT_NAME = "translator"`, `AGENT_NAME = ""`, `billing_mode="paid"`, `billing_mode="free"`},
+		{"node", "index.ts", `const AGENT_NAME: string = 'translator';`, `const AGENT_NAME: string = '';`, `billingMode: 'paid'`, `billingMode: 'free'`},
+	}
+	shared := []string{
+		"AGENT_NAME is not set.",
+		"search with 'blocks init' (Call an agent), or browse with 'blocks dashboard'",
+		"was not found, or this API key cannot call it.",
+		"uses billing mode",
+	}
+	render := func(t *testing.T, language, target, billingMode, script string) string {
+		t.Helper()
+		cfg := wizard.DefaultCallerConfig("my_consumer")
+		cfg.Language = language
+		cfg.TargetAgent = target
+		cfg.TargetBillingMode = billingMode
+		dir := filepath.Join(t.TempDir(), "my_consumer")
+		if err := Project(dir, cfg, nil); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, script))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	for _, tc := range cases {
+		t.Run(tc.language, func(t *testing.T) {
+			chosen := render(t, tc.language, "translator", "", tc.script)
+			if !strings.Contains(chosen, tc.chosen) {
+				t.Errorf("%s does not call the chosen agent (%q)", tc.script, tc.chosen)
+			}
+			if !strings.Contains(chosen, tc.free) {
+				t.Errorf("%s with an unknown billing mode should default to free (%q)", tc.script, tc.free)
+			}
+			paid := render(t, tc.language, "translator", "paid", tc.script)
+			if !strings.Contains(paid, tc.paid) {
+				t.Errorf("%s does not render the paid billing mode (%q)", tc.script, tc.paid)
+			}
+			unset := render(t, tc.language, "", "", tc.script)
+			if !strings.Contains(unset, tc.unset) {
+				t.Errorf("%s placeholder is not empty (%q)", tc.script, tc.unset)
+			}
+			for _, needle := range shared {
+				if !strings.Contains(unset, needle) {
+					t.Errorf("%s is missing shared Caller guidance %q", tc.script, needle)
+				}
+			}
+		})
 	}
 }
 

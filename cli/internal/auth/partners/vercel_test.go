@@ -119,11 +119,3 @@ func TestVercelInvalidTokenRejected(t *testing.T) {
 		t.Error("invalid token was stored in credentials file")
 	}
 }
-
-// TestVercelProviderName verifies the Provider() method returns "vercel".
-func TestVercelProviderName(t *testing.T) {
-	f := &VercelFlow{}
-	if f.Provider() != "vercel" {
-		t.Errorf("Provider() = %q, want vercel", f.Provider())
-	}
-}

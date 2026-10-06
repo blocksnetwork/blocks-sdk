@@ -26,6 +26,9 @@ For Node projects (detected by package.json): finds and runs local "blocks-run" 
 For Python projects (detected by pyproject.toml): uses venv walk-up with "python -m blocks_network"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd := mustCwd()
+		if err := callerProjectError(cwd, "blocks run"); err != nil {
+			return err
+		}
 
 		// Pre-check: surface a clear warning early if the user isn't logged in.
 		// The resolved key is injected into the delegated SDK process env by
@@ -33,6 +36,9 @@ For Python projects (detected by pyproject.toml): uses venv walk-up with "python
 		if _, err := loadCredentials(); err != nil {
 			// Non-fatal: allow run even without auth (may fail at registration)
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  The agent needs an API key to start: run 'blocks login' (blocks run then uses the key\n  stored in your CLI profile), or add %s=<key> to .env.\n", blocksAPIKeyEnv)
+		} else {
+			noteStoredCredential(os.Stderr)
 		}
 
 		cardPath := filepath.Join(cwd, "agent-card.json")

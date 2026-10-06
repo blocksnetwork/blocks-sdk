@@ -1,7 +1,7 @@
-"""{{.Name}} — Blocks Network consumer.
+"""{{.Name}} — a script that calls an agent.
 
-Sends a task to a target agent and prints progress, artifacts, and the
-terminal result.
+Sends a task to AGENT_NAME and prints progress, artifacts, and the terminal
+result.
 
 Usage:
     python main.py
@@ -17,37 +17,82 @@ import sys
 
 from dotenv import load_dotenv
 
+{{if .TargetAgent -}}
+# The agent this script calls, chosen when the project was created.
+AGENT_NAME = "{{.TargetAgent}}"
+{{- else -}}
+# The bare name of the agent this script calls (e.g. "translator"). To find
+# one, search with 'blocks init' (Call an agent), or browse with
+# 'blocks dashboard'.
+AGENT_NAME = ""
+{{- end}}
+
+if not AGENT_NAME:
+    print(
+        "AGENT_NAME is not set. Edit main.py and set it to an agent you can call: "
+        "search with 'blocks init' (Call an agent), or browse with 'blocks dashboard'.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 load_dotenv()
 
 api_key = os.environ.get("BLOCKS_API_KEY")
 if not api_key:
     print(
-        "BLOCKS_API_KEY not set. Run 'blocks login --write-env' "
-        "or set it in .env before running this script.",
+        "BLOCKS_API_KEY not set. This script runs without the Blocks CLI, so it cannot "
+        "use your 'blocks login' profile: run 'blocks login --write-env' to copy its key "
+        "into .env, or set BLOCKS_API_KEY in .env yourself.",
         file=sys.stderr,
     )
     sys.exit(1)
 
-from blocks_network import SendMessageRequestPart, TaskClient
+from blocks_network import BillingModeMismatchError, RpcError, SendMessageRequestPart, TaskClient
 
-# TODO: replace with an agent you have published (see 'blocks publish').
-AGENT_NAME = "my_target_agent"
+
+def is_agent_not_found(err: RpcError) -> bool:
+    data = err.data if isinstance(err.data, dict) else {}
+    return data.get("code") == "NotFound" or "not found" in err.rpc_message.lower()
+
+
+def describe_terminal(terminal) -> str:
+    detail = terminal.get("error") or terminal.get("reason")
+    return f"{terminal.state}: {detail}" if detail else str(terminal.state)
 
 
 def main() -> None:
-    # billing_mode selects the PubNub keyset for this deployment — a protocol
-    # detail, not a pricing choice. Leave it as "free".
-    client = TaskClient.create(billing_mode="free", api_key=api_key)
+    # billing_mode must match the agent's registered billing mode, or the task
+    # is rejected with BillingModeMismatch.
+    client = TaskClient.create(billing_mode="{{.CallerBillingMode}}", api_key=api_key)
 
-    session = client.send_message(
-        agent_name=AGENT_NAME,
-        request_parts=[SendMessageRequestPart(part_id="request", text="Hello from {{.Name}}!")],
-    )
+    try:
+        session = client.send_message(
+            agent_name=AGENT_NAME,
+            request_parts=[SendMessageRequestPart(part_id="request", text="Hello from {{.Name}}!")],
+        )
+    except BillingModeMismatchError as err:
+        client.destroy()
+        print(
+            f"Agent {AGENT_NAME!r} uses billing mode {err.expected!r}; "
+            f'set billing_mode="{err.expected}" in main.py.',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except RpcError as err:
+        client.destroy()
+        if not is_agent_not_found(err):
+            raise
+        print(
+            f"Agent {AGENT_NAME!r} was not found, or this API key cannot call it. "
+            "Check AGENT_NAME in main.py.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     print(f"Task created: {session.task_id}")
 
     def on_progress(event):
-        print("[progress]", event.get("message") or event.get("progress") or "")
+        print("[progress]", event.message or event.progress or "")
 
     def on_artifact(event):
         # Log arrival only; download happens after terminal so the list is authoritative.
@@ -60,7 +105,7 @@ def main() -> None:
 
     try:
         terminal = session.wait_for_terminal(timeout=60)
-        print("[done]", terminal)
+        print("[done]", describe_terminal(terminal))
     except TimeoutError:
         print("Timed out waiting for terminal event.", file=sys.stderr)
         session.close()
@@ -79,7 +124,6 @@ def main() -> None:
         client.destroy()
 
     if terminal.state != "completed":
-        print(f"Task ended in state {terminal.state!r}.", file=sys.stderr)
         sys.exit(1)
 
 

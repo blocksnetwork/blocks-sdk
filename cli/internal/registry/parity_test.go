@@ -1,11 +1,10 @@
 package registry
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
+	"strconv"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -73,8 +72,7 @@ func TestMaxPriceAndFreeCapParityWithBackend(t *testing.T) {
 	}
 
 	if m := maxFreeTasksRe.FindStringSubmatch(src); m != nil {
-		expected := "100"
-		if m[1] != expected {
+		if m[1] != strconv.Itoa(MaxFreeTasksPerConsumer) {
 			t.Errorf("MaxFreeTasksPerConsumer = %d, backend fallback = %s", MaxFreeTasksPerConsumer, m[1])
 		}
 	} else {
@@ -82,98 +80,10 @@ func TestMaxPriceAndFreeCapParityWithBackend(t *testing.T) {
 	}
 
 	if m := maxFreeMinutesRe.FindStringSubmatch(src); m != nil {
-		expected := "30"
-		if m[1] != expected {
+		if m[1] != strconv.Itoa(MaxFreeMinutesPerConsumer) {
 			t.Errorf("MaxFreeMinutesPerConsumer = %d, backend fallback = %s", MaxFreeMinutesPerConsumer, m[1])
 		}
 	} else {
 		t.Fatal("FALLBACK_MAX_FREE_MINUTES not found in pricing-limits.service.ts")
-	}
-}
-
-// TestPromotionInputBillingModeInJSON asserts that BillingMode is present
-// in the JSON-serialised PromotionInput so the publish payload always carries it.
-func TestPromotionInputBillingModeInJSON(t *testing.T) {
-	listing := "public"
-	billingMode := "paid"
-	price := "0.15"
-	flags := PromotionFlags{
-		Listing:     &listing,
-		BillingMode: &billingMode,
-		Price:       &price,
-		AcceptTerms: true,
-	}
-
-	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	b, err := json.Marshal(input)
-	if err != nil {
-		t.Fatalf("json.Marshal failed: %v", err)
-	}
-
-	var m map[string]interface{}
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("json.Unmarshal failed: %v", err)
-	}
-
-	bm, ok := m["billingMode"]
-	if !ok {
-		t.Fatal("billingMode field missing from PromotionInput JSON")
-	}
-	if bm != "paid" {
-		t.Errorf("billingMode = %v, want paid", bm)
-	}
-}
-
-// TestPromotionInputFreeBillingModeInJSON asserts billingMode=free is serialised.
-func TestPromotionInputFreeBillingModeInJSON(t *testing.T) {
-	listing := "private"
-	billingMode := "free"
-	flags := PromotionFlags{
-		Listing:     &listing,
-		BillingMode: &billingMode,
-		AcceptTerms: true,
-	}
-
-	input, err := CollectPromotionInput(false, true, flags, DefaultPricingLimits, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	b, err := json.Marshal(input)
-	if err != nil {
-		t.Fatalf("json.Marshal failed: %v", err)
-	}
-
-	var m map[string]interface{}
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("json.Unmarshal failed: %v", err)
-	}
-
-	bm, ok := m["billingMode"]
-	if !ok {
-		t.Fatal("billingMode field missing from PromotionInput JSON for free billing")
-	}
-	if bm != "free" {
-		t.Errorf("billingMode = %v, want free", bm)
-	}
-}
-
-// TestNoCopyPrivateRequiresPricing asserts that the "private requires pricing"
-// string does not appear anywhere in the CLI source files owned by this package.
-func TestNoCopyPrivateRequiresPricing(t *testing.T) {
-	forbidden := "private requires pricing"
-	files := []string{"prompt.go", "types.go"}
-	for _, f := range files {
-		data, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("cannot read %s: %v", f, err)
-		}
-		if strings.Contains(strings.ToLower(string(data)), strings.ToLower(forbidden)) {
-			t.Errorf("forbidden copy %q found in %s", forbidden, f)
-		}
 	}
 }

@@ -8,7 +8,29 @@ import (
 	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/branding"
+	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 	"github.com/shopspring/decimal"
+	"golang.org/x/term"
+)
+
+var stdinIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+var selectOption = wizard.InteractiveSelect
+
+// The highlight starts on the least exposing, non-charging choice (TestListingUsesArrowPickerInTerminal).
+const (
+	listingPublicIdx   = 0
+	listingPrivateIdx  = 1
+	billingFreeIdx     = 0
+	billingPaidIdx     = 1
+	listingQuestion    = "Who should be able to discover and use this agent?"
+	billingQuestion    = "How should usage be priced?"
+	listingPublicDesc  = "Public Agent   Visible and usable by everyone on "
+	listingPrivateDesc = "Private Agent  Visible and usable only by organizations you invite."
+	billingFreeDesc    = "Free Agent  No charge for any allowed consumer."
+	billingPaidDesc    = "Paid Agent  Set usage prices and accept the paid-agent terms."
 )
 
 const (
@@ -171,7 +193,7 @@ func validateExclusivePricingFlags(isDualKind bool, flags PromotionFlags) error 
 }
 
 // resolveListing settles agent visibility from the flag, else by prompt. Non-interactive
-// callers must supply it: there is no safe default between public and private.
+// callers must supply it: without a prompt there is no safe default between public and private.
 func resolveListing(flags PromotionFlags, nonInteractive bool, scanner *bufio.Scanner) (string, error) {
 	if flags.Listing != nil {
 		listing := *flags.Listing
@@ -187,8 +209,8 @@ func resolveListing(flags PromotionFlags, nonInteractive bool, scanner *bufio.Sc
 }
 
 // resolveBillingMode settles the billing mode from the flag, else by prompt. Like the
-// listing, it has no default — pricing does not imply a mode, and a mode guessed here
-// would decide whether the agent charges.
+// listing, non-interactive callers get no default — pricing does not imply a mode, and a
+// mode guessed here would decide whether the agent charges.
 func resolveBillingMode(flags PromotionFlags, nonInteractive bool, scanner *bufio.Scanner) (string, error) {
 	if flags.BillingMode != nil {
 		billingMode := *flags.BillingMode
@@ -335,8 +357,19 @@ func acceptPaidTerms(input *PromotionInput, flags PromotionFlags, nonInteractive
 }
 
 func promptListingSelection(scanner *bufio.Scanner) (string, error) {
+	if stdinIsTerminal() {
+		fmt.Println()
+		idx, err := selectOption(listingQuestion, []string{listingPublicDesc + branding.ProductName() + ".", listingPrivateDesc}, listingPrivateIdx, helpListingText())
+		if err != nil {
+			return "", err
+		}
+		if idx == listingPublicIdx {
+			return "public", nil
+		}
+		return "private", nil
+	}
 	for {
-		fmt.Println("\nWho should be able to discover and use this agent?")
+		fmt.Println("\n" + listingQuestion)
 		fmt.Println()
 		fmt.Println("  1. " + boldPrompt("Public Agent") + "   Visible and usable by everyone on " + branding.ProductName() + ".")
 		fmt.Println("  2. " + boldPrompt("Private Agent") + "  Visible and usable only by organizations you invite.")
@@ -347,7 +380,7 @@ func promptListingSelection(scanner *bufio.Scanner) (string, error) {
 			return "", fmt.Errorf("no input received")
 		}
 		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		if choice == "?" {
+		if wizard.IsHelpRequest(choice) {
 			fmt.Println(helpListingText())
 			fmt.Println()
 			continue
@@ -365,8 +398,19 @@ func promptListingSelection(scanner *bufio.Scanner) (string, error) {
 }
 
 func promptBillingMode(scanner *bufio.Scanner) (string, error) {
+	if stdinIsTerminal() {
+		fmt.Println()
+		idx, err := selectOption(billingQuestion, []string{billingFreeDesc, billingPaidDesc}, billingFreeIdx, helpBilling)
+		if err != nil {
+			return "", err
+		}
+		if idx == billingPaidIdx {
+			return "paid", nil
+		}
+		return "free", nil
+	}
 	for {
-		fmt.Println("\nHow should usage be priced?")
+		fmt.Println("\n" + billingQuestion)
 		fmt.Println()
 		fmt.Println("  1. " + boldPrompt("Free Agent") + "  No charge for any allowed consumer.")
 		fmt.Println("  2. " + boldPrompt("Paid Agent") + "  Set usage prices and accept the paid-agent terms.")
@@ -377,7 +421,7 @@ func promptBillingMode(scanner *bufio.Scanner) (string, error) {
 			return "", fmt.Errorf("no input received")
 		}
 		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		if choice == "?" {
+		if wizard.IsHelpRequest(choice) {
 			fmt.Println(helpBilling)
 			fmt.Println()
 			continue
@@ -546,7 +590,7 @@ func resolvePrice(prompt string, label string, genericFlag, specificFlag *string
 			return nil, nil
 		}
 		text := strings.TrimSpace(scanner.Text())
-		if text == "?" {
+		if wizard.IsHelpRequest(text) {
 			fmt.Println(helpText)
 			fmt.Println()
 			continue
@@ -605,7 +649,7 @@ func resolveFreeUnits(label string, genericFlag, specificFlag *int, max int, non
 			return nil, nil
 		}
 		text := strings.TrimSpace(scanner.Text())
-		if text == "?" {
+		if wizard.IsHelpRequest(text) {
 			fmt.Println(helpText)
 			fmt.Println()
 			continue
@@ -650,12 +694,12 @@ func promptAttestations(scanner *bufio.Scanner) error {
 
 	// First attestation: legal compliance
 	for {
-		fmt.Print("  " + boldPrompt("I attest this agent complies with applicable laws.") + " (y/N, ? for help): ")
+		fmt.Print("  " + boldPrompt("I attest this agent complies with applicable laws.") + " (y/n, ? for help): ")
 		if !scanner.Scan() {
 			return fmt.Errorf("no input received")
 		}
 		text := strings.TrimSpace(scanner.Text())
-		if text == "?" {
+		if wizard.IsHelpRequest(text) {
 			fmt.Println(helpAttestLaws)
 			fmt.Println()
 			continue
@@ -672,12 +716,12 @@ func promptAttestations(scanner *bufio.Scanner) error {
 
 	// Second attestation: platform terms
 	for {
-		fmt.Print("  " + boldPrompt("I accept the platform terms.") + " (y/N, ? for help): ")
+		fmt.Print("  " + boldPrompt("I accept the platform terms.") + " (y/n, ? for help): ")
 		if !scanner.Scan() {
 			return fmt.Errorf("no input received")
 		}
 		text := strings.TrimSpace(scanner.Text())
-		if text == "?" {
+		if wizard.IsHelpRequest(text) {
 			fmt.Println(helpAcceptTerms)
 			fmt.Println()
 			continue

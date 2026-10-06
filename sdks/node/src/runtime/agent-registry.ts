@@ -576,19 +576,16 @@ export async function fetchAgentsByListing(
 
 /**
  * Remove an agent from the registry.
+ *
+ * Authenticates with an API key — `BLOCKS_API_KEY` — and not with the agent's own
+ * runtime credential: removing an agent is a management action, and a runtime
+ * holds no management standing. Passing a runtime credential here answered 403.
  */
 export async function removeAgent(
   agentName: string,
-  options?: { baseUrl?: string; agentAuth?: AgentAuth },
+  options?: { baseUrl?: string },
 ): Promise<boolean> {
   const url = registryUrl({ agentName }, options?.baseUrl);
-
-  if (options?.agentAuth) {
-    const response = await withRetry(() =>
-      options.agentAuth!.authenticatedFetch(url, { method: 'DELETE' }),
-    );
-    return response.status !== 404;
-  }
 
   const afToken = getEnv('BLOCKS_API_KEY');
   const result = await withRetry(async () =>

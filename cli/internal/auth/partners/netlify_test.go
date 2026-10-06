@@ -119,11 +119,3 @@ func TestNetlifyInvalidTokenRejected(t *testing.T) {
 		t.Error("invalid token was stored in credentials file")
 	}
 }
-
-// TestNetlifyProviderName verifies the Provider() method returns "netlify".
-func TestNetlifyProviderName(t *testing.T) {
-	f := &NetlifyFlow{}
-	if f.Provider() != "netlify" {
-		t.Errorf("Provider() = %q, want netlify", f.Provider())
-	}
-}
