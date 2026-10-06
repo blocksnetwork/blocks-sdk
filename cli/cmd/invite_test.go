@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,14 +14,13 @@ import (
 
 // The invite commands talk to five endpoints, and the mocks in this file are the only
 // statement these tests make about what those endpoints return. A mock that answers a
-// body no deployment produces — one missing required properties, one carrying properties
-// the contract forbids, or a body at all where the contract is 204 with none — lets a
-// decoder start depending on a shape that cannot exist, with every test still green.
+// body no deployment produces — one missing required properties, or one carrying
+// properties the contract forbids — lets a decoder start depending on a shape that
+// cannot exist, with every test still green.
 //
 // So each success answer is built from a type mirroring the endpoint's published response
 // contract, and TestInviteFixturesMatchThePublishedResponseContracts holds the built bodies
-// to the required and permitted property sets those contracts declare — including that
-// grant revocation answers 204 with no body at all.
+// to the required and permitted property sets those contracts declare.
 // Most of the corrected properties are inert as far as the CLI is concerned — it decodes
 // `notified`, `inviteUrl`, `agentName` and the list/grant columns and ignores the rest —
 // so the fixtures are only worth correcting if something checks them, and that test is
@@ -110,11 +110,12 @@ type grantGranteeOrg struct {
 // grantListEntry mirrors one row of the grant list. Exactly one grantee is set: a grant
 // is either to a user or to an organization.
 type grantListEntry struct {
-	ID          string            `json:"id"`
-	Scope       string            `json:"scope"`
-	GranteeUser *grantGranteeUser `json:"granteeUser,omitempty"`
-	GranteeOrg  *grantGranteeOrg  `json:"granteeOrg,omitempty"`
-	CreatedAt   string            `json:"createdAt"`
+	ID           string            `json:"id"`
+	Scope        string            `json:"scope"`
+	GranteeUser  *grantGranteeUser `json:"granteeUser,omitempty"`
+	GranteeOrg   *grantGranteeOrg  `json:"granteeOrg,omitempty"`
+	GranteeOrgID *string           `json:"granteeOrgId"`
+	CreatedAt    string            `json:"createdAt"`
 }
 
 type grantListResponse struct {
@@ -203,8 +204,7 @@ func grantListBody(entries ...grantListEntry) []byte {
 	return mustMarshal(grantListResponse{Grants: entries})
 }
 
-// userGrant is the row the revoke flow matches on: it finds the grant whose grantee
-// email is the one asked for, then deletes that grant by id.
+// userGrant is a grant list row for a person.
 func userGrant(name, email string) grantListEntry {
 	return grantListEntry{
 		ID:          grantFixtureID,
@@ -214,27 +214,21 @@ func userGrant(name, email string) grantListEntry {
 	}
 }
 
-// writeGrantRevoked answers a revoke the way the deployment does: 204 with no body at
-// all. Every mock in this file that used to answer it with `{"status":"ok"}` described a
-// server that does not exist — the revoke controller sends 204 and sends nothing.
-func writeGrantRevoked(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusNoContent)
+func accessRevokedBody(grants, invitations int) []byte {
+	return mustMarshal(map[string]int{"grantsRevoked": grants, "invitationsCancelled": invitations})
 }
 
-// serveInviteEndpoints answers the three endpoints a send-then-revoke sequence touches,
-// each with the body (or the studied absence of one) its own contract specifies, and
-// appends every request line it saw to asked.
+// serveInviteEndpoints answers the endpoints a send-then-revoke sequence touches, each
+// with the body its own contract specifies, and appends every request line it saw to
+// asked.
 func serveInviteEndpoints(asked *[]string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if asked != nil {
 			*asked = append(*asked, r.Method+" "+r.URL.RequestURI())
 		}
 		switch {
-		case r.Method == http.MethodDelete:
-			writeGrantRevoked(w)
-		case strings.HasSuffix(r.URL.Path, "/grants"):
-			w.WriteHeader(http.StatusOK)
-			w.Write(grantListBody(userGrant("Alice", inviteFixtureEmail)))
+		case strings.HasSuffix(r.URL.Path, "/access/revoke"):
+			w.Write(accessRevokedBody(1, 0))
 		default:
 			writeInvitationCreated(w, "user", notified(1))
 		}
@@ -334,6 +328,14 @@ func TestInviteFixturesMatchThePublishedResponseContracts(t *testing.T) {
 		}, body["grant"])
 	})
 
+	t.Run("revoke", func(t *testing.T) {
+		assertObjectShape(t, objectShape{
+			what:      "POST /api/v1/agents/:agentName/access/revoke",
+			required:  []string{"grantsRevoked", "invitationsCancelled"},
+			permitted: []string{"grantsRevoked", "invitationsCancelled"},
+		}, accessRevokedBody(1, 0))
+	})
+
 	t.Run("grants", func(t *testing.T) {
 		body := assertObjectShape(t, objectShape{
 			what:     "GET /api/v1/agents/:agentName/grants",
@@ -346,7 +348,7 @@ func TestInviteFixturesMatchThePublishedResponseContracts(t *testing.T) {
 		for _, row := range rows {
 			grant := assertObjectShape(t, objectShape{
 				what:     "a grant list row",
-				required: []string{"id", "scope", "createdAt"},
+				required: []string{"id", "scope", "granteeOrgId", "createdAt"},
 			}, row)
 			assertObjectShape(t, objectShape{
 				what:     "a grant's user grantee",
@@ -354,38 +356,6 @@ func TestInviteFixturesMatchThePublishedResponseContracts(t *testing.T) {
 			}, grant["granteeUser"])
 		}
 	})
-}
-
-// The revoke endpoint answers 204 with no body, so the fixture for it is the absence of
-// one — which a JSON assertion cannot express. This drives the writer through a real
-// server and reads the response the CLI would get: the status the contract specifies,
-// and nothing to decode.
-func TestGrantRevokeFixtureAnswersTheNoContentContract(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeGrantRevoked(w)
-	}))
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/agents/my_agent/grants/"+grantFixtureID, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("revoke: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("status = %d, want %d — the revoke contract is No Content", resp.StatusCode, http.StatusNoContent)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if len(body) != 0 {
-		t.Errorf("body = %q, want none — a 204 carries no payload", body)
-	}
 }
 
 func resetInviteFlags() {
@@ -960,8 +930,7 @@ func TestInviteRefusesAnAgentNameThatCouldChooseTheEndpoint(t *testing.T) {
 }
 
 // The complement, so the refusal above cannot be satisfied by refusing everything:
-// an ordinary name still reaches exactly the documented paths, and revoke still
-// addresses the grant the deployment reported.
+// an ordinary name still reaches exactly the documented paths.
 func TestInviteAddressesTheDocumentedPathsForAnOrdinaryAgentName(t *testing.T) {
 	cleanup := setupFakeCredentials(t)
 	defer cleanup()
@@ -990,8 +959,7 @@ func TestInviteAddressesTheDocumentedPathsForAnOrdinaryAgentName(t *testing.T) {
 
 	want := []string{
 		"POST /api/v1/agents/my_agent/invitations",
-		"GET /api/v1/agents/my_agent/grants",
-		"DELETE /api/v1/agents/my_agent/grants/" + grantFixtureID,
+		"POST /api/v1/agents/my_agent/access/revoke",
 	}
 	if len(asked) != len(want) {
 		t.Fatalf("requests = %v, want %v", asked, want)
@@ -1000,5 +968,112 @@ func TestInviteAddressesTheDocumentedPathsForAnOrdinaryAgentName(t *testing.T) {
 		if asked[i] != w {
 			t.Errorf("request %d = %q, want %q", i, asked[i], w)
 		}
+	}
+}
+
+// Hex in UUID shape, but version 0, so the deployment's RFC 4122 check refuses it as an ID.
+const nonRFCUUID = "00000000-0000-0000-0000-000000000001"
+
+// An organization ID and a slug are different request fields; the wrong one matches nothing.
+func TestInviteRevokeNamesTheTargetAndReportsWhatWasWithdrawn(t *testing.T) {
+	cases := []struct {
+		name        string
+		flags       []string
+		notFound    string
+		rejectedAs  int
+		grants      int
+		invitations int
+		wantBodies  []map[string]string
+		wantOut     []string
+	}{
+		{
+			name:       "a person's access",
+			flags:      []string{"--email", "Typo@Example.com"},
+			grants:     1,
+			wantBodies: []map[string]string{{"email": "Typo@Example.com"}},
+			wantOut:    []string{"Access revoked for Typo@Example.com"},
+		},
+		{
+			name:        "an organization's pending invitations, by slug",
+			flags:       []string{"--org", "support"},
+			invitations: 2,
+			wantBodies:  []map[string]string{{"targetOrgSlug": "support"}},
+			wantOut:     []string{"2 pending invitations for org support cancelled"},
+		},
+		{
+			name:        "an organization's grant and invitation, by ID",
+			flags:       []string{"--org", orgFixtureID},
+			grants:      1,
+			invitations: 1,
+			wantBodies:  []map[string]string{{"targetOrgId": orgFixtureID}},
+			wantOut: []string{
+				"Access revoked for org " + orgFixtureID,
+				"Pending invitation for org " + orgFixtureID + " cancelled",
+			},
+		},
+		{
+			name:       "an organization whose slug looks like an ID",
+			flags:      []string{"--org", orgFixtureID},
+			notFound:   "targetOrgId",
+			grants:     1,
+			wantBodies: []map[string]string{{"targetOrgId": orgFixtureID}, {"targetOrgSlug": orgFixtureID}},
+			wantOut:    []string{"Access revoked for org " + orgFixtureID},
+		},
+		{
+			name:       "an organization whose slug looks like an ID but is not one",
+			flags:      []string{"--org", nonRFCUUID},
+			notFound:   "targetOrgId",
+			rejectedAs: http.StatusBadRequest,
+			grants:     1,
+			wantBodies: []map[string]string{{"targetOrgId": nonRFCUUID}, {"targetOrgSlug": nonRFCUUID}},
+			wantOut:    []string{"Access revoked for org " + nonRFCUUID},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := setupFakeCredentials(t)
+			defer cleanup()
+
+			var gotBodies []map[string]string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("request body: %v", err)
+				}
+				gotBodies = append(gotBodies, body)
+				if _, ok := body[tc.notFound]; ok {
+					status := tc.rejectedAs
+					if status == 0 {
+						status = http.StatusNotFound
+					}
+					w.WriteHeader(status)
+					w.Write([]byte(`{"error":"No grant or pending invitation found"}`))
+					return
+				}
+				w.Write(accessRevokedBody(tc.grants, tc.invitations))
+			}))
+			defer ts.Close()
+
+			t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+			resetInviteFlags()
+			t.Cleanup(resetInviteFlags)
+
+			var err error
+			out := captureStdout(func() {
+				rootCmd.SetArgs(append([]string{"invite", "revoke", "my_agent"}, tc.flags...))
+				err = rootCmd.Execute()
+			})
+			if err != nil {
+				t.Fatalf("invite revoke: %v", err)
+			}
+			if !reflect.DeepEqual(gotBodies, tc.wantBodies) {
+				t.Errorf("request bodies = %v, want %v", gotBodies, tc.wantBodies)
+			}
+			for _, want := range tc.wantOut {
+				if !strings.Contains(out, want) {
+					t.Errorf("output = %q, want it to contain %q", out, want)
+				}
+			}
+		})
 	}
 }

@@ -22,11 +22,10 @@ import (
 )
 
 const (
-	devScriptPath  = "/__blocks_embed_dev.js"
-	devSSEPath     = "/__blocks_dev_sse"
-	webDir         = "web"
-	indexHTML      = "index.html"
-	embedDevScript = "/__blocks_embed_dev.js"
+	devScriptPath = "/__blocks_embed_dev.js"
+	devSSEPath    = "/__blocks_dev_sse"
+	webDir        = "web"
+	indexHTML     = "index.html"
 )
 
 // Server is the local dev HTTP server for blocks dev.
@@ -65,16 +64,6 @@ func New(cfg Config) *Server {
 
 // Run starts the dev server and blocks until Ctrl-C or context cancellation.
 func (s *Server) Run(ctx context.Context) error {
-	return s.run(ctx, nil)
-}
-
-// RunWithAddrChan starts the dev server and sends the bound address on addrCh once listening.
-// Used by tests to determine the actual port when port == 0.
-func (s *Server) RunWithAddrChan(ctx context.Context, addrCh chan<- string) error {
-	return s.run(ctx, addrCh)
-}
-
-func (s *Server) run(ctx context.Context, addrCh chan<- string) error {
 	requestedPort := s.port
 	ln, boundPort, err := listenWithRetry(s.port, portRetryAttempts)
 	if err != nil {
@@ -86,11 +75,6 @@ func (s *Server) run(ctx context.Context, addrCh chan<- string) error {
 	}
 
 	origin := fmt.Sprintf("http://localhost:%d", s.port)
-
-	// Notify callers of the bound address (used by tests).
-	if addrCh != nil {
-		addrCh <- ln.Addr().String()
-	}
 
 	s.printBanner(origin)
 	s.warnIfDevScriptMissing()
@@ -350,10 +334,10 @@ func (s *Server) warnIfDevScriptMissing() {
 		// No index.html — nothing to warn about.
 		return
 	}
-	if !strings.Contains(string(data), embedDevScript) {
+	if !strings.Contains(string(data), devScriptPath) {
 		fmt.Fprintf(os.Stderr,
 			"Warning: %s does not reference %s — the page will not load the dev script.\n",
-			idxPath, embedDevScript,
+			idxPath, devScriptPath,
 		)
 	}
 }

@@ -50,7 +50,7 @@ blocks init my_agent_unique_name --language node
 cd my_agent_unique_name
 
 npm install
-blocks login --write-env
+blocks login      # stores your API key in your CLI profile; blocks run/register/publish use it
 blocks register   # private + free, the recommended first step
 blocks run
 # Later, to make the agent public or set pricing: blocks publish
@@ -65,7 +65,7 @@ cd my_consumer
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e . && pip install blocks-network --upgrade
-blocks login --write-env
+blocks login --write-env   # the script runs without the CLI, so it reads the key from .env
 # Edit main.py and set the target agent name.
 python main.py
 ```

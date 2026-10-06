@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -18,7 +19,6 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/config"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
-	"github.com/pubnub/blocks-sdk/cli/internal/suggest"
 	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
 	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 	"github.com/spf13/cobra"
@@ -44,7 +44,7 @@ func init() {
 	initCmd.Flags().StringVarP(&initMode, "mode", "m", "", "Project mode: provider (default), consumer, connect-agent, call-agent, or webapp")
 	initCmd.Flags().StringVarP(&initType, "type", "t", "", "Deprecated: use --mode")
 	_ = initCmd.Flags().MarkDeprecated("type", "use --mode instead")
-	initCmd.Flags().StringSliceVar(&initAgents, "agent", nil, "Bare agent name the page calls (repeatable; required with --mode webapp)")
+	initCmd.Flags().StringSliceVar(&initAgents, "agent", nil, "Bare agent name to call: the one agent a consumer script calls, or the agents a webapp page calls (repeatable; required with --mode webapp)")
 	initCmd.Flags().StringVar(&initBlocksBaseURL, "blocks-base-url", "",
 		fmt.Sprintf("Override the Blocks asset base URL; must be https (or http for loopback) (default: %s)", scaffold.DefaultAssetBaseURL))
 	initCmd.Flags().StringVar(&initBackendURL, "backend-url", "", "Backend API origin the deployed page calls at runtime (default: BLOCKS_BACKEND_URL, else active profile URL, else the build-time default, else the asset base URL)")
@@ -54,27 +54,41 @@ func init() {
 
 var initCmd = &cobra.Command{
 	Use:   "init [name]",
-	Short: "Scaffold a new agent, consumer, or webapp project",
+	Short: "Scaffold a project that calls agents, an agent, or a web app",
 	Long: `Create a new Blocks project.
 
-Run 'blocks init' with no arguments in a terminal to launch the interactive
-wizard: it first asks whether you're building an agent or a web app, then walks
-you through the rest (for a web app, you search for and pick the agents the page
-will call). Pass a name and/or flags to skip the wizard.
+Run 'blocks init' in a terminal to launch the interactive wizard. It first asks
+what you want to do:
 
-  --mode provider (default): an agent handler project with handler.{ts,py},
-    trigger.{ts,py}, and agent-card.json. Deploy with 'blocks publish' and
-    run with 'blocks run'.
+  Call an agent on the network         a script that calls an existing agent
+  Build an agent that others can call  an agent handler project
+  Build a web app that calls agents    a static page wired to existing agents
 
-  --mode consumer: a script that calls other agents via TaskClient. Produces
-    index.ts (Node) or main.py (Python). Run directly (npm run start /
-    python main.py) after setting BLOCKS_API_KEY in .env.
+then asks only the questions that path needs. Calling an agent and building a
+web app both search the registry for the agents to call.
+
+  --mode consumer (alias call-agent): call an agent. Produces a script that
+    calls one agent with TaskClient: main.py (Python) or index.ts (Node).
+    Pass --agent <name> to choose the agent; without it the script explains
+    how to pick one. Run the script directly (python main.py / npm run start);
+    'blocks run' and 'blocks publish' are for agent projects. This is the
+    non-interactive Caller path:
+      blocks init my_caller --mode consumer --agent <name> --yes
+
+  --mode provider (default; alias connect-agent): build an agent. Produces
+    handler.{ts,py}, trigger.{ts,py}, and agent-card.json. Start it with
+    'blocks run' and register it with 'blocks register' or 'blocks publish'.
 
   --mode webapp --agent <name> [--agent <name2> ...]: scaffold a static page
     pre-wired with the Blocks embed-auth widget for the named agent(s). The
     generator fetches each agent's card from the registry and emits per-agent
     input/output/stream wiring code. --agent is repeatable or comma-separated.
-    Webapp scaffolds require a positional [name] for the project directory.`,
+    Webapp scaffolds require a positional [name] for the project directory.
+
+Without a terminal (piped or closed stdin, CI), init does not prompt. Pass the
+name as the first argument and choose the rest with flags, for example
+'blocks init my_agent --mode provider --language node --yes'. Anything not set
+by a flag takes its default. --no-input makes any prompt an error instead.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var nameFromArgs string
@@ -108,15 +122,17 @@ will call). Pass a name and/or flags to skip the wizard.
 			return runWebapp(cmd.Context(), nameFromArgs)
 		}
 
-		// Reject --agent on non-webapp modes (it has no meaning there).
-		if len(initAgents) > 0 {
-			return fmt.Errorf("--agent is only valid with --mode webapp")
-		}
-
 		if initMode != "" {
-			if _, ok := wizard.NormalizeMode(initMode); !ok && initMode != "webapp" {
+			canonical, ok := wizard.NormalizeMode(initMode)
+			if !ok {
 				return fmt.Errorf("invalid --mode %q — must be one of: provider, consumer, connect-agent, call-agent, webapp", initMode)
 			}
+			initMode = canonical
+		}
+
+		targetAgent, err := callerAgentFromFlag()
+		if err != nil {
+			return err
 		}
 
 		// Determine if we should run non-interactively. --no-input counts as
@@ -125,28 +141,51 @@ will call). Pass a name and/or flags to skip the wizard.
 		// answer the wizard collects has a default except the name, which is
 		// reported below as an error naming the argument that supplies it.
 		nonInteractive := initYes || !interactiveSession()
+		if nonInteractive && !initYes && !noInputMode {
+			printInitNotPrompting()
+		}
 
-		// Interactive `blocks init` with no mode and no name: offer the
-		// top-level choice between an agent project and a web app. A given
-		// name or an explicit --mode keeps the historical agent behavior.
-		if isTTY() && !nonInteractive && initMode == "" && nameFromArgs == "" {
+		// Asked even when a name is given, so a Caller is never asked for an agent name.
+		introShown := false
+		if isTTY() && !nonInteractive && initMode == "" {
 			fmt.Printf("Creating a project for %s.\n", clictx.TargetName())
 			if !authenticatedForTarget() && !clictx.Enterprise() {
 				fmt.Println("  For a Blocks Enterprise deployment, run `blocks login <your-instance>` first.")
 			}
-			fmt.Println()
+			printPromptIntro()
+			introShown = true
 			kind, err := wizard.SelectProjectKind()
 			if err != nil {
 				return err
 			}
-			if kind == wizard.ProjectKindWebapp {
-				return runWebappWizard(cmd.Context())
+			switch kind {
+			case wizard.ProjectKindWebapp:
+				return runWebappWizard(cmd.Context(), nameFromArgs)
+			case wizard.ProjectKindCaller:
+				initMode = "consumer"
+			default:
+				initMode = "provider"
 			}
-			// Agent: fall through to the agent wizard below.
 		}
 
+		if initLanguage != "" && initLanguage != "node" && initLanguage != "python" {
+			return fmt.Errorf("unsupported language %q (use \"node\" or \"python\")", initLanguage)
+		}
+
+		caller := initMode == "consumer"
 		var cfg wizard.Config
-		if nonInteractive {
+		switch {
+		case nonInteractive && caller:
+			if nameFromArgs == "" {
+				return fmt.Errorf("project name is required in non-interactive mode — pass it as the first argument\nUsage: blocks init <name> --mode consumer [--agent <agent>] --yes")
+			}
+			if err := wizard.ValidateCallerProjectName(nameFromArgs); err != nil {
+				return err
+			}
+			cfg = wizard.DefaultCallerConfig(nameFromArgs)
+			cfg.TargetAgent = targetAgent
+			cfg.TargetBillingMode = lookupBillingMode(cmd.Context(), callerLookupClient(), targetAgent)
+		case nonInteractive:
 			if nameFromArgs == "" {
 				return fmt.Errorf("agent name is required in non-interactive mode — pass it as the first argument\nUsage: blocks init <name> [--yes]")
 			}
@@ -154,32 +193,21 @@ will call). Pass a name and/or flags to skip the wizard.
 				return err
 			}
 			cfg = wizard.DefaultConfig(nameFromArgs)
-			if initLanguage == "node" || initLanguage == "python" {
-				cfg.Language = initLanguage
-			} else if initLanguage != "" {
-				return fmt.Errorf("unsupported language %q (use \"node\" or \"python\")", initLanguage)
+		default:
+			if !introShown {
+				printPromptIntro()
 			}
-			if initMode != "" {
-				canonical, _ := wizard.NormalizeMode(initMode)
-				cfg.Mode = canonical
-				if canonical == "consumer" {
-					// DefaultConfig seeds Description with "<name> agent"; for
-					// consumers the interactive wizard rewrites it to "<name>
-					// consumer" (wizard.go), so mirror that here or the leak
-					// shows up in the scaffolded pyproject.toml.
-					cfg.Description = cfg.Name + " consumer"
-				}
+			if caller {
+				cfg, err = runCallerWizard(cmd.Context(), nameFromArgs, targetAgent)
+			} else {
+				cfg, err = wizard.Run(nameFromArgs, initLanguage)
 			}
-		} else {
-			// Validate --language flag before starting the wizard
-			if initLanguage != "" && initLanguage != "node" && initLanguage != "python" {
-				return fmt.Errorf("unsupported language %q (use \"node\" or \"python\")", initLanguage)
-			}
-			var err error
-			cfg, err = wizard.Run(nameFromArgs, initLanguage, initMode)
 			if err != nil {
 				return err
 			}
+		}
+		if nonInteractive && initLanguage != "" {
+			cfg.Language = initLanguage
 		}
 
 		dir := filepath.Join(mustCwd(), cfg.Name)
@@ -193,7 +221,7 @@ will call). Pass a name and/or flags to skip the wizard.
 			return err
 		}
 
-		if !nonInteractive {
+		if !nonInteractive && !caller {
 			fmt.Printf("\n  This will create ./%s/ with your %s project files.\n", cfg.Name, cfg.Language)
 			if err := confirmScaffold(); err != nil {
 				return err
@@ -206,6 +234,9 @@ will call). Pass a name and/or flags to skip the wizard.
 		pinScaffoldEnvToActiveDeployment(dir, pin)
 
 		printNextSteps(cfg)
+		if cfg.TargetAgent != "" && cfg.TargetBillingMode == "" {
+			fmt.Fprintf(os.Stderr, "  Note: could not look up %s's billing mode; the script assumes free and will say what to set if the agent is paid.\n", cfg.TargetAgent)
+		}
 		return nil
 	},
 }
@@ -264,10 +295,30 @@ func confirmScaffold() error {
 	if noInputMode {
 		return fmt.Errorf("cannot ask whether to continue with --no-input — pass --yes")
 	}
-	if !confirmYesNo(os.Stdin, "  Continue? (Y/n): ") {
+	ok, err := wizard.Confirm(bufio.NewReader(os.Stdin), "  Continue?", true, helpConfirmScaffold)
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return fmt.Errorf("canceled")
 	}
 	return nil
+}
+
+const helpLoginOffer = "  Yes, or Enter, opens the browser to log in, so the agent search also shows\n" +
+	"  private agents your account can access. No continues with public agents only."
+
+const helpConfirmScaffold = "  Yes, or Enter, writes the project files into the directory named above.\n" +
+	"  No cancels without writing anything; run 'blocks init' again to start over."
+
+func printPromptIntro() {
+	fmt.Println()
+	fmt.Println(wizard.PromptIntro)
+	fmt.Println()
+}
+
+func printInitNotPrompting() {
+	fmt.Fprintln(os.Stderr, "stdin is not a terminal, so blocks init is not prompting. Options not set by a flag use their defaults; see 'blocks init --help'.")
 }
 
 // maxAgentsPerWebapp caps how many agents a single webapp page may wire up.
@@ -312,7 +363,8 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 		if initYes || noInputMode || !isTTY() {
 			return fmt.Errorf("--mode webapp requires at least one --agent")
 		}
-		return runWebappWizard(ctx)
+		printPromptIntro()
+		return runWebappWizard(ctx, nameFromArgs)
 	}
 
 	// Flag-driven path: validate every agent name before any network call.
@@ -487,10 +539,85 @@ func authenticatedForTarget() bool {
 	return clictx.EffectiveCredential().Key != ""
 }
 
+func callerAgentFromFlag() (string, error) {
+	if len(initAgents) == 0 {
+		return "", nil
+	}
+	if initMode != "consumer" {
+		return "", fmt.Errorf("--agent is only valid with --mode webapp or --mode consumer")
+	}
+	if len(initAgents) > 1 {
+		return "", fmt.Errorf("--mode consumer calls one agent; pass --agent once")
+	}
+	name := initAgents[0]
+	if !initAgentNameRe.MatchString(name) {
+		return "", fmt.Errorf("use the bare agent name (e.g. 'translator'), not the namespaced form (e.g. 'acme/translator'); got %q", name)
+	}
+	return name, nil
+}
+
+func runCallerWizard(ctx context.Context, nameFromArgs, agentFromFlag string) (wizard.Config, error) {
+	opts := wizard.CallerOptions{Name: nameFromArgs, Language: initLanguage, Agent: agentFromFlag}
+	var client *blocksapi.Client
+	if agentFromFlag == "" {
+		access, err := resolveCardAccess()
+		if err != nil {
+			return wizard.Config{}, err
+		}
+		if access.backendURL != "" {
+			if access.apiKey, err = ensureOrOfferBlocksLogin(ctx, access); err != nil {
+				return wizard.Config{}, err
+			}
+			client = blocksapi.NewClient(access.backendURL, access.apiKey)
+			opts.Suggest = makeAgentSuggestFn(client)
+			opts.Validate = makeAgentValidateFn(ctx, client)
+		} else {
+			opts.Validate = func(value string, _ bool) error { return wizard.ValidateAgentName(value) }
+		}
+	} else {
+		client = callerLookupClient()
+	}
+	cfg, err := wizard.RunCaller(ctx, opts)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.TargetBillingMode = lookupBillingMode(ctx, client, cfg.TargetAgent)
+	return cfg, nil
+}
+
+// callerLookupClient builds a registry client for a Caller whose agent came from --agent,
+// or nil when no backend is configured offline: --agent must keep working without one,
+// and a CDM round-trip must not stall a non-interactive run.
+func callerLookupClient() *blocksapi.Client {
+	if resolveBackendURLOffline() == "" {
+		return nil
+	}
+	access, err := resolveCardAccess()
+	if err != nil || access.backendURL == "" {
+		return nil
+	}
+	return blocksapi.NewClient(access.backendURL, access.apiKey)
+}
+
+// lookupBillingMode returns agent's registered billingMode, or "" when it cannot be
+// learned; the scaffold then renders "free" (wizard.Config.CallerBillingMode).
+func lookupBillingMode(ctx context.Context, client *blocksapi.Client, agent string) string {
+	if client == nil || agent == "" {
+		return ""
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, cardValidateTimeout)
+	defer cancel()
+	card, err := cardfetch.Fetch(lookupCtx, client, agent)
+	if err != nil {
+		return ""
+	}
+	return card.BillingMode
+}
+
 // runWebappWizard runs the interactive webapp wizard: it offers login (so
 // private agents appear in suggestions), collects a project name + agent list
 // via the type-ahead autocomplete, then scaffolds.
-func runWebappWizard(ctx context.Context) error {
+func runWebappWizard(ctx context.Context, nameFromArgs string) error {
 	if err := validateWebappURLFlags(); err != nil {
 		return err
 	}
@@ -522,7 +649,7 @@ func runWebappWizard(ctx context.Context) error {
 	}
 	client := blocksapi.NewClient(access.backendURL, access.apiKey)
 
-	cfg, err := wizard.RunWebapp(ctx, makeAgentSuggestFn(client), makeAgentValidateFn(ctx, client))
+	cfg, err := wizard.RunWebapp(ctx, nameFromArgs, makeAgentSuggestFn(client), makeAgentValidateFn(ctx, client))
 	if err != nil {
 		return err
 	}
@@ -655,21 +782,6 @@ func assertPrivateAgentsShareOneOrg(cards []*cardfetch.AgentCard) error {
 	return webappMultiOrgPrivateAgentsError(groups)
 }
 
-// makeAgentSuggestFn adapts the suggest client to the wizard's SuggestFunc.
-func makeAgentSuggestFn(client *blocksapi.Client) wizard.SuggestFunc {
-	return func(ctx context.Context, q string) ([]wizard.Suggestion, error) {
-		results, err := suggest.Agents(ctx, client, q)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]wizard.Suggestion, 0, len(results))
-		for _, r := range results {
-			out = append(out, wizard.Suggestion{Value: r.AgentName, Label: r.DisplayName})
-		}
-		return out, nil
-	}
-}
-
 // cardValidateTimeout bounds the Enter-time lookup, which runs inside the
 // raw-mode event loop where a stall would leave Ctrl+C queued behind it. A var
 // so tests can shrink it; see TestMakeAgentValidateFn_StalledLookupIsBounded.
@@ -702,9 +814,9 @@ func makeAgentValidateFn(ctx context.Context, client *blocksapi.Client) wizard.A
 			if errors.Is(err, cardfetch.ErrAgentNotFound) {
 				deployment := originHost(client.BaseURL)
 				if clictx.Enterprise() && deployment != "" {
-					return fmt.Errorf("agent %q not found on %s — check spelling, or verify it is registered on this deployment", value, termsafe.Text(deployment))
+					return fmt.Errorf("agent %q not found on %s — to use a search result, pick it with ↑↓ first, or type the full agent name", value, termsafe.Text(deployment))
 				}
-				return fmt.Errorf("agent %q not found — check the spelling (if it is a private agent your account can access, cancel with Esc and log in first)", value)
+				return fmt.Errorf("agent %q not found — to use a search result, pick it with ↑↓ first, or type the full agent name (private agents appear only after you log in)", value)
 			}
 			return nil // degrade: scaffold fetch surfaces real failures
 		}
@@ -741,19 +853,12 @@ func ensureOrOfferBlocksLogin(ctx context.Context, access cardAccess) (string, e
 	if !isTTY() {
 		return "", nil
 	}
-	fmt.Println("You're not logged in — only public agents will appear in suggestions.")
-	fmt.Print("  Log in now to access your private agents? (Y/n): ")
-
-	// Use shared scanner instead of private one
-	line, ok, noInputRequested := readStdinLine()
-	if noInputRequested {
+	if noInputMode {
 		return "", fmt.Errorf("cannot ask whether to log in with --no-input — run 'blocks login' first, or pass --agent to scaffold public agents without the wizard")
 	}
-	if !ok {
-		return "", nil
-	}
-	ans := strings.TrimSpace(strings.ToLower(line))
-	if ans == "n" || ans == "no" {
+	fmt.Println("You're not logged in — only public agents will appear in suggestions.")
+	login, answered := wizard.AskYesNo(readStdinAnswer, "  Log in now to access your private agents?", true, helpLoginOffer)
+	if !answered || !login {
 		return "", nil
 	}
 	out, err := loginToProfile(ctx, deploymentChoice{instanceURL: "", explicitNetwork: false})
@@ -764,22 +869,12 @@ func ensureOrOfferBlocksLogin(ctx context.Context, access cardAccess) (string, e
 	return out.apiKey, nil
 }
 
-// isInteractive reports whether stdin is a terminal. It is a var so tests
-// can exercise interactive-only paths.
+// isInteractive decides whether a command may prompt at all. Same check as isTTY, kept separate so tests can fake one without the other.
 var isInteractive = func() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-// isTTY reports whether stdin is a real terminal. Unlike isInteractive (which
-// uses the looser ModeCharDevice check and is true for /dev/null), this gates
-// the prompts that actually read keystrokes — the wizard entry points — so a
-// non-terminal stdin (pipes, /dev/null under `go test`) never launches an
-// interactive loop that would spin on EOF. It is a var so tests can exercise
-// TTY-only paths.
+// isTTY gates the wizard entry points, so a non-terminal stdin never starts a prompt loop that spins on EOF.
 var isTTY = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
@@ -790,31 +885,15 @@ func printNextSteps(cfg wizard.Config) {
 		lang = "Node"
 	}
 
-	role := "agent"
 	if cfg.Mode == "consumer" {
-		role = "consumer"
-	}
-
-	fmt.Printf("\n  %s %s '%s' created!\n\n", lang, role, cfg.Name)
-	fmt.Println("  Next steps:")
-	fmt.Printf("    cd %s\n", cfg.Name)
-
-	if cfg.Language == "node" {
-		fmt.Println("    npm install")
-	} else {
-		fmt.Println("    pip install -e . && pip install blocks-network --upgrade")
-	}
-
-	if cfg.Mode == "consumer" {
-		fmt.Println("    # 1. Set BLOCKS_API_KEY in .env  (or run 'blocks login --write-env')")
-		fmt.Println("    # 2. Edit the script and set the target agent name")
-		if cfg.Language == "node" {
-			fmt.Println("    npm run start")
-		} else {
-			fmt.Println("    python main.py")
-		}
+		printCallerNextSteps(cfg, lang)
 		return
 	}
+
+	fmt.Printf("\n  %s agent '%s' created!\n\n", lang, cfg.Name)
+	fmt.Println("  Next steps:")
+	fmt.Printf("    cd %s\n", cfg.Name)
+	printInstallStep(cfg.Language)
 
 	// Print login line only if not already logged in.
 	//
@@ -852,6 +931,45 @@ func printNextSteps(cfg wizard.Config) {
 	} else {
 		fmt.Println("    blocks publish            # later: make the agent public or set pricing")
 	}
+}
+
+func printInstallStep(language string) {
+	if language == "node" {
+		fmt.Println("    npm install")
+	} else {
+		fmt.Println("    pip install -e . && pip install blocks-network --upgrade")
+	}
+}
+
+// The target agent may come from the registry, so it is printed only in a comment, never in a command line.
+func printCallerNextSteps(cfg wizard.Config, lang string) {
+	script, runCmd := callerScript(cfg.Language)
+
+	fmt.Printf("\n  %s project '%s' created: a script that calls agents.\n\n", lang, cfg.Name)
+	fmt.Println("  Next steps:")
+	fmt.Printf("    cd %s\n", cfg.Name)
+	printInstallStep(cfg.Language)
+	fmt.Println("    # Set BLOCKS_API_KEY in .env  (or run 'blocks login --write-env')")
+	if cfg.TargetAgent == "" {
+		fmt.Printf("    # Set AGENT_NAME in %s to an agent you can call:\n", script)
+		fmt.Printf("    # %s\n", callerDiscoveryHint)
+		fmt.Printf("    %s\n", runCmd)
+	} else {
+		fmt.Printf("    %-26s# calls %s\n", runCmd, cfg.TargetAgent)
+	}
+	fmt.Println()
+	fmt.Println("  This project calls agents; it is not one. 'blocks run', 'check', 'register'")
+	fmt.Println("  and 'publish' are for agent projects, so run the script directly.")
+}
+
+// The scaffolded scripts repeat this wording; see TestConsumerScriptsTargetAgentParity.
+const callerDiscoveryHint = "search with 'blocks init' (Call an agent), or browse with 'blocks dashboard'"
+
+func callerScript(language string) (script, runCmd string) {
+	if language == "node" {
+		return "index.ts", "npm run start"
+	}
+	return "main.py", "python main.py"
 }
 
 // printWebappResolvedURLs surfaces the two URLs the scaffold froze in, so a

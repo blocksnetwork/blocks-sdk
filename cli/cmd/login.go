@@ -34,6 +34,8 @@ var loginProvider string
 var loginNoWriteEnv bool
 var loginDir string
 var loginNetwork bool
+var loginNoBrowser bool
+var loginOrg string
 
 // Shared stdin scanner to avoid buffered input conflicts when multiple
 // prompts need to read from stdin during login flow.
@@ -70,7 +72,14 @@ func readStdinLine() (string, bool, bool) {
 	return strings.TrimSpace(stdinScanner.Text()), true, false
 }
 
+// readStdinAnswer feeds wizard.AskYesNo from the shared scanner; callers refuse --no-input before asking.
+func readStdinAnswer() (string, bool) {
+	line, ok, _ := readStdinLine()
+	return line, ok
+}
+
 func init() {
+	auth.SelectOption = wizard.InteractiveSelect
 	rootCmd.AddCommand(loginCmd)
 	loginCmd.Flags().StringVar(&loginApiKey, "api-key", "", "Use a pre-obtained API key")
 	loginCmd.Flags().BoolVar(&loginApiKeyStdin, "api-key-stdin", false, "Read API key from stdin")
@@ -79,7 +88,11 @@ func init() {
 	loginCmd.Flags().BoolVar(&loginNoWriteEnv, "no-write-env", false, "Skip writing credentials to the project .env and skip the prompt")
 	loginCmd.Flags().StringVar(&loginDir, "dir", "", "Directory to write .env into (default: current directory)")
 	loginCmd.Flags().BoolVar(&loginNetwork, "network", false, "Target Blocks Network (for an Enterprise deployment, pass its URL or short name as an argument instead)")
+	loginCmd.Flags().BoolVar(&loginNoBrowser, "no-browser", false, "Do not open a browser: print the login URL and paste back the address the browser lands on (SSH, containers, remote machines)")
+	loginCmd.Flags().StringVar(&loginOrg, "org", "", "Organization to create the API key in, by id or name (skips the organization prompt)")
 	loginCmd.MarkFlagsMutuallyExclusive("write-env", "no-write-env")
+	loginCmd.MarkFlagsMutuallyExclusive("org", "api-key")
+	loginCmd.MarkFlagsMutuallyExclusive("org", "api-key-stdin")
 }
 
 var loginCmd = &cobra.Command{
@@ -111,11 +124,29 @@ Deployment targeting:
   blocks login acme                        Authenticate against an Enterprise instance (short name)
   blocks login https://blocks.acme.com     Authenticate against an Enterprise instance (custom domain)
 
-Non-interactive usage (CI / automation):
+Browser login:
+  blocks login opens the login page in your browser and says whether it could.
+  When no browser can be opened (SSH session, no display, missing opener) or you
+  pass --no-browser, it prints the URL and manual steps instead: open the URL on
+  any device, sign in, then paste the address the browser lands on (a 127.0.0.1
+  page that may fail to load) back into the terminal. Without a terminal, or with
+  --no-input, a login that cannot open a browser fails at once rather than wait.
+
+  blocks login --no-browser --org <id>     Log in from a browser on another device
+
+Non-interactive usage (CI / automation, AI agents):
+  export BLOCKS_API_KEY=<key>              Every command uses it; no login required
+  blocks login --api-key-stdin --no-write-env < key.txt
+                                           Store a dashboard key in the profile
   blocks login --api-key <key> --write-env --dir ./my_agent
   blocks login https://blocks.acme.com --no-write-env
   blocks login https://blocks.acme.com --profile acme
-  blocks login --network --write-env`,
+  blocks login --network --write-env
+
+Where credentials live:
+  ~/.config/blocks/contexts.json ($XDG_CONFIG_HOME/blocks/contexts.json if set).
+  Used by run, register, publish; BLOCKS_API_KEY in .env or the environment wins.
+  Inspect: blocks whoami · Remove: blocks logout, blocks profile remove <name>`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -188,6 +219,7 @@ func runBlocksLogin(ctx context.Context, choice deploymentChoice) error {
 	// from the store, so neither is text this CLI wrote.
 	fmt.Printf("✓ Logged in to %s (profile: %s)\n", termsafe.Text(out.targetName), termsafe.Text(out.profileName))
 	fmt.Printf("  API key: %s\n", registry.MaskAPIKey(out.apiKey))
+	fmt.Printf("  Stored in: %s\n", profileStoreDisplayPath())
 	return maybeWriteEnv(out.apiKey, choice)
 }
 
@@ -646,7 +678,11 @@ func loginToProfile(ctx context.Context, choice deploymentChoice) (out loginOutc
 		}
 	}
 
-	minted, apiKey, err := ensureCredentials(ctx, backendURL, clientID, supplied)
+	minted, apiKey, err := ensureCredentials(ctx, backendURL, clientID, supplied, auth.LoginOptions{
+		NoBrowser: loginNoBrowser,
+		NoInput:   noInputMode,
+		Org:       loginOrg,
+	})
 	if err != nil {
 		return loginOutcome{}, fmt.Errorf("login failed: %w", err)
 	}
@@ -1565,16 +1601,13 @@ func shouldWriteEnv() (bool, error) {
 	if !isInteractive() {
 		return false, nil
 	}
-	fmt.Print("  Write credentials to project .env? (Y/n): ")
-	// The --no-input signal readStdinLine reports is already handled above, so this
-	// read can only be a real one.
-	line, ok, _ := readStdinLine()
-	if !ok {
+	write, answered := wizard.AskYesNo(readStdinAnswer, "  Write credentials to project .env?", true, helpWriteEnv)
+	if !answered {
 		return true, nil
 	}
-	ans := strings.ToLower(line)
-	if ans == "" {
-		return true, nil
-	}
-	return ans != "n" && ans != "no", nil
+	return write, nil
 }
+
+const helpWriteEnv = "  Yes, or Enter, saves the new API key and deployment URL to .env in this\n" +
+	"  directory for scripts you run without the CLI. 'blocks run', 'register' and\n" +
+	"  'publish' already use the key stored in your profile. No leaves .env untouched."

@@ -410,6 +410,54 @@ describe('Agent Registry (unit)', () => {
     });
   });
 
+  describe('removeAgent (REST)', () => {
+    let fetchSpy: ReturnType<typeof vi.fn>;
+    const originalFetch = globalThis.fetch;
+    const originalKey = process.env.BLOCKS_API_KEY;
+
+    beforeEach(() => {
+      fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env.BLOCKS_API_KEY;
+      else process.env.BLOCKS_API_KEY = originalKey;
+    });
+
+    // Removing an agent is a management action and a runtime holds no management
+    // standing, so the credential has to be an API key. It used to accept an
+    // AgentAuth and DELETE with the agent's own runtime token, which now answers 403.
+    it('deletes with the API key credential', async () => {
+      process.env.BLOCKS_API_KEY = 'bk_test_key';
+      fetchSpy.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ agentName: 'acme-echo', status: 'deleted' }),
+      });
+
+      await expect(
+        removeAgent('acme-echo', { baseUrl: TEST_BASE_URL }),
+      ).resolves.toBe(true);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0];
+      expect(url).toBe(`${TEST_BASE_URL}/api/v1/registry/agents?agentName=acme-echo`);
+      expect(init.method).toBe('DELETE');
+      expect(new Headers(init.headers).get('Authorization')).toBe('Bearer bk_test_key');
+    });
+
+    it('reports a missing agent as not removed', async () => {
+      process.env.BLOCKS_API_KEY = 'bk_test_key';
+      fetchSpy.mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) });
+
+      await expect(
+        removeAgent('missing-agent', { baseUrl: TEST_BASE_URL }),
+      ).resolves.toBe(false);
+    });
+  });
+
   describe('getAgent (REST)', () => {
     let fetchSpy: ReturnType<typeof vi.fn>;
     const originalFetch = globalThis.fetch;
@@ -721,46 +769,5 @@ describe('Agent Registry (unit)', () => {
       expect(url).toContain('listing=private');
     });
 
-  });
-
-  describe('removeAgent (REST)', () => {
-    let fetchSpy: ReturnType<typeof vi.fn>;
-    const originalFetch = globalThis.fetch;
-
-    beforeEach(() => {
-      fetchSpy = vi.fn();
-      globalThis.fetch = fetchSpy;
-    });
-
-    afterEach(() => {
-      globalThis.fetch = originalFetch;
-    });
-
-    it('sends DELETE request and returns true on success', async () => {
-      fetchSpy.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ agentName: 'acme-echo', status: 'deleted', ts: Date.now() }),
-      });
-
-      const result = await removeAgent('acme-echo', { baseUrl: TEST_BASE_URL });
-
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchSpy.mock.calls[0];
-      expect(url).toBe(`${TEST_BASE_URL}/api/v1/registry/agents?agentName=acme-echo`);
-      expect(init.method).toBe('DELETE');
-      expect(result).toBe(true);
-    });
-
-    it('returns false on 404', async () => {
-      fetchSpy.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: async () => ({ code: 'NotFound', message: 'Agent not found' }),
-      });
-
-      const result = await removeAgent('nonexistent', { baseUrl: TEST_BASE_URL });
-      expect(result).toBe(false);
-    });
   });
 });

@@ -294,7 +294,7 @@ client.destroy();
 
 **sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `stream` (request-task streaming opt-in — `true` requests streaming, `false` suppresses it; omitted uses the server default, now no-streaming, so pass `true` to stream; ignored for pipe; resolved `hasStream` still requires agent capability), `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
 
-**TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId`); set to `'provider'` when the caller is the agent owner viewing a received task. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
+**TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId` and that the caller still holds `agent:submit-task` in the task's billed org; embedded sessions, and a submitter with no membership in that org, are exempt from the permission check); set to `'provider'` when the caller is the agent owner viewing a received task. Embedded sessions and agent runtime credentials are refused the provider role, on their own agents too. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
 
 **TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`, `isClosed` (getter; `true` after `close()` / `asyncClose()` runs). Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onCancelRequested(cb: (e: CancelRequestedEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)`, `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `null` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
 
@@ -324,7 +324,7 @@ client.destroy();
 | `BillingModeMismatchError` | `TaskClient.sendMessage`, `TaskClient.connect` | The `billingMode` passed to `TaskClient.create()` does not match the target agent's registered mode. Carries `expected` / `got`. |
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminalState` and `.streamId`. |
-| `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`process.exit(1)`). Transient connect failures (network, 5xx, `404 not-published`) are NOT fatal and do not block startup. |
+| `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`process.exit(1)`). Non-fatal connect failures (network, 5xx, `404 not-published`, and the `403 PermissionDenied` a public agent answers when the key owner may not run it) do not block startup: the process stays up without a control subscription until restarted with a credential that stands. |
 
 ---
 
@@ -567,7 +567,12 @@ const providerSession = await client.connect({
 - Requires JWT-based auth (`apiKey`, `tokenEndpoint`, or `tokenProvider`
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.
 - `role` defaults to `'consumer'` (task submitter — server checks
-  `userId === task.ownerId`). Set to `'provider'` when the caller owns
+  `userId === task.ownerId` and that the caller still holds
+  `agent:submit-task` in the task's billed org; embedded sessions, and a
+  submitter with no membership in that org, are exempt from the permission
+  check). An API key or agent credential works here only when it was
+  issued for the task's billed org, and for `'provider'` only when it was
+  issued for the agent's org. Set to `'provider'` when the caller owns
   the agent that received the task. Provider-role access follows the same rule as the Dashboard's
   received-tasks view: the agent's owner is always admitted. Otherwise
   the agent's org must match the active org resolved from the session
@@ -578,7 +583,8 @@ const providerSession = await client.connect({
   bypass / membership on the agent's org. For a private agent,
   membership alone is not enough: a non-admin must also hold an agent-
   management permission in the owning org and have been invited to the
-  agent.
+  agent. Embedded sessions and agent runtime credentials are refused the
+  provider role outright, on their own agents too.
 - Terminal tasks: preloads events/artifacts/streams from history, no live events
 - Active tasks: preloads history, then subscribes from cursor (no gap)
 
@@ -671,10 +677,10 @@ Accepted by every command, before or after the subcommand:
   for a deploy plugin's declared `credentialEnvVar` — an environment variable.
   Coverage is **not** universal, so it is not a guarantee that a command cannot
   block: the flag's own help text (`blocks --help`), which tracks the code, is
-  the current list. The only gaps are the organization picker the browser login
-  shows for a multi-organization account (skip it with `--api-key` /
-  `--api-key-stdin`; nothing else answers it) and the token prompt for
-  `blocks login --provider cloudflare|vercel|netlify`. `blocks deploy` reads no
+  the current list. The only gap is the token prompt for
+  `blocks login --provider cloudflare|vercel|netlify`; the organization picker
+  the browser login shows for a multi-organization account is answered by
+  `--org <id or name>`. `blocks deploy` reads no
   stdin under the flag, though not every read there becomes an error: a missing
   deploy target falls back to the positional argument or `deployTarget` in
   `blocks.config.json`, and the post-deploy agent-card question is skipped with a
@@ -747,6 +753,7 @@ They affect that login process only.
 ```bash
 blocks init <name> --yes --language node                  # Provider scaffold (handler + agent-card.json)
 blocks init <name> --yes --language node --mode consumer  # Consumer scaffold (index.ts using TaskClient)
+blocks search <query> --json                              # Find agents you can call; agentName is the name to call
 ```
 
 `blocks init` defaults `--mode provider`. Consumer projects produce
@@ -763,12 +770,23 @@ blocks login https://blocks.acme.com --write-env       # Enterprise custom domai
 blocks login https://blocks.acme.com --profile acme    # Store it under a custom profile name
 blocks login --write-env --dir ./x  # Write .env to a specific directory
 blocks login --no-write-env         # Authenticate without touching .env (skips prompt)
+blocks login --no-browser           # No browser here (SSH/container): open the URL elsewhere, paste the result back
+blocks login --org <id-or-name>     # Pick the organization for a multi-org account without a prompt
 blocks login --api-key "$KEY" --write-env       # Skip browser flow with a pre-issued key
 echo "$KEY" | blocks login --api-key-stdin --write-env  # Read key from stdin
-blocks whoami                       # Print org, key id, expiry
-blocks whoami --json                # Structured: org_name, org_id, key_id, expires_at, days_remaining, expired
+blocks whoami                       # Print org, key id, expiry, where the key is stored, and any .env/env key that outranks it
+blocks whoami --json                # Structured: org_name, org_id, key_id, expires_at, days_remaining, expired, credentials_path, key_override
 blocks logout                       # Clear the profile's cached keys + remove BLOCKS_API_KEY from .env
 ```
+
+`blocks run`, `blocks register` and `blocks publish` use the key stored in the
+active profile when neither `.env` nor the environment sets `BLOCKS_API_KEY`,
+and say so on stderr -- `--write-env` is only needed for scripts run without the
+CLI (trigger, consumer) or to give a project its own key. A login that cannot
+open a browser (SSH, no display, `--no-browser`) prints the URL and accepts the
+pasted redirect address on a terminal; without one, or under `--no-input`, it
+fails at once -- in agent/CI sessions export `BLOCKS_API_KEY` or use
+`--api-key-stdin` instead.
 
 `blocks login` prompts in a TTY for: which deployment to target (skipped once the
 question is settled -- by any completed login, including one to Blocks Network,
@@ -904,6 +922,9 @@ was logged into, the profile's cached dashboard origin is skipped so the
 link follows `BLOCKS_BACKEND_URL`. Export the env var to target
 staging / a worktree / a self-hosted deployment. `blocks check`
 validates JSON schema **and** the file referenced by `runtime.handler`.
+When you are logged in it also compares the card with the version
+registered on the deployment and warns about fields that differ; the
+comparison never fails the check.
 
 ### Manage private-agent grants (`blocks invite`)
 
@@ -917,8 +938,8 @@ blocks invite send <agentName> --email user@example.com   # invite a specific us
 blocks invite send <agentName> --org consumer-org-slug    # invite an entire consumer org
 blocks invite list <agentName>                            # list unaccepted invitations, including expired
 blocks invite grants <agentName>                          # list active grants (users + orgs)
-blocks invite revoke <agentName> --email user@example.com # revoke a user grant
-blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org grant
+blocks invite revoke <agentName> --email user@example.com # revoke a user's access and pending invitations
+blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org's access and pending invitations
 blocks invite accept <token>                              # consumer-side: accept an invitation token
 ```
 

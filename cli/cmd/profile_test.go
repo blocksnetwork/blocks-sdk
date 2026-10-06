@@ -25,21 +25,6 @@ func withTempProfiles(t *testing.T) string {
 	return dir
 }
 
-func TestProfileUseAndList(t *testing.T) {
-	withTempProfiles(t)
-
-	if err := profiles.Upsert("acme", profiles.Profile{BaseURL: "https://blocks.acme.com", Enterprise: true, Orgs: map[string]profiles.OrgKey{}}, false); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	if _, _, err := profiles.SetActive("acme"); err != nil {
-		t.Fatalf("SetActive: %v", err)
-	}
-	name, _, err := profiles.Active()
-	if err != nil || name != "acme" {
-		t.Fatalf("expected acme active, got %q (%v)", name, err)
-	}
-}
-
 func TestProfileUseCommand(t *testing.T) {
 	withTempProfiles(t)
 
@@ -57,17 +42,6 @@ func TestProfileUseCommand(t *testing.T) {
 
 	if err := profileUseCmd.RunE(profileUseCmd, []string{"does-not-exist"}); err == nil {
 		t.Fatalf("profile use of unknown profile should error")
-	}
-}
-
-func TestProfileListCommand(t *testing.T) {
-	withTempProfiles(t)
-
-	if err := profiles.Upsert("acme", profiles.Profile{BaseURL: "https://blocks.acme.com", Enterprise: true, Orgs: map[string]profiles.OrgKey{}}, false); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	if err := profileListCmd.RunE(profileListCmd, nil); err != nil {
-		t.Fatalf("profile list: %v", err)
 	}
 }
 

@@ -1,7 +1,7 @@
-blocks
+/blocks
 dist/
 npm/cli-*/blocks
 npm/cli-*/blocks.exe
 *.test
-cli
-blocks-test
+/cli
+/blocks-test

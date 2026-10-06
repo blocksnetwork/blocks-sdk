@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -214,7 +215,11 @@ func runDeploy(ctx context.Context, target string) error {
 			return errors.New(divergenceNoInputError)
 		}
 		if isTTY() {
-			if !confirmYesNo(os.Stdin, "  Continue deploying anyway? (Y/n): ") {
+			ok, err := wizard.Confirm(bufio.NewReader(os.Stdin), "  Continue deploying anyway?", true, helpContinueDivergentDeploy)
+			if err != nil {
+				return err
+			}
+			if !ok {
 				return fmt.Errorf("canceled")
 			}
 		}
@@ -253,7 +258,11 @@ func runDeploy(ctx context.Context, target string) error {
 				// explicit confirmation before anything leaves the machine.
 				// A positional target confirms nothing: it names the target in
 				// the invocation itself.
-				if !confirmYesNo(os.Stdin, fmt.Sprintf("  Deploy web/ to %s? (Y/n): ", selected)) {
+				ok, err := wizard.Confirm(bufio.NewReader(os.Stdin), fmt.Sprintf("  Deploy web/ to %s?", selected), true, helpConfirmDeployTarget)
+				if err != nil {
+					return err
+				}
+				if !ok {
 					return fmt.Errorf("canceled")
 				}
 				target = selected
@@ -429,3 +438,9 @@ func readLineFromStdin(prompt string) (string, error) {
 	}
 	return line, nil
 }
+
+const helpContinueDivergentDeploy = "  Yes, or Enter, deploys the bundle as built; the page keeps calling the backend it was built for.\n" +
+	"  No cancels without uploading anything."
+
+const helpConfirmDeployTarget = "  Yes, or Enter, uploads web/ to the target named above.\n" +
+	"  No cancels without uploading anything."

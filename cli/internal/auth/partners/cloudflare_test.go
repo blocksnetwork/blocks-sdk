@@ -119,11 +119,3 @@ func TestCloudflareInvalidTokenRejected(t *testing.T) {
 		t.Error("invalid token was stored in credentials file")
 	}
 }
-
-// TestCloudflareProviderName verifies the Provider() method returns "cloudflare".
-func TestCloudflareProviderName(t *testing.T) {
-	f := &CloudflareFlow{}
-	if f.Provider() != "cloudflare" {
-		t.Errorf("Provider() = %q, want cloudflare", f.Provider())
-	}
-}

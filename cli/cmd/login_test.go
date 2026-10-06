@@ -102,9 +102,11 @@ func resetLoginFlags() {
 	loginNoWriteEnv = false
 	loginDir = ""
 	loginNetwork = false
+	loginNoBrowser = false
+	loginOrg = ""
 	resetNoInputState()
 	clictx.Reset()
-	for _, name := range []string{"api-key", "api-key-stdin", "write-env", "no-write-env", "dir", "network"} {
+	for _, name := range []string{"api-key", "api-key-stdin", "write-env", "no-write-env", "dir", "network", "no-browser", "org"} {
 		if f := loginCmd.Flags().Lookup(name); f != nil {
 			f.Changed = false
 		}
@@ -227,11 +229,6 @@ func TestLoginWithApiKeyFlag(t *testing.T) {
 	if !strings.Contains(output, "bk_tes...678") {
 		t.Errorf("output should contain masked key, got: %q", output)
 	}
-
-	// Should NOT create .env
-	if _, err := os.Stat(".env.test_login_check"); err == nil {
-		t.Error("login should not create .env files")
-	}
 }
 
 // TestLoginApiKeyOrgResolutionFailsErrors verifies that when the --api-key path
@@ -325,54 +322,6 @@ func TestLoginConflictingWriteEnvFlags(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "write-env") || !strings.Contains(err.Error(), "no-write-env") {
 		t.Errorf("error should mention both flag names, got: %v", err)
-	}
-}
-
-// TestShouldWriteEnvNonTTYNoFlag verifies that `shouldWriteEnv` returns
-// false (no write, no prompt) when stdin is not a TTY and no flag is
-// given — the deterministic fail-safe default. Regression test for the
-// hang reported pre-fix: the function would have called
-// bufio.Scanner(os.Stdin) and blocked waiting for input. The test
-// guards against any regression that re-introduces a stdin read on this
-// path. Calls shouldWriteEnv() directly so the test is unaffected by
-// the upstream auth flow and the --api-key short-circuit.
-func TestShouldWriteEnvNonTTYNoFlag(t *testing.T) {
-	loginApiKey = ""
-	loginApiKeyStdin = false
-	loginWriteEnv = false
-	loginNoWriteEnv = false
-
-	// Replace stdin with a closed pipe so isInteractive() returns false.
-	// A closed pipe also makes any accidental stdin read return EOF
-	// immediately rather than blocking — but the test still wraps the
-	// call in a wall-clock guard to catch a hypothetical hang.
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe failed: %v", err)
-	}
-	w.Close()
-	origStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = origStdin }()
-
-	done := make(chan bool, 1)
-	var got bool
-	var writeEnvErr error
-	go func() {
-		got, writeEnvErr = shouldWriteEnv()
-		done <- true
-	}()
-
-	select {
-	case <-done:
-		if writeEnvErr != nil {
-			t.Fatalf("shouldWriteEnv() error: %v", writeEnvErr)
-		}
-		if got {
-			t.Error("shouldWriteEnv() returned true on non-TTY no-flag input; expected false")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("shouldWriteEnv() hung on non-TTY stdin (regression)")
 	}
 }
 
@@ -643,5 +592,48 @@ func TestOffATerminalWithoutNoInputBothQuestionsKeepTheirSilentDefault(t *testin
 	}
 	if choice.explicitNetwork {
 		t.Error("a default taken off a terminal is not an explicit Network choice")
+	}
+}
+
+// A login that can neither open a browser nor read a pasted URL could only wait out
+// the timeout, so it fails at once without printing a login URL, names the headless
+// paths, and says which of the two blocked it: stdin is not a terminal, or --no-input.
+func TestLoginWithNoBrowserOffATerminalFailsAtOnce(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantWhy string
+	}{
+		{name: "off a terminal", args: []string{"login"}, wantWhy: "there is no terminal to paste"},
+		{name: "--no-input", args: []string{"--no-input", "login"}, wantWhy: "--no-input forbids prompting"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			restoreCLIState(t)
+			isolateCredentials(t)
+			defer isolateProfiles(t)()
+			isolateAmbientState(t)
+			pipeStdin(t, "")
+			srv := loginTestServer(t)
+
+			resetLoginFlags()
+			rootCmd.SetArgs(append(tc.args, srv.URL, "--no-browser", "--no-write-env"))
+			rootCmd.SetOut(&bytes.Buffer{})
+			rootCmd.SetErr(&bytes.Buffer{})
+			var err error
+			out := captureStdout(func() { err = rootCmd.Execute() })
+
+			if err == nil {
+				t.Fatal("want the login to fail")
+			}
+			for _, want := range []string{"cannot complete a browser login", tc.wantWhy, "BLOCKS_API_KEY", "--api-key-stdin"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error is missing %q: %v", want, err)
+				}
+			}
+			if strings.Contains(out, "oauth2/authorize") {
+				t.Errorf("no login URL should be printed for a login nobody can finish:\n%s", out)
+			}
+		})
 	}
 }

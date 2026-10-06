@@ -200,7 +200,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 **send_message(\*, agent_name, request_parts, ...)** -- all keyword-only. `owner_id` is auto-populated from auth (optional override). Optional: `idempotency_key`, `task_kind` (`"request"`|`"pipe"`), `duration`, `consumer_public_key`, `stream` (request-task streaming opt-in — `True` requests streaming, `False` suppresses it; omitted uses the server default, now no-streaming, so pass `True` to stream; ignored for pipe; resolved `has_stream` still requires agent capability), `push_notification_config`, `retry_policy`, `auto_drain`, `drain_window_s` (default 30.0; overrides the per-session auto-drain window for already-open streams). Returns `TaskSession`.
 
-**TaskClient.connect(task_id, auto_drain=True, drain_window_s=None, role="consumer")** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`. `role` defaults to `"consumer"` (task submitter — server checks `user_id == task.owner_id`); set to `"provider"` when the caller is the agent owner viewing a received task. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
+**TaskClient.connect(task_id, auto_drain=True, drain_window_s=None, role="consumer")** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`. `role` defaults to `"consumer"` (task submitter — server checks `user_id == task.owner_id` and that the caller still holds `agent:submit-task` in the task's billed org; embedded sessions, and a submitter with no membership in that org, are exempt from the permission check); set to `"provider"` when the caller is the agent owner viewing a received task. Embedded sessions and agent runtime credentials are refused the provider role, on their own agents too. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
 
 **TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_cancel_requested(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_artifacts()`, `download_artifact(ref)`, `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `None` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
 
@@ -232,7 +232,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 | `BillingModeMismatchError` | `TaskClient.send_message`, `TaskClient.connect` | The `billing_mode` passed to `TaskClient.create()` does not match the target agent's registered mode. Carries `expected` / `got`. |
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminal_state` and `.stream_id`. |
-| `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`os._exit(1)` from the connect thread). Transient connect failures (network, 5xx, `404 not-published`) are NOT fatal and do not block startup. |
+| `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`os._exit(1)` from the connect thread). Non-fatal connect failures (network, 5xx, `404 not-published`, and the `403 PermissionDenied` a public agent answers when the key owner may not run it) do not block startup: the process stays up without a control subscription until restarted with a credential that stands. |
 | `FileUploadError` | `presigned_upload_flow` | Presign rejection or object-storage upload failure. Carries the original cause. |
 
 ---
@@ -460,8 +460,13 @@ provider_session = client.connect(task_id="task-abc-123", role="provider")
 
 - Requires JWT-based auth (`api_key`, `token_endpoint`, or `token_provider`
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.
-- `role` defaults to `"consumer"` (task submitter). Set to `"provider"`
-  when the caller owns the agent that received the task.
+- `role` defaults to `"consumer"` (task submitter, holding
+  `agent:submit-task` in the task's billed org unless it is an embedded
+  session or holds no membership there). An API key or agent credential
+  works here only when it was issued for the task's billed org, and for
+  `"provider"` only when it was issued for the agent's org. Set to
+  `"provider"` when the caller owns the agent that received the task; embedded
+  sessions and agent runtime credentials are refused that role.
 - Terminal tasks: preloads events/artifacts/streams from history, no live events
 - Active tasks: preloads history, then subscribes from cursor (no gap)
 
@@ -548,6 +553,7 @@ and `--no-input` flags; the Python-specific entry points are below.
 ```bash
 blocks init <name> --yes --language python                  # Provider scaffold (handler.py + agent-card.json)
 blocks init <name> --yes --language python --mode consumer  # Consumer scaffold (main.py using TaskClient)
+blocks search <query> --json                                # Find agents you can call; agentName is the name to call
 ```
 
 `blocks init` defaults `--mode provider`. Consumer projects produce
@@ -563,12 +569,23 @@ blocks login https://blocks.acme.com --write-env       # Enterprise custom domai
 blocks login https://blocks.acme.com --profile acme    # Store it under a custom profile name
 blocks login --write-env --dir ./x  # Write .env to a specific directory
 blocks login --no-write-env         # Authenticate without touching .env
+blocks login --no-browser           # No browser here (SSH/container): open the URL elsewhere, paste the result back
+blocks login --org <id-or-name>     # Pick the organization for a multi-org account without a prompt
 blocks login --api-key "$KEY" --write-env       # Skip browser flow with a pre-issued key
 echo "$KEY" | blocks login --api-key-stdin --write-env
-blocks whoami                       # Print org, key id, expiry
-blocks whoami --json                # Structured output (org_name, org_id, key_id, expires_at, days_remaining, expired)
+blocks whoami                       # Print org, key id, expiry, where the key is stored, and any .env/env key that outranks it
+blocks whoami --json                # Structured output (org_name, org_id, key_id, expires_at, days_remaining, expired, credentials_path, key_override)
 blocks logout                       # Clear the profile's cached keys + remove BLOCKS_API_KEY from .env
 ```
+
+`blocks run`, `blocks register` and `blocks publish` use the key stored in the
+active profile when neither `.env` nor the environment sets `BLOCKS_API_KEY`,
+and say so on stderr -- `--write-env` is only needed for scripts run without the
+CLI (trigger, consumer) or to give a project its own key. A login that cannot
+open a browser (SSH, no display, `--no-browser`) prints the URL and accepts the
+pasted redirect address on a terminal; without one, or under `--no-input`, it
+fails at once -- in agent/CI sessions export `BLOCKS_API_KEY` or use
+`--api-key-stdin` instead.
 
 `blocks login` prompts in a TTY for: which deployment to target (skipped once
 the question is settled -- by any completed login, including one to Blocks
@@ -704,7 +721,9 @@ blocks dashboard <agent-name>                 # Override the agent name (default
 
 `blocks check` validates the JSON schema **and** the file referenced
 by `runtime.handler` -- a missing handler produces `[FAIL]` even when
-the JSON is valid. `blocks dashboard` resolves the dashboard URL from
+the JSON is valid. When you are logged in it also compares the card with the version
+registered on the deployment and warns about fields that differ; the
+comparison never fails the check. `blocks dashboard` resolves the dashboard URL from
 `BLOCKS_APP_BASE_URL` / `BLOCKS_DASHBOARD_URL` (or the active profile's
 dashboard origin) if set, otherwise from the active deployment
 (`BLOCKS_BACKEND_URL`, the active profile's backend, or the CDM config),
@@ -724,8 +743,8 @@ blocks invite send <agentName> --email user@example.com   # invite a specific us
 blocks invite send <agentName> --org consumer-org-slug    # invite an entire consumer org
 blocks invite list <agentName>                            # list unaccepted invitations, including expired
 blocks invite grants <agentName>                          # list active grants
-blocks invite revoke <agentName> --email user@example.com # revoke a user grant
-blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org grant
+blocks invite revoke <agentName> --email user@example.com # revoke a user's access and pending invitations
+blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org's access and pending invitations
 blocks invite accept <token>                              # consumer-side: accept an invitation token
 ```
 

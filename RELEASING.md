@@ -66,16 +66,16 @@ git tag cli-npm-v0.2.0     && git push origin cli-npm-v0.2.0
    - windows/amd64
    - freebsd/amd64, freebsd/arm64
    - openbsd/amd64, openbsd/arm64
-2. Creates a GitHub Release with the archives, checksums, and install
-   scripts (every platform above is included as a tarball/zip)
+2. Creates a GitHub Release with the archives and checksums (every
+   platform above is included as a tarball/zip)
 
 ### CLI public npm (`cli-npm-v*`)
 
-Cross-compiles and publishes only the seven npm-supported targets
+Cross-compiles and publishes the nine npm-supported targets
 (darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64,
-freebsd/arm64, freebsd/amd64) to npmjs.org. No GitHub Release is
-created on this path. OpenBSD users install via the `cli-v*` Release
-archives, not via npm.
+freebsd/arm64, freebsd/amd64, openbsd/arm64, openbsd/amd64) to
+npmjs.org, one platform package each plus the `@blocks-network/cli`
+wrapper. No GitHub Release is created on this path.
 
 ## Version safety
 
@@ -138,4 +138,5 @@ domain would expand `blocks login acme` to the unusable `https://acme.`.
 Both CLI build paths are written so that an unset *or* empty value falls
 back to the default: `cli/.goreleaser.yaml` wraps the lookup in a
 `with`/`else` block, and the npm workflow appends the ldflag only when the
-value is non-empty. `cli/tests/goreleaser_test.sh` asserts this.
+value is non-empty, and every release checks the domain it bakes in against
+the CLI's own DNS-suffix rule before building.

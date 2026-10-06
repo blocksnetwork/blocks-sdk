@@ -1,13 +1,23 @@
 """Trigger a task on the {{.Name}} agent and print the result."""
 
 import base64
+import sys
 import threading
 
 from blocks_network import SendMessageRequestPart, create_task_client
 
 
 def main():
-    client = create_task_client()
+    try:
+        client = create_task_client()
+    except KeyError:
+        print(
+            "BLOCKS_API_KEY not set. This script runs without the Blocks CLI, so it cannot "
+            "use your 'blocks login' profile: run 'blocks login --write-env' to copy its key "
+            "into .env, or set BLOCKS_API_KEY in .env yourself.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     session = client.send_message(
         agent_name="{{.Name}}",

@@ -34,10 +34,11 @@ type Suggestion struct {
 	Label string
 }
 
-// SuggestFunc returns candidate suggestions for a partial query. It is called
-// off the render loop in its own goroutine; a nil/empty result or an error
-// simply means "no suggestions" (the widget degrades to free-text entry).
+// SuggestFunc runs off the render loop; an error's text is shown as the reason there are no suggestions.
 type SuggestFunc func(ctx context.Context, query string) ([]Suggestion, error)
+
+// EmptyHintFunc returns the line shown when a query matched nothing, or "" for none.
+type EmptyHintFunc func(query string) string
 
 // --- Key decoding (pure, testable) -----------------------------------------
 
@@ -49,6 +50,8 @@ const (
 	acBackspace
 	acUp
 	acDown
+	acLeft
+	acRight
 	acEnter
 	acEsc
 	acCtrlC
@@ -122,6 +125,10 @@ func (ri *rawInput) decodeLoop(in <-chan byte) {
 				ri.events <- acEvent{kind: acUp}
 			case 'B':
 				ri.events <- acEvent{kind: acDown}
+			case 'C':
+				ri.events <- acEvent{kind: acRight}
+			case 'D':
+				ri.events <- acEvent{kind: acLeft}
 			default:
 				ri.events <- acEvent{kind: acIgnore}
 			}
@@ -140,6 +147,7 @@ type acModel struct {
 	input       []rune
 	suggestions []Suggestion
 	highlight   int
+	status      string
 }
 
 func newACModel() *acModel { return &acModel{highlight: -1} }
@@ -149,6 +157,7 @@ func (m *acModel) query() string { return string(m.input) }
 func (m *acModel) insert(r rune) {
 	m.input = append(m.input, r)
 	m.highlight = -1
+	m.status = ""
 }
 
 func (m *acModel) backspace() {
@@ -156,6 +165,7 @@ func (m *acModel) backspace() {
 		m.input = m.input[:len(m.input)-1]
 	}
 	m.highlight = -1
+	m.status = ""
 }
 
 func (m *acModel) moveDown() {
@@ -173,7 +183,7 @@ func (m *acModel) moveUp() {
 // setResults applies suggestions for query q, dropping them if the user has
 // since edited the buffer (stale response). The highlight is clamped so it
 // never dangles past the new list.
-func (m *acModel) setResults(q string, s []Suggestion) {
+func (m *acModel) setResults(q string, s []Suggestion, status string) {
 	if q != m.query() {
 		return
 	}
@@ -181,6 +191,7 @@ func (m *acModel) setResults(q string, s []Suggestion) {
 		s = s[:maxVisibleSuggestions]
 	}
 	m.suggestions = s
+	m.status = status
 	if m.highlight >= len(s) {
 		m.highlight = len(s) - 1
 	}
@@ -260,6 +271,18 @@ func (ri *rawInput) restoreAndExit() {
 type queryResult struct {
 	query string
 	sugg  []Suggestion
+	err   error
+}
+
+func resultStatus(res queryResult, emptyHint EmptyHintFunc) string {
+	switch {
+	case res.err != nil:
+		return res.err.Error()
+	case len(res.sugg) == 0 && emptyHint != nil:
+		return emptyHint(res.query)
+	default:
+		return ""
+	}
 }
 
 // autocomplete runs the type-ahead prompt for a single value. It debounces
@@ -267,8 +290,9 @@ type queryResult struct {
 // Enter accepts the highlighted suggestion or the typed text (validated via
 // validate, which is told whether the value came from the suggestion list —
 // a list-picked name needs no existence check, the registry vouched for it).
-// Esc cancels (ErrCanceled); Ctrl+C exits the process.
-func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest SuggestFunc, validate func(value string, fromSuggestion bool) error) (string, error) {
+// ? prints helpText instead of being typed: agent names cannot contain it.
+// Esc cancels (ErrCanceled); Ctrl+C exits the process. emptyHint may be nil.
+func (ri *rawInput) autocomplete(ctx context.Context, prompt, helpText string, suggest SuggestFunc, validate func(value string, fromSuggestion bool) error, emptyHint EmptyHintFunc) (string, error) {
 	m := newACModel()
 	resultCh := make(chan queryResult, 1)
 	// querySeq tags each fired query so an in-flight query whose result arrives
@@ -286,9 +310,6 @@ func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest Sug
 		seq := querySeq.Add(1)
 		go func() {
 			s, err := suggest(ctx, q)
-			if err != nil {
-				return // silent degrade — free-text entry still works
-			}
 			if querySeq.Load() != seq {
 				return // superseded by a newer query
 			}
@@ -300,7 +321,7 @@ func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest Sug
 			default:
 			}
 			select {
-			case resultCh <- queryResult{query: q, sugg: s}:
+			case resultCh <- queryResult{query: q, sugg: s, err: err}:
 			default:
 			}
 		}()
@@ -317,8 +338,12 @@ func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest Sug
 		case ev := <-ri.events:
 			switch ev.kind {
 			case acRune:
-				m.insert(ev.r)
-				schedule()
+				if ev.r == '?' {
+					printRawHelp(helpText)
+				} else {
+					m.insert(ev.r)
+					schedule()
+				}
 			case acBackspace:
 				m.backspace()
 				schedule()
@@ -353,19 +378,20 @@ func (ri *rawInput) autocomplete(ctx context.Context, prompt string, suggest Sug
 		case <-debounce.C:
 			fireQuery()
 		case res := <-resultCh:
-			m.setResults(res.query, res.sugg)
+			m.setResults(res.query, res.sugg, resultStatus(res, emptyHint))
 			ri.renderAutocomplete(prompt, m, errMsg)
 		}
 	}
 }
 
 // confirm renders a y/n prompt reading from the shared key stream.
-func (ri *rawInput) confirm(prompt string, def bool) (bool, error) {
+func (ri *rawInput) confirm(prompt string, def bool, helpText string) (bool, error) {
 	hint := "y/N"
 	if def {
 		hint = "Y/n"
 	}
-	fmt.Fprintf(os.Stdout, "%s [%s]: ", prompt, hint)
+	ask := func() { fmt.Fprintf(os.Stdout, "%s [%s] (? for help): ", prompt, hint) }
+	ask()
 	for {
 		ev := <-ri.events
 		switch ev.kind {
@@ -380,6 +406,13 @@ func (ri *rawInput) confirm(prompt string, def bool) (bool, error) {
 			case 'n':
 				fmt.Fprint(os.Stdout, "n\r\n")
 				return false, nil
+			case '?':
+				fmt.Fprint(os.Stdout, "\r\n")
+				printRawHelp(helpText)
+				ask()
+			default:
+				fmt.Fprint(os.Stdout, "\r\n  Please answer y or n.\r\n")
+				ask()
 			}
 		case acCtrlC:
 			ri.restoreAndExit()
@@ -411,7 +444,7 @@ func (ri *rawInput) renderAutocomplete(prompt string, m *acModel, errMsg string)
 
 	rows := func(raw string) int { return physicalLines(visibleLen(raw), ri.width) }
 
-	hint := "(type to search, \xe2\x86\x91\xe2\x86\x93 pick, enter accept, esc cancel)"
+	hint := "(type to search, \xe2\x86\x91\xe2\x86\x93 pick, enter accept, esc cancel, ? help)"
 	fmt.Fprintf(os.Stdout, "\x1b[1m%s\x1b[0m \x1b[2m%s\x1b[0m\r\n", prompt, hint)
 	lines := rows(prompt + " " + hint)
 
@@ -439,6 +472,11 @@ func (ri *rawInput) renderAutocomplete(prompt string, m *acModel, errMsg string)
 		}
 		fmt.Fprintf(os.Stdout, "%s\r\n", row)
 		lines += rows(row)
+	}
+
+	if len(m.suggestions) == 0 && m.status != "" {
+		fmt.Fprintf(os.Stdout, "  \x1b[2m%s\x1b[0m\r\n", m.status)
+		lines += rows("  " + m.status)
 	}
 
 	if errMsg != "" {

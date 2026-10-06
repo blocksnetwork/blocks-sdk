@@ -1,2 +1,5 @@
-# Blocks API key — set via 'blocks login --write-env' or paste from the dashboard.
-BLOCKS_API_KEY=
+# Blocks API key. Optional for 'blocks run', 'blocks register' and 'blocks publish':
+# when it is not set they use the key 'blocks login' stored in your CLI profile.
+# Set it to use a different key for this project, or for scripts run without the
+# CLI (trigger / caller scripts): 'blocks login --write-env' or a dashboard key.
+# BLOCKS_API_KEY=

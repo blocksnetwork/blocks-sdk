@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
+	"golang.org/x/term"
 )
 
 // EnsureCredentialsProfile runs the Blocks auth flow and returns the minted
@@ -28,7 +29,7 @@ import (
 // session. The caller resolves that key: a piped key can only be read once, so the
 // read belongs to whichever component owns the invocation's credential rather than
 // happening again here.
-func EnsureCredentialsProfile(ctx context.Context, backendURL, clientID, suppliedKey string) (*Credentials, string, error) {
+func EnsureCredentialsProfile(ctx context.Context, backendURL, clientID, suppliedKey string, opts LoginOptions) (*Credentials, string, error) {
 	if suppliedKey != "" {
 		return &Credentials{ApiKey: suppliedKey}, suppliedKey, nil
 	}
@@ -40,8 +41,7 @@ func EnsureCredentialsProfile(ctx context.Context, backendURL, clientID, supplie
 	}
 	authURL := backendURL + "/api/auth/oauth2/authorize"
 	tokenURL := backendURL + "/api/auth/oauth2/token"
-	fmt.Println("  Opening browser for login...")
-	result, err := RunBrowserFlow(ctx, authURL, clientID, backendURL)
+	result, err := RunBrowserFlow(ctx, authURL, clientID, backendURL, opts)
 	if err != nil {
 		return nil, "", fmt.Errorf("browser login failed: %w", err)
 	}
@@ -49,7 +49,7 @@ func EnsureCredentialsProfile(ctx context.Context, backendURL, clientID, supplie
 	if err != nil {
 		return nil, "", fmt.Errorf("token exchange failed: %w", err)
 	}
-	newCreds, err := FetchOrCreateApiKey(backendURL, exchangeResp.AccessToken)
+	newCreds, err := FetchOrCreateApiKey(backendURL, exchangeResp.AccessToken, opts)
 	if err != nil {
 		return nil, "", fmt.Errorf("API key creation failed: %w", err)
 	}
@@ -108,29 +108,15 @@ func ParseKeyExpiry(s string) time.Time {
 
 // FetchOrCreateApiKey fetches the user's org memberships, selects an org,
 // and creates an API key for the CLI.
-func FetchOrCreateApiKey(backendURL, sessionToken string) (*Credentials, error) {
+func FetchOrCreateApiKey(backendURL, sessionToken string, opts LoginOptions) (*Credentials, error) {
 	orgs, err := fetchOrgs(backendURL, sessionToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch organizations: %w", err)
 	}
 
-	if len(orgs) == 0 {
-		return nil, fmt.Errorf("your account has no organization memberships — create or join an org first")
-	}
-
-	var selected orgMembership
-	if len(orgs) == 1 {
-		selected = orgs[0]
-		// The organization name comes from the backend, so it reaches the terminal
-		// through termsafe.Text: it is the name of the organization a key is about to
-		// be minted in, and text that can move the cursor or erase a line can make
-		// that sentence — and the ones around it — say something else.
-		fmt.Printf("  Using organization: %s\n", termsafe.Text(selected.OrgName))
-	} else {
-		selected, err = promptOrgSelection(orgs)
-		if err != nil {
-			return nil, err
-		}
+	selected, err := selectLoginOrg(orgs, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	hostname, _ := os.Hostname()
@@ -148,6 +134,65 @@ func FetchOrCreateApiKey(backendURL, sessionToken string) (*Credentials, error) 
 		KeyId:     keyResp.KeyId,
 		ExpiresAt: ParseKeyExpiry(keyResp.ExpiresAt),
 	}, nil
+}
+
+// selectLoginOrg picks the organization a login creates its key in: the one --org
+// names, the only one there is, or the user's choice. Under --no-input a choice
+// that has to be asked is an error naming --org instead.
+func selectLoginOrg(orgs []orgMembership, opts LoginOptions) (orgMembership, error) {
+	if len(orgs) == 0 {
+		return orgMembership{}, fmt.Errorf("your account has no organization memberships — create or join an org first")
+	}
+	if want := strings.TrimSpace(opts.Org); want != "" {
+		org, err := findOrg(orgs, want)
+		if err != nil {
+			return orgMembership{}, err
+		}
+		fmt.Printf("  Using organization: %s\n", termsafe.Text(org.OrgName))
+		return org, nil
+	}
+	if len(orgs) == 1 {
+		// The organization name comes from the backend, so it reaches the terminal
+		// through termsafe.Text: it is the name of the organization a key is about to
+		// be minted in, and text that can move the cursor or erase a line can make
+		// that sentence — and the ones around it — say something else.
+		fmt.Printf("  Using organization: %s\n", termsafe.Text(orgs[0].OrgName))
+		return orgs[0], nil
+	}
+	if opts.NoInput {
+		return orgMembership{}, fmt.Errorf("your account belongs to %d organizations and --no-input forbids asking which one to use — pass --org <id or name>:\n%s", len(orgs), orgList(orgs))
+	}
+	return promptOrgSelection(orgs)
+}
+
+// findOrg matches --org against an organization id exactly, or a name
+// case-insensitively. A name shared by two organizations has to be given by id.
+func findOrg(orgs []orgMembership, want string) (orgMembership, error) {
+	var byName []orgMembership
+	for _, o := range orgs {
+		if o.OrgId == want {
+			return o, nil
+		}
+		if strings.EqualFold(strings.TrimSpace(o.OrgName), want) {
+			byName = append(byName, o)
+		}
+	}
+	switch len(byName) {
+	case 1:
+		return byName[0], nil
+	case 0:
+		return orgMembership{}, fmt.Errorf("--org %q matches none of your organizations:\n%s", termsafe.Text(want), orgList(orgs))
+	default:
+		return orgMembership{}, fmt.Errorf("--org %q names more than one organization — pass its id instead:\n%s", termsafe.Text(want), orgList(byName))
+	}
+}
+
+func orgList(orgs []orgMembership) string {
+	lines := make([]string, len(orgs))
+	for i, o := range orgs {
+		lines[i] = fmt.Sprintf("    %s (%s)", termsafe.Text(o.OrgName), termsafe.Text(o.OrgId))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // fetchOrgs retrieves the user's organization memberships from the backend.
@@ -190,35 +235,66 @@ func fetchOrgs(backendURL, sessionToken string) ([]orgMembership, error) {
 	return result, nil
 }
 
-// promptOrgSelection presents the user with a numbered list of orgs and reads
-// their choice from stdin.
+// promptOrgSelection asks which org to log in to: the arrow-key picker in a
+// terminal, a numbered list otherwise.
 //
 // Every backend-supplied field in the list goes through termsafe.Text. This is the
-// list a user picks from, and the numbers beside the names are the whole basis of the
+// list a user picks from, and the rows beside the names are the whole basis of the
 // choice: a name carrying a cursor-up or erase-line sequence can redraw the rows above
 // it, so the org the user selects is not the org they read.
 func promptOrgSelection(orgs []orgMembership) (orgMembership, error) {
-	fmt.Println("\n  You belong to multiple organizations. Select one:")
+	labels := make([]string, len(orgs))
 	for i, org := range orgs {
-		fmt.Printf("    [%d] %s (%s)\n", i+1, termsafe.Text(org.OrgName), termsafe.Text(org.OrgId))
+		labels[i] = fmt.Sprintf("%s (%s)", termsafe.Text(org.OrgName), termsafe.Text(org.OrgId))
 	}
-	fmt.Print("  Enter number: ")
+	if SelectOption != nil && stdinIsTerminal() {
+		fmt.Println()
+		idx, err := SelectOption(loginOrgQuestion, labels, 0, helpLoginOrg)
+		if err != nil {
+			return orgMembership{}, err
+		}
+		return orgs[idx], nil
+	}
 
+	fmt.Println("\n  " + loginOrgQuestion)
+	for i, label := range labels {
+		fmt.Printf("    [%d] %s\n", i+1, label)
+	}
 	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		return orgMembership{}, fmt.Errorf("no input received")
+	for {
+		fmt.Printf("  Select organization [1-%d] (? for help): ", len(orgs))
+		if !scanner.Scan() {
+			return orgMembership{}, fmt.Errorf("no organization selected — expected a number between 1 and %d", len(orgs))
+		}
+		input := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(input, "?") {
+			fmt.Println(helpLoginOrg)
+			fmt.Println()
+			continue
+		}
+		var choice int
+		if _, err := fmt.Sscanf(input, "%d", &choice); err != nil || choice < 1 || choice > len(orgs) {
+			fmt.Printf("  Enter a number from 1 to %d.\n", len(orgs))
+			continue
+		}
+		selected := orgs[choice-1]
+		fmt.Printf("  Selected: %s\n", termsafe.Text(selected.OrgName))
+		return selected, nil
 	}
-	input := strings.TrimSpace(scanner.Text())
-
-	var choice int
-	if _, err := fmt.Sscanf(input, "%d", &choice); err != nil || choice < 1 || choice > len(orgs) {
-		return orgMembership{}, fmt.Errorf("invalid selection: %q — expected a number between 1 and %d", input, len(orgs))
-	}
-
-	selected := orgs[choice-1]
-	fmt.Printf("  Selected: %s\n", termsafe.Text(selected.OrgName))
-	return selected, nil
 }
+
+// SelectOption is the arrow-key picker, set by cmd: auth cannot import wizard, which imports auth.
+var SelectOption func(prompt string, options []string, defaultIdx int, helpText string) (int, error)
+
+var stdinIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+const (
+	loginOrgQuestion = "Which organization should this login use?"
+	helpLoginOrg     = "  The CLI creates its API key in this organization, and commands act as it\n" +
+		"  by default. Run 'blocks login' again to switch."
+)
 
 // CreateOrgAPIKey mints an org-scoped API key. `bearer` may be an OAuth session
 // token (login) or an existing org-scoped API key (publish-time per-org mint) —
@@ -265,18 +341,6 @@ func createApiKey(backendURL, sessionToken, orgId, keyName string) (*ApiKeyCreat
 		return nil, fmt.Errorf("server returned empty API key")
 	}
 	return &result, nil
-}
-
-// InjectEnv writes the given key=value to the .env file in the current
-// working directory. If the file does not exist, it creates one.
-func InjectEnv(key, value string) error {
-	return InjectEnvAt(".", key, value)
-}
-
-// InjectEnvAt writes the given key=value to the .env file in the specified
-// directory. If the file does not exist, it creates one.
-func InjectEnvAt(dir, key, value string) error {
-	return ApplyEnvAt(dir, EnvMutation{Key: key, Value: value})
 }
 
 // EnvMutation is one change to a project .env: Key is assigned Value, or Key's
@@ -974,7 +1038,7 @@ func EnvLineMatchesKey(line, key string) bool {
 
 // EnvFileValue reports the value assigned to key in the .env file at path, and ""
 // when there is no such file or it carries no uncommented assignment for that key.
-// It shares EnvLineAssignment with UpsertEnvKey and RemoveEnvKey, so a line those
+// It shares EnvLineAssignment with ApplyEnvAt and RemoveEnvKeys, so a line those
 // two would rewrite or delete is exactly a line this one reads: a caller deciding
 // whether to remove an assignment cannot disagree with the removal about which
 // line it meant.
@@ -1007,32 +1071,6 @@ func EnvFileValue(path, key string) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-// UpsertEnvKey reads the .env file line-by-line and leaves key assigned value
-// exactly once — replacing a matching KEY= line in place, dropping any duplicate of
-// it, or appending the key if it was not there. Preserves all comments, spacing, and
-// original key ordering.
-func UpsertEnvKey(path, key, value string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines, _, _, err := applyEnvMutations(splitEnvLines(string(data)), []EnvMutation{{Key: key, Value: value}})
-	if err != nil {
-		return err
-	}
-	return replaceEnvFile(path, strings.Join(lines, "\n"))
-}
-
-// RemoveEnvKey removes all lines matching the given key from the .env file. No such
-// file is nothing to remove; a file that cannot be read, and a rewrite that fails,
-// are both reported as errors, because a caller that goes on to announce the removal
-// — or to write a credential that depended on it — must not do so on a file that
-// still carries the line.
-func RemoveEnvKey(path, key string) error {
-	_, err := RemoveEnvKeys(path, key)
-	return err
 }
 
 // RemoveEnvKeys removes all lines matching any of the given keys from the .env file

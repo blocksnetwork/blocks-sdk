@@ -28,12 +28,13 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 
 	name, p, err := profiles.Active()
 	if err != nil {
-		return notLoggedInError()
+		return whoamiNotLoggedIn()
 	}
 	k, ok := p.DefaultOrgKey()
 	if !ok {
-		return notLoggedInError()
+		return whoamiNotLoggedIn()
 	}
+	override := overridingCredential()
 
 	if jsonOutput {
 		output := map[string]interface{}{
@@ -41,6 +42,15 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 			"org_name": k.OrgName,
 			"org_id":   p.DefaultOrgID,
 			"key_id":   k.KeyId,
+		}
+		// Where the profile's key lives, and — when something outranks it — which key
+		// commands actually send instead. The path is absolute, not the ~/… form the
+		// human output shows: a script cannot expand a tilde.
+		if path, err := profileStorePath(); err == nil {
+			output["credentials_path"] = path
+		}
+		if override != "" {
+			output["key_override"] = override
 		}
 		if !k.ExpiresAt.IsZero() {
 			output["expires_at"] = k.ExpiresAt.UTC().Format(time.RFC3339)
@@ -90,6 +100,10 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("  Expires:  never\n")
 	}
+	fmt.Printf("  Stored:   %s\n", profileStoreDisplayPath())
+	if override != "" {
+		fmt.Printf("  Note: commands run here use %s, not this profile's key.\n", override)
+	}
 
 	// Everything above describes the stored profile. When an override displaces it,
 	// the identity reported is not the one requests will be made as, and this is
@@ -97,4 +111,26 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 	fmt.Print(backendOverrideNoteLine("  "))
 
 	return nil
+}
+
+// overridingCredential describes a key supplied for this invocation that outranks the
+// active profile's (BLOCKS_API_KEY in .env or the environment, --api-key), or "" when
+// commands use the profile's own key.
+func overridingCredential() string {
+	c := clictx.EffectiveCredential()
+	if !c.Source.Supplied() {
+		return ""
+	}
+	return credentialSourceDescription(c)
+}
+
+// whoamiNotLoggedIn is whoami's "no stored key" failure. When a key from .env or the
+// environment is in effect anyway, it says so: the user is not logged in, yet commands
+// run here are authenticated.
+func whoamiNotLoggedIn() error {
+	err := notLoggedInError()
+	if override := overridingCredential(); override != "" {
+		return fmt.Errorf("%w\n  Commands run here still authenticate with %s.", err, override)
+	}
+	return err
 }

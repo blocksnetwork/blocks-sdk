@@ -1,6 +1,6 @@
 //go:build darwin || linux || freebsd || openbsd || netbsd || dragonfly
 
-package wizard
+package stdinpoll
 
 import (
 	"os"
@@ -9,12 +9,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// stdinReadableWithin reports whether os.Stdin has input waiting within
-// wait, without consuming anything. It is the Esc disambiguation's way to
-// tell a lone Esc from the start of an arrow sequence without blocking on a
-// second read — which would park the picker until the user's next keypress
-// and consume that key as the disambiguator.
-func stdinReadableWithin(wait time.Duration) bool {
+// StdinReadableWithin reports whether os.Stdin has input waiting within
+// wait, without consuming anything. The wizard uses it to tell a lone Esc
+// from the start of an arrow sequence without blocking on a second read; on
+// Unix, Lines polls with it too.
+func StdinReadableWithin(wait time.Duration) bool {
 	return fdReadableWithin(int(os.Stdin.Fd()), wait)
 }
 

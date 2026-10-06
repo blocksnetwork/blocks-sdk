@@ -2,14 +2,12 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
-	"github.com/spf13/cobra"
 )
 
 // Every case in this file resets the login state on the way in as well as on the
@@ -48,29 +46,13 @@ func TestLoginNetworkFlag(t *testing.T) {
 }
 
 func TestLoginNetworkFlagConflictWithPositionalArg(t *testing.T) {
+	restoreCLIState(t)
 	resetLoginFlags()
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
 	setupTestProfiles(t, tmpDir)
-	t.Cleanup(resetLoginFlags)
 
-	// Set the --network flag
-	loginNetwork = true
-
-	// Create a command with proper context
-	cmd := &cobra.Command{
-		Use: "login",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Validate --network flag doesn't conflict with positional instance
-			if loginNetwork && len(args) > 0 {
-				return fmt.Errorf("--network flag conflicts with instance argument %q", args[0])
-			}
-			return nil
-		},
-	}
-	cmd.SetContext(context.Background())
-
-	// Test that validation rejects --network + positional argument
-	err := cmd.RunE(cmd, []string{"acme"})
+	_, err := runRootCapturing(t, "login", "--network", "acme")
 	if err == nil {
 		t.Fatal("expected error when --network flag conflicts with positional argument")
 	}

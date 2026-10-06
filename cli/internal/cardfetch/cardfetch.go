@@ -1,7 +1,8 @@
 // Package cardfetch fetches an agent card from the Blocks registry for use
-// by the embed scaffold generator. It is intentionally narrow: a single
-// Fetch entry point, a typed AgentCard struct that names only the card
-// fields the generator reads, and a typed sentinel for the not-found case.
+// by the embed scaffold generator and by `blocks check`'s drift comparison.
+// It is intentionally narrow: a single Fetch entry point, a typed AgentCard
+// struct that names only the card fields the generator reads (plus the raw
+// registered card and its pricing), and a typed sentinel for the not-found case.
 //
 // The package depends only on internal/blocksapi and the standard library;
 // no auth, no environment lookups, no scaffold knowledge. Callers in cmd/
@@ -44,6 +45,20 @@ type AgentCard struct {
 	Listing string
 	OrgID   string
 	OrgName string
+	// BillingMode ("free" | "paid") also comes from the envelope; empty when omitted.
+	BillingMode string
+	Pricing
+
+	// Card is agent.card exactly as the registry returned it.
+	Card json.RawMessage
+}
+
+// Pricing comes from the envelope; a field is zero when the registry omits it.
+type Pricing struct {
+	PricePerTask           string `json:"pricePerTask"`
+	PricePerMinute         string `json:"pricePerMinute"`
+	FreeTasksPerConsumer   *int   `json:"freeTasksPerConsumer"`
+	FreeMinutesPerConsumer *int   `json:"freeMinutesPerConsumer"`
 }
 
 // InputDecl mirrors a single io.inputs[] entry. Schema and Example are
@@ -81,11 +96,13 @@ type StreamDecl struct {
 // GET /api/v1/registry/agents?agentName=<name>.
 type outerEnvelope struct {
 	Agent struct {
-		AgentName string          `json:"agentName"`
-		Card      json.RawMessage `json:"card"`
-		Listing   string          `json:"listing"`
-		OrgID     string          `json:"orgId"`
-		OrgName   string          `json:"orgName"`
+		AgentName   string          `json:"agentName"`
+		Card        json.RawMessage `json:"card"`
+		Listing     string          `json:"listing"`
+		OrgID       string          `json:"orgId"`
+		OrgName     string          `json:"orgName"`
+		BillingMode string          `json:"billingMode"`
+		Pricing
 	} `json:"agent"`
 }
 
@@ -186,6 +203,9 @@ func Fetch(ctx context.Context, client *blocksapi.Client, agentName string) (*Ag
 	parsed.Listing = envelope.Agent.Listing
 	parsed.OrgID = envelope.Agent.OrgID
 	parsed.OrgName = envelope.Agent.OrgName
+	parsed.BillingMode = envelope.Agent.BillingMode
+	parsed.Pricing = envelope.Agent.Pricing
+	parsed.Card = cloneRaw(envelope.Agent.Card)
 	return parsed, nil
 }
 

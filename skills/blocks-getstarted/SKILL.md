@@ -64,12 +64,12 @@ pass explicit non-interactive flags (`--yes`, `--language node`,
 CLI not to read stdin, so where it is honoured a prompt that is still
 required becomes an error naming the flag — or, for a hosting partner's
 API token, the environment variable — that answers it rather than a
-hang. **`--no-input` is not universal and one uncovered prompt has no
-answer flag at all** — the flag's own help text (`blocks --help`) is the
-live list. That one can bite this flow: if the user's account belongs
-to more than one organization, the browser login asks which one and that
-prompt still reads stdin, so a `blocks login` run from here can block on
-it — which is why Step 6 hands the login to the user. The "wizard" is
+hang. **`--no-input` is not universal** — the flag's own help text
+(`blocks --help`) is the live list. A browser login still needs the user:
+it opens their browser, and if their account belongs to more than one
+organization it asks which one (answer with `blocks login --org <id or name>`;
+under `--no-input` it fails naming `--org`) — which is why Step 6 hands the
+login to the user. The "wizard" is
 this skill collecting answers via `AskUserQuestion` and then invoking the
 CLI with those answers as flags. Never assume the CLI can prompt the user.
 
@@ -121,11 +121,11 @@ Always install (or update) the Blocks CLI to ensure the latest version:
 npm i -g @blocks-network/cli
 ```
 
-On OpenBSD (no npm in base), use the POSIX shell installer instead:
+On OpenBSD, npm is not in base: install Node.js, which ships npm,
+before running the command above:
 
 ```bash
-curl -fsSL https://config.blocks.ai/install.sh | sh
-pkg_add xdg-utils       # so `blocks login` can open a browser
+pkg_add node xdg-utils  # xdg-utils so `blocks login` can open a browser
 ```
 
 On FreeBSD, install `xdg-utils` so `blocks login` can open a browser:
@@ -134,12 +134,7 @@ On FreeBSD, install `xdg-utils` so `blocks login` can open a browser:
 pkg install xdg-utils
 ```
 
-Then ensure the `blocks` command is available for the rest of the
-session:
-
-```bash
-export PATH="$HOME/.blocks/bin:$PATH"
-```
+npm puts `blocks` on the `PATH` itself.
 
 If the user has not previously authenticated, run `blocks login
 --network --write-env` from inside the scaffolded project directory
@@ -190,13 +185,11 @@ default, so pass the flags below instead of relying on non-TTY detection:
   whether or not stdin is a terminal. It covers the three questions above,
   so pair it with `--network` (or an instance argument) and `--write-env` /
   `--no-write-env` — a key passed as `--api-key` / `--api-key-stdin` answers
-  both instead, but `BLOCKS_API_KEY` in the environment does not. It does
-  **not** cover the organization picker the browser login shows when the
-  account belongs to more than one organization — pass `--api-key` or
-  `--api-key-stdin` to skip the browser flow entirely, or have the user run
-  the login themselves — nor the token paste prompt of
-  `blocks login --provider cloudflare|vercel|netlify`. Those two are the
-  only gaps: `blocks deploy` reads no stdin under the flag. Not every read
+  both instead, but `BLOCKS_API_KEY` in the environment does not. The
+  organization picker the browser login shows for a multi-organization
+  account is answered by `--org <id or name>` (under `--no-input` it fails
+  naming `--org`). It does **not** cover the token paste prompt of
+  `blocks login --provider cloudflare|vercel|netlify`. That is the only gap: `blocks deploy` reads no stdin under the flag. Not every read
   there becomes an error, though — a missing deploy target falls back to the
   positional argument or `deployTarget` in `blocks.config.json`, and the
   post-deploy agent-card question is skipped with a note on stderr while the
@@ -349,6 +342,17 @@ cd <your-agent-name> && blocks check
 verifies that the file referenced by `runtime.handler` exists on disk.
 A missing handler file causes a `[FAIL]` in the check output even if
 the JSON itself is valid.
+
+When you are logged in, `blocks check` also compares the card with the
+version registered on the deployment and prints a `[WARN]` naming the
+fields that differ, with the command that syncs them: `blocks register`
+for a private, free agent, otherwise `blocks publish` with the agent's
+current listing, billing mode and pricing (prices are placeholders, with the
+registered values printed below the command). If the card's task kinds
+changed so the registered prices no longer cover them, the command omits
+pricing and `blocks publish` asks for new prices.
+Card edits reach callers only after that command runs. The comparison is
+skipped offline or without a login, and never fails the check.
 
 `blocks publish` re-runs the same schema validation as `blocks check`
 before contacting the registry, so this is a fast pre-flight, not a

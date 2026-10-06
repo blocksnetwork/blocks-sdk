@@ -274,7 +274,7 @@ func TestWebappWizardHelpTextsAreDeploymentAware(t *testing.T) {
 		if got := wizard.HelpWebappAgentsText(); !strings.Contains(got, "Blocks Network agent(s)") {
 			t.Errorf("agents help does not name the product:\n%s", got)
 		}
-		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "consumer that calls agents") {
+		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "so others on Blocks Network can call it") {
 			t.Errorf("project-kind help lost the network wording:\n%s", got)
 		}
 	})
@@ -285,7 +285,7 @@ func TestWebappWizardHelpTextsAreDeploymentAware(t *testing.T) {
 		// name is applied here the way PersistentPreRun would.
 		branding.Set("Umbrella Blocks")
 		t.Cleanup(branding.Reset)
-		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "client that calls other") {
+		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "on this deployment can call it") {
 			t.Errorf("project-kind help kept marketplace wording on Enterprise:\n%s", got)
 		}
 		if got := wizard.HelpProjectKindText(); !strings.Contains(got, "Umbrella Blocks embed-auth widget") {

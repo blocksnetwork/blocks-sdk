@@ -7,12 +7,6 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ## [Unreleased]
 
-### Security
-
-- The SDK now resolves a patched build of one of its dependencies. Nothing about
-  how the SDK behaves changes. A project that pins that dependency itself, in its
-  own lockfile or an `overrides` entry, keeps whatever its pin resolves.
-
 ### Added
 
 - Registry read helpers accept a credential. `fetchAgentRegistry()`,
@@ -50,6 +44,9 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ### Changed
 
+- Starting an agent without `BLOCKS_API_KEY` now explains that `blocks run`
+  supplies the key stored by `blocks login`, or that you can set `BLOCKS_API_KEY`
+  in `.env`, instead of pointing only at `blocks login --write-env`.
 - `AGENT_FORCED_OFFLINE` from `connect`/`refresh` is now treated as a
   **fatal** auth error: the agent throws `AgentAuthFatalError` and shuts down
   instead of retrying. This surfaces when an administrator has forced the
@@ -59,3 +56,19 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
   reconnects, but the service fails its in-flight work and refuses new work
   while it is forced offline. No migration needed — this is a new server-side
   kill switch.
+
+- `removeAgent()` no longer takes an `agentAuth`. Removing an agent is a management
+  action, and an agent's own runtime credential carries no management standing, so
+  the previous `agentAuth` path now answers `403`. The function authenticates with
+  an API key from `BLOCKS_API_KEY`, as it already did without `agentAuth`.
+  **Migration:** drop the `agentAuth` option and make sure `BLOCKS_API_KEY` is set
+  to a key whose owner owns the agent or holds Agent Management in its
+  organization. TypeScript callers get a compile error at the removed option; a
+  plain-JavaScript caller that keeps passing it has the option ignored and
+  authenticates with the API key as above.
+
+### Security
+
+- The SDK now resolves a patched build of one of its dependencies. Nothing about
+  how the SDK behaves changes. A project that pins that dependency itself, in its
+  own lockfile or an `overrides` entry, keeps whatever its pin resolves.

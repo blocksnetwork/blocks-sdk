@@ -15,12 +15,18 @@ func init() {
 var checkCmd = &cobra.Command{
 	Use:   "check [path]",
 	Short: "Validate agent-card.json and handler",
-	Long:  "Validate the agent-card.json file against the Blocks schema and verify the handler file exists.",
-	Args:  cobra.MaximumNArgs(1),
+	Long: "Validate the agent-card.json file against the Blocks schema and verify the handler file exists.\n\n" +
+		"When you are logged in, also compare the card with the version registered on the\n" +
+		"deployment and warn about fields that differ: card changes reach callers only after\n" +
+		"'blocks register' or 'blocks publish'. The comparison is skipped when offline, not\n" +
+		"logged in, or before the agent is registered.",
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cardPath := "agent-card.json"
+		cardPath, cardArg := "agent-card.json", ""
 		if len(args) > 0 {
-			cardPath = args[0]
+			cardPath, cardArg = args[0], args[0]
+		} else if err := callerProjectError(mustCwd(), "blocks check"); err != nil {
+			return err
 		}
 
 		if !filepath.IsAbs(cardPath) {
@@ -39,12 +45,18 @@ var checkCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "[FAIL] %s\n", msg)
 		}
 
-		fmt.Println()
 		if len(result.Errors) == 0 {
-			fmt.Println("All checks passed.")
+			drifted := checkRegistryDrift(cmd.Context(), result.Card, cardArg)
+			fmt.Println()
+			if drifted {
+				fmt.Println("All checks passed with 1 warning.")
+			} else {
+				fmt.Println("All checks passed.")
+			}
 			return nil
 		}
 
+		fmt.Println()
 		return fmt.Errorf("%d check(s) failed", len(result.Errors))
 	},
 }

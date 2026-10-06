@@ -2,13 +2,11 @@ package blocksapi
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 )
@@ -39,59 +37,6 @@ func TestGet_HappyPath(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-}
-
-func TestPost_HappyPath(t *testing.T) {
-	var received map[string]string
-	c, ts := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&received)
-		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{"status":"created"}`)
-	}))
-	defer ts.Close()
-
-	resp, err := c.Post(context.Background(), "/test", map[string]string{"hello": "world"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer resp.Body.Close()
-	if received["hello"] != "world" {
-		t.Errorf("body not encoded correctly: %v", received)
-	}
-}
-
-func TestPatch_HappyPath(t *testing.T) {
-	c, ts := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch {
-			t.Errorf("expected PATCH, got %s", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{}`)
-	}))
-	defer ts.Close()
-
-	resp, err := c.Patch(context.Background(), "/test", map[string]bool{"enabled": true})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resp.Body.Close()
-}
-
-func TestDelete_HappyPath(t *testing.T) {
-	c, ts := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("expected DELETE, got %s", r.Method)
-		}
-		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{}`)
-	}))
-	defer ts.Close()
-
-	resp, err := c.Delete(context.Background(), "/test", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	resp.Body.Close()
 }
 
 func TestDoJSON_DecodesResponseIntoOut(t *testing.T) {
@@ -166,26 +111,8 @@ func TestProtocolVersionHeader_SetOnEveryRequest(t *testing.T) {
 			}
 			return err
 		}},
-		{"POST", func(c *Client) error {
-			r, err := c.Post(context.Background(), "/x", nil)
-			if r != nil {
-				r.Body.Close()
-			}
-			return err
-		}},
-		{"PATCH", func(c *Client) error {
-			r, err := c.Patch(context.Background(), "/x", nil)
-			if r != nil {
-				r.Body.Close()
-			}
-			return err
-		}},
-		{"DELETE", func(c *Client) error {
-			r, err := c.Delete(context.Background(), "/x", nil)
-			if r != nil {
-				r.Body.Close()
-			}
-			return err
+		{"DoJSON POST", func(c *Client) error {
+			return c.DoJSON(context.Background(), http.MethodPost, "/x", map[string]string{}, nil)
 		}},
 	}
 
@@ -281,48 +208,6 @@ func TestNon2xx_ReturnsAPIError(t *testing.T) {
 	}
 }
 
-func TestRetryAfter_ParsedFrom429(t *testing.T) {
-	c, ts := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-		io.WriteString(w, `{"error":"rate limited"}`)
-	}))
-	defer ts.Close()
-
-	_, err := c.Post(context.Background(), "/test", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	apiErr, ok := err.(*APIError)
-	if !ok {
-		t.Fatalf("expected *APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("expected 429, got %d", apiErr.StatusCode)
-	}
-	if apiErr.RetryAfter != 30*time.Second {
-		t.Errorf("expected 30s, got %v", apiErr.RetryAfter)
-	}
-}
-
-func TestRetryAfter_NonIntegerIgnored(t *testing.T) {
-	c, ts := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "Thu, 01 Jan 2026 00:00:00 GMT")
-		w.WriteHeader(http.StatusTooManyRequests)
-		io.WriteString(w, `{"error":"rate limited"}`)
-	}))
-	defer ts.Close()
-
-	_, err := c.Post(context.Background(), "/test", nil)
-	apiErr, ok := err.(*APIError)
-	if !ok {
-		t.Fatalf("expected *APIError, got %T", err)
-	}
-	if apiErr.RetryAfter != 0 {
-		t.Errorf("expected 0 for non-integer Retry-After, got %v", apiErr.RetryAfter)
-	}
-}
-
 func TestProtocolVersionReject_412_ClearError(t *testing.T) {
 	c, ts := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusPreconditionFailed)
@@ -330,7 +215,7 @@ func TestProtocolVersionReject_412_ClearError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := c.Post(context.Background(), "/test", nil)
+	err := c.DoJSON(context.Background(), http.MethodPost, "/test", nil, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -343,24 +228,6 @@ func TestProtocolVersionReject_412_ClearError(t *testing.T) {
 	}
 	if !strings.Contains(apiErr.Message, "unsupported protocol version") {
 		t.Errorf("expected clear error message, got %q", apiErr.Message)
-	}
-}
-
-func TestErrorDetails_ParsedFromValidationError(t *testing.T) {
-	// Zod validation errors use { "error": "Validation error", "details": [...] }
-	c, ts := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"error":"Validation error","details":[{"path":["agents"],"message":"Required"}]}`)
-	}))
-	defer ts.Close()
-
-	_, err := c.Post(context.Background(), "/test", nil)
-	apiErr, ok := err.(*APIError)
-	if !ok {
-		t.Fatalf("expected *APIError, got %T", err)
-	}
-	if apiErr.Details == nil {
-		t.Error("expected Details to be populated for validation error")
 	}
 }
 

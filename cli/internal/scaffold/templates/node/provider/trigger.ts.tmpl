@@ -7,11 +7,19 @@ import type { ProgressEvent, ArtifactEvent, TerminalEvent } from '@blocks-networ
  * Usage: npx tsx trigger.ts
  */
 async function main() {
+  const apiKey = process.env.BLOCKS_API_KEY;
+  if (!apiKey) {
+    console.error(
+      "BLOCKS_API_KEY not set. This script runs without the Blocks CLI, so it cannot use your 'blocks login' profile: run 'blocks login --write-env' to copy its key into .env, or set BLOCKS_API_KEY in .env yourself.",
+    );
+    process.exit(1);
+  }
+
   // billingMode selects the PubNub keyset for this deployment — a protocol
   // detail, not a pricing choice. Leave it as 'free'.
   const client = await TaskClient.create({
     billingMode: 'free',
-    apiKey: process.env.BLOCKS_API_KEY!,
+    apiKey,
   });
 
   const session = await client.sendMessage({

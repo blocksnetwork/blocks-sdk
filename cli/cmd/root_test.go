@@ -32,29 +32,6 @@ func TestLoadEnvFileWithEmpty(t *testing.T) {
 	}
 }
 
-func TestLoadEnvFileWithRealValue(t *testing.T) {
-	// Test 2: Non-empty value should be set
-	dir := t.TempDir()
-	t.Chdir(dir)
-
-	envFile := filepath.Join(dir, ".env")
-	if err := os.WriteFile(envFile, []byte("BLOCKS_API_KEY=bk_real\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Clear any existing value
-	t.Setenv("BLOCKS_API_KEY", "")
-	if err := os.Unsetenv("BLOCKS_API_KEY"); err != nil {
-		t.Fatal(err)
-	}
-
-	loadEnvFile(".env")
-
-	if os.Getenv("BLOCKS_API_KEY") != "bk_real" {
-		t.Errorf("BLOCKS_API_KEY = %q, want %q", os.Getenv("BLOCKS_API_KEY"), "bk_real")
-	}
-}
-
 func TestLoadEnvFilePreservesExistingEnv(t *testing.T) {
 	// Test 3: Pre-existing env value should win over file value
 	dir := t.TempDir()

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/branding"
+	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 )
 
 // HelpOrgNameText is the help text shown when the user types '?' at the org
@@ -166,7 +167,7 @@ func readOrgName(scanner *bufio.Scanner, defaultName string) (string, error) {
 			return "", nil
 		}
 		text := strings.TrimSpace(scanner.Text())
-		if text == "?" {
+		if wizard.IsHelpRequest(text) {
 			fmt.Println(HelpOrgNameText())
 			continue
 		}

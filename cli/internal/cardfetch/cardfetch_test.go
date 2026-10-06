@@ -154,6 +154,9 @@ func TestFetch_Minimal(t *testing.T) {
 	if got := len(card.Streams); got != 0 {
 		t.Errorf("Streams len = %d, want 0", got)
 	}
+	if card.BillingMode != "paid" {
+		t.Errorf("BillingMode = %q, want paid", card.BillingMode)
+	}
 }
 
 func TestFetch_404_ReturnsErrAgentNotFound(t *testing.T) {

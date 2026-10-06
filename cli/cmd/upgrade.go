@@ -43,6 +43,8 @@ var npmPlatformPackages = map[string]string{
 	"linux/amd64":   "@blocks-network/cli-linux-x64",
 	"freebsd/arm64": "@blocks-network/cli-freebsd-arm64",
 	"freebsd/amd64": "@blocks-network/cli-freebsd-x64",
+	"openbsd/arm64": "@blocks-network/cli-openbsd-arm64",
+	"openbsd/amd64": "@blocks-network/cli-openbsd-x64",
 	"windows/amd64": "@blocks-network/cli-win32-x64",
 }
 
@@ -118,9 +120,7 @@ func platformPackage() (string, error) {
 	key := runtime.GOOS + "/" + runtime.GOARCH
 	pkg, ok := npmPlatformPackages[key]
 	if !ok {
-		return "", fmt.Errorf("in-CLI upgrade is not available for %s\n"+
-			"Please update using the install script:\n"+
-			"  curl -fsSL https://config.blocks.ai/install.sh | bash", key)
+		return "", fmt.Errorf("in-CLI upgrade is not available for %s: no Blocks CLI build is published for this platform", key)
 	}
 	return pkg, nil
 }

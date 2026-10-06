@@ -1023,7 +1023,7 @@ func TestRunWebappWizard_RejectsCleartextAssetHost(t *testing.T) {
 
 	resetInitFlags()
 	initBlocksBaseURL = "http://cdn.example.com"
-	err := runWebappWizard(context.Background())
+	err := runWebappWizard(context.Background(), "")
 	resetInitFlags()
 
 	if err == nil || !strings.Contains(err.Error(), "blocks-base-url") {
@@ -1327,7 +1327,7 @@ func TestTheWebappWizardCarriesTheResolvedCredentialToTheDeploymentItQueries(t *
 
 	initBackendURL = deployment.url
 	var err error
-	captureStdout(func() { err = runWebappWizard(context.Background()) })
+	captureStdout(func() { err = runWebappWizard(context.Background(), "") })
 	if err != nil {
 		t.Fatalf("the wizard must resolve the private card with the key the invocation named, got: %v", err)
 	}
@@ -1423,16 +1423,6 @@ func TestInitWebapp_BakesProfileAssetHost(t *testing.T) {
 	}
 	if strings.Contains(indexHTML, "app.blocks.ai") {
 		t.Errorf("index.html must NOT fall back to app.blocks.ai when a profile origin is active; got:\n%s", indexHTML)
-	}
-}
-
-func TestInitAcceptsModeAliases(t *testing.T) {
-	// The alias must be accepted on any profile, not just enterprise, so CI
-	// validation never depends on which profile happens to be active.
-	for _, alias := range []string{"connect-agent", "call-agent"} {
-		if _, ok := wizard.NormalizeMode(alias); !ok {
-			t.Errorf("alias %q should be accepted", alias)
-		}
 	}
 }
 
@@ -1546,53 +1536,6 @@ func TestPrintNextSteps_LoginLine_NotLoggedInNetwork(t *testing.T) {
 	if !strings.Contains(out, "privately and free") {
 		t.Errorf("output should contain 'privately and free' on network: %s", out)
 	}
-}
-
-// TestPrintNextSteps_ShowVerbatimOutputs prints the verbatim next-steps blocks
-// for documentation purposes. Run with: go test -v -run TestPrintNextSteps_ShowVerbatimOutputs
-func TestPrintNextSteps_ShowVerbatimOutputs(t *testing.T) {
-	cfg := wizard.Config{
-		Name:     "test_agent",
-		Language: "python",
-		Mode:     "provider",
-	}
-
-	// Case 1: Already logged in
-	t.Log("=== CASE 1: Already logged in ===")
-	defer isolateProfiles(t)()
-	if err := profiles.Upsert(profiles.DefaultProfile, profiles.Profile{
-		DefaultOrgID: "o1",
-		Orgs:         map[string]profiles.OrgKey{"o1": {OrgName: "Eng", ApiKey: "bk_test_key"}},
-	}, true); err != nil {
-		t.Fatalf("seed profile: %v", err)
-	}
-	clictx.Reset()
-	clictx.Resolve(nil)
-	out1 := captureStdout(func() { printNextSteps(cfg) })
-	t.Logf("Output:\n%s", out1)
-
-	// Case 2: Not logged in + enterprise
-	t.Log("=== CASE 2: Not logged in + enterprise ===")
-	defer isolateProfiles(t)()
-	if err := profiles.Upsert("acme.blocks.ai", profiles.Profile{
-		BaseURL:    "https://acme.blocks.ai",
-		Enterprise: true,
-		Orgs:       map[string]profiles.OrgKey{},
-	}, true); err != nil {
-		t.Fatalf("seed profile: %v", err)
-	}
-	clictx.Reset()
-	clictx.Resolve(nil)
-	out2 := captureStdout(func() { printNextSteps(cfg) })
-	t.Logf("Output:\n%s", out2)
-
-	// Case 3: Not logged in + network
-	t.Log("=== CASE 3: Not logged in + network ===")
-	defer isolateProfiles(t)()
-	clictx.Reset()
-	clictx.Resolve(nil)
-	out3 := captureStdout(func() { printNextSteps(cfg) })
-	t.Logf("Output:\n%s", out3)
 }
 
 func TestPrintNextSteps_EnterpriseSuppressesFreePricing(t *testing.T) {
@@ -1798,100 +1741,6 @@ func TestInitDeploymentHeader(t *testing.T) {
 			if !tt.expectEnterpriseHint && enterpriseHintPresent {
 				t.Errorf("Expected enterprise hint to be absent in output:\n%s", output)
 			}
-		})
-	}
-}
-
-// TestInitHeaderVerbatimOutput shows the exact header output for documentation.
-func TestInitHeaderVerbatimOutput(t *testing.T) {
-	cases := []struct {
-		name     string
-		setup    func(t *testing.T)
-		scenario string
-	}{
-		{
-			name: "network_not_logged_in",
-			setup: func(t *testing.T) {
-				restore := isolateProfiles(t)
-				t.Cleanup(restore)
-				branding.Reset()
-				clictx.Reset()
-				clictx.Resolve(nil)
-			},
-			scenario: "not logged in Network",
-		},
-		{
-			name: "enterprise_not_logged_in_post_logout",
-			setup: func(t *testing.T) {
-				restore := isolateProfiles(t)
-				t.Cleanup(restore)
-				if err := profiles.Upsert("acme.blocks.ai", profiles.Profile{
-					BaseURL:    "https://acme.blocks.ai",
-					Enterprise: true,
-					Orgs:       map[string]profiles.OrgKey{},
-				}, true); err != nil {
-					t.Fatalf("seed post-logout enterprise profile: %v", err)
-				}
-				branding.Reset()
-				branding.Set("PubNub")
-				clictx.Reset()
-				clictx.Resolve(nil)
-			},
-			scenario: "not logged in enterprise (post-logout)",
-		},
-		{
-			name: "enterprise_logged_in",
-			setup: func(t *testing.T) {
-				seedEnterpriseProfileForTest(t)
-				branding.Set("Umbrella Corporation")
-			},
-			scenario: "logged in enterprise",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Simulate a terminal the caller has not opted out of, which is the
-			// only session the header is printed for.
-			forceTTY(t)
-			resetNoInput(t)
-
-			resetInitFlags()
-			t.Cleanup(resetInitFlags)
-
-			tc.setup(t)
-
-			dir := t.TempDir()
-			oldDir, _ := os.Getwd()
-			if err := os.Chdir(dir); err != nil {
-				t.Fatal(err)
-			}
-			defer os.Chdir(oldDir)
-
-			// Capture header output by simulating EOF immediately
-			var output string
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// Expected: wizard fails on EOF, that's fine
-					}
-				}()
-
-				oldStdin := os.Stdin
-				r, w, _ := os.Pipe()
-				os.Stdin = r
-				w.Close() // EOF
-				defer func() { os.Stdin = oldStdin }()
-
-				output = captureStdout(func() {
-					rootCmd.SetArgs([]string{"init"})
-					_ = rootCmd.Execute() // Will fail due to EOF, expected
-				})
-			}()
-
-			t.Logf("=== VERBATIM OUTPUT for %s ===", tc.scenario)
-			t.Logf("%s", output)
-			t.Logf("=== END OUTPUT ===")
 		})
 	}
 }

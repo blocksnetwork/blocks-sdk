@@ -58,7 +58,7 @@ func TestFetchOrCreateApiKey_RendersServerTextInertly(t *testing.T) {
 	defer srv.Close()
 
 	out, err := captureStdout(t, func() error {
-		_, keyErr := FetchOrCreateApiKey(srv.URL, "session-token")
+		_, keyErr := FetchOrCreateApiKey(srv.URL, "session-token", LoginOptions{})
 		return keyErr
 	})
 	if err == nil {
@@ -93,7 +93,7 @@ func TestFetchOrCreateApiKey_TreatsAnUnreadableExpiryAsExpired(t *testing.T) {
 		var creds *Credentials
 		out, err := captureStdout(t, func() error {
 			var keyErr error
-			creds, keyErr = FetchOrCreateApiKey(srv.URL, "session-token")
+			creds, keyErr = FetchOrCreateApiKey(srv.URL, "session-token", LoginOptions{})
 			return keyErr
 		})
 		srv.Close()
@@ -147,6 +147,109 @@ func TestPromptOrgSelection_RendersEveryNameInertly(t *testing.T) {
 		t.Fatalf("promptOrgSelection: %v", err)
 	}
 	assertInert(t, "the printed org list", out)
+}
+
+// --org and --no-input are what make a multi-organization login scriptable: the org is
+// named up front, and a choice that would have to be asked fails naming --org rather
+// than waiting on stdin.
+func TestSelectLoginOrg(t *testing.T) {
+	orgs := []orgMembership{
+		{OrgId: "org-1", OrgName: "Engineering"},
+		{OrgId: "org-2", OrgName: "Sales"},
+		{OrgId: "org-3", OrgName: "sales"},
+		// Names are backend-supplied, and the --org and --no-input errors list them.
+		{OrgId: "org-4\x07", OrgName: "Ops\x1b[1A\x1b[2K    Engineering (org-1)"},
+	}
+	cases := []struct {
+		name    string
+		orgs    []orgMembership
+		opts    LoginOptions
+		wantID  string
+		wantErr string
+	}{
+		{name: "only organization", orgs: orgs[:1], opts: LoginOptions{NoInput: true}, wantID: "org-1"},
+		{name: "--org by id", orgs: orgs, opts: LoginOptions{Org: "org-2", NoInput: true}, wantID: "org-2"},
+		{name: "--org by name, any case", orgs: orgs, opts: LoginOptions{Org: "ENGINEERING"}, wantID: "org-1"},
+		{name: "--org naming two organizations", orgs: orgs, opts: LoginOptions{Org: "Sales"}, wantErr: "pass its id"},
+		{name: "--org naming none", orgs: orgs, opts: LoginOptions{Org: "Marketing"}, wantErr: "matches none"},
+		{name: "--org naming none of one", orgs: orgs[:1], opts: LoginOptions{Org: "Marketing"}, wantErr: "matches none"},
+		{name: "--no-input with a choice to make", orgs: orgs, opts: LoginOptions{NoInput: true}, wantErr: "pass --org"},
+		{name: "no organizations", orgs: nil, wantErr: "no organization memberships"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got orgMembership
+			_, err := captureStdout(t, func() error {
+				var selErr error
+				got, selErr = selectLoginOrg(tc.orgs, tc.opts)
+				return selErr
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want one mentioning %q", err, tc.wantErr)
+				}
+				assertInert(t, "the organization list in the error", err.Error())
+				return
+			}
+			if err != nil || got.OrgId != tc.wantID {
+				t.Errorf("= (%+v, %v), want %s", got, err, tc.wantID)
+			}
+		})
+	}
+}
+
+func TestPromptOrgSelection_UsesArrowPickerInTerminal(t *testing.T) {
+	origSelect, origTerm := SelectOption, stdinIsTerminal
+	t.Cleanup(func() { SelectOption, stdinIsTerminal = origSelect, origTerm })
+	stdinIsTerminal = func() bool { return true }
+	var asked []string
+	SelectOption = func(prompt string, options []string, defaultIdx int, _ string) (int, error) {
+		if prompt != loginOrgQuestion || defaultIdx != 0 {
+			t.Errorf("picker asked %q defaulting to %d", prompt, defaultIdx)
+		}
+		asked = options
+		return 1, nil
+	}
+
+	orgs := []orgMembership{
+		{OrgId: "org-1", OrgName: "Acme"},
+		{OrgId: "org-2", OrgName: "Other\x1b[1A\x1b[2K"},
+	}
+	var got orgMembership
+	_, err := captureStdout(t, func() error {
+		var selErr error
+		got, selErr = promptOrgSelection(orgs)
+		return selErr
+	})
+	if err != nil {
+		t.Fatalf("promptOrgSelection: %v", err)
+	}
+	if got.OrgId != "org-2" {
+		t.Errorf("got %q, want org-2", got.OrgId)
+	}
+	assertInert(t, "the picker labels", strings.Join(asked, "\n"))
+}
+
+func TestPromptOrgSelection_FallbackRepromptsOnRecoverableInput(t *testing.T) {
+	restoreStdin := replaceStdin(t, "\n9\n?\n2\n")
+	defer restoreStdin()
+
+	orgs := []orgMembership{{OrgId: "org-1", OrgName: "Acme"}, {OrgId: "org-2", OrgName: "Other"}}
+	var got orgMembership
+	out, err := captureStdout(t, func() error {
+		var selErr error
+		got, selErr = promptOrgSelection(orgs)
+		return selErr
+	})
+	if err != nil {
+		t.Fatalf("promptOrgSelection: %v", err)
+	}
+	if got.OrgId != "org-2" {
+		t.Errorf("got %q, want org-2", got.OrgId)
+	}
+	if strings.Count(out, "Enter a number from 1 to 2.") != 2 || !strings.Contains(out, helpLoginOrg) {
+		t.Errorf("want two re-prompts and the help text:\n%s", out)
+	}
 }
 
 // replaceStdin points os.Stdin at a pipe carrying input and returns a function that
@@ -204,185 +307,6 @@ func assertInert(t *testing.T, what, s string) {
 			t.Errorf("%s reached the terminal carrying %#U: %q", what, r, s)
 			return
 		}
-	}
-}
-
-func TestUpsertEnvKey_ReplacesExisting(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	initial := "# Comment\nFOO=bar\nBLOCKS_API_KEY=old-value\nBAZ=qux\n"
-	if err := os.WriteFile(envFile, []byte(initial), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := UpsertEnvKey(envFile, "BLOCKS_API_KEY", "new-value"); err != nil {
-		t.Fatalf("UpsertEnvKey failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(envFile)
-	content := string(data)
-
-	if !strings.Contains(content, "BLOCKS_API_KEY=new-value") {
-		t.Errorf("expected BLOCKS_API_KEY=new-value, got:\n%s", content)
-	}
-	if strings.Contains(content, "BLOCKS_API_KEY=old-value") {
-		t.Error("old value should have been replaced")
-	}
-	if !strings.Contains(content, "# Comment") {
-		t.Error("comment should be preserved")
-	}
-	if !strings.Contains(content, "FOO=bar") {
-		t.Error("other keys should be preserved")
-	}
-	if !strings.Contains(content, "BAZ=qux") {
-		t.Error("other keys should be preserved")
-	}
-}
-
-func TestUpsertEnvKey_AppendsMissing(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	initial := "# Comment\nFOO=bar\n"
-	if err := os.WriteFile(envFile, []byte(initial), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := UpsertEnvKey(envFile, "BLOCKS_API_KEY", "my-key"); err != nil {
-		t.Fatalf("UpsertEnvKey failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(envFile)
-	content := string(data)
-
-	if !strings.Contains(content, "BLOCKS_API_KEY=my-key") {
-		t.Errorf("expected BLOCKS_API_KEY=my-key to be appended, got:\n%s", content)
-	}
-	if !strings.Contains(content, "# Comment") {
-		t.Error("comment should be preserved")
-	}
-	if !strings.Contains(content, "FOO=bar") {
-		t.Error("other keys should be preserved")
-	}
-}
-
-func TestUpsertEnvKey_DoesNotMatchPrefixCollision(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	initial := "BLOCKS_API_KEY_EXTRA=keep-me\nBLOCKS_API_KEY=old\n"
-	if err := os.WriteFile(envFile, []byte(initial), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := UpsertEnvKey(envFile, "BLOCKS_API_KEY", "new"); err != nil {
-		t.Fatalf("UpsertEnvKey failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(envFile)
-	content := string(data)
-
-	if !strings.Contains(content, "BLOCKS_API_KEY_EXTRA=keep-me") {
-		t.Error("BLOCKS_API_KEY_EXTRA should not be modified")
-	}
-	if !strings.Contains(content, "BLOCKS_API_KEY=new") {
-		t.Errorf("BLOCKS_API_KEY should be updated, got:\n%s", content)
-	}
-}
-
-func TestUpsertEnvKey_SkipsCommentedOutLine(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	initial := "# BLOCKS_API_KEY=commented-out\nFOO=bar\n"
-	if err := os.WriteFile(envFile, []byte(initial), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := UpsertEnvKey(envFile, "BLOCKS_API_KEY", "new-value"); err != nil {
-		t.Fatalf("UpsertEnvKey failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(envFile)
-	content := string(data)
-
-	if !strings.Contains(content, "# BLOCKS_API_KEY=commented-out") {
-		t.Error("commented-out line should be preserved")
-	}
-	if !strings.Contains(content, "BLOCKS_API_KEY=new-value") {
-		t.Errorf("new key should be appended, got:\n%s", content)
-	}
-}
-
-func TestUpsertEnvKey_PreservesComments(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	initial := "# PubNub keys\nPUBNUB_PUBLISH_KEY=pub-123\n# Subscribe key\nPUBNUB_SUBSCRIBE_KEY=sub-456\n\n# API key\nBLOCKS_API_KEY=old\n"
-	if err := os.WriteFile(envFile, []byte(initial), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := UpsertEnvKey(envFile, "BLOCKS_API_KEY", "new"); err != nil {
-		t.Fatalf("UpsertEnvKey failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(envFile)
-	lines := strings.Split(string(data), "\n")
-
-	commentCount := 0
-	for _, line := range lines {
-		if strings.HasPrefix(line, "#") {
-			commentCount++
-		}
-	}
-	if commentCount != 3 {
-		t.Errorf("expected 3 comments preserved, got %d", commentCount)
-	}
-}
-
-func TestInjectEnvAt_CreatesNewFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	subDir := filepath.Join(tmpDir, "my_agent")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := InjectEnvAt(subDir, "BLOCKS_API_KEY", "test-key-123"); err != nil {
-		t.Fatalf("InjectEnvAt failed: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(subDir, ".env"))
-	if err != nil {
-		t.Fatalf("expected .env to be created: %v", err)
-	}
-	if string(data) != "BLOCKS_API_KEY=test-key-123\n" {
-		t.Errorf("unexpected content: %q", string(data))
-	}
-}
-
-func TestInjectEnvAt_UpdatesExistingFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-	if err := os.WriteFile(envFile, []byte("BLOCKS_API_KEY=old\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := InjectEnvAt(tmpDir, "BLOCKS_API_KEY", "new-key"); err != nil {
-		t.Fatalf("InjectEnvAt failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(envFile)
-	if !strings.Contains(string(data), "BLOCKS_API_KEY=new-key") {
-		t.Errorf("expected updated key, got: %q", string(data))
-	}
-}
-
-func TestInjectEnvAt_InvalidDirReturnsError(t *testing.T) {
-	err := InjectEnvAt("/nonexistent/path/that/does/not/exist", "KEY", "val")
-	if err == nil {
-		t.Fatal("expected error for nonexistent directory")
 	}
 }
 
@@ -526,24 +450,6 @@ func TestApplyEnvAt_LeavesOneAssignmentWhenTheKeyIsDuplicated(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("collapsing duplicates lost %q:\n%s", want, string(data))
 		}
-	}
-}
-
-// UpsertEnvKey writes through the same line edits, so it owes the same invariant.
-func TestUpsertEnvKey_LeavesOneAssignmentWhenTheKeyIsDuplicated(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-	if err := os.WriteFile(envFile, []byte("BLOCKS_API_KEY=old\nBLOCKS_API_KEY=older\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := UpsertEnvKey(envFile, "BLOCKS_API_KEY", "bk_new"); err != nil {
-		t.Fatalf("UpsertEnvKey: %v", err)
-	}
-
-	got := envAssignments(t, envFile, "BLOCKS_API_KEY")
-	if len(got) != 1 || got[0] != "bk_new" {
-		t.Errorf("assignments = %q, want exactly one holding the new value", got)
 	}
 }
 
@@ -857,16 +763,16 @@ func statPerm(t *testing.T, path string) os.FileMode {
 	return info.Mode().Perm()
 }
 
-// RemoveEnvKey's failure has to reach its caller: `blocks logout` and
+// RemoveEnvKeys' failure has to reach its caller: `blocks logout` and
 // `blocks profile rm` both announce the removal afterwards, and a file that still
 // carries the line keeps authenticating (or redirecting) every later command.
-func TestRemoveEnvKey_ReportsAFailedRewrite(t *testing.T) {
+func TestRemoveEnvKeys_ReportsAFailedRewrite(t *testing.T) {
 	_, envFile := unwritableProjectDir(t, "BLOCKS_API_KEY=old\n")
 
-	if err := RemoveEnvKey(envFile, "BLOCKS_API_KEY"); err == nil {
+	if _, err := RemoveEnvKeys(envFile, "BLOCKS_API_KEY"); err == nil {
 		t.Fatal("a removal that could not be written must be reported")
 	}
-	if err := RemoveEnvKey(envFile, "NOT_PRESENT"); err != nil {
+	if _, err := RemoveEnvKeys(envFile, "NOT_PRESENT"); err != nil {
 		t.Errorf("removing a key that is not there is not a failure: %v", err)
 	}
 }
@@ -888,17 +794,6 @@ func TestRemoveEnvKeys_DistinguishesAnAbsentFileFromAnUnreadableOne(t *testing.T
 
 	if _, err := RemoveEnvKeys(unreadableEnvFile(t), "BLOCKS_API_KEY"); err == nil {
 		t.Error("a .env that exists and cannot be read must be reported, not read as an empty file")
-	}
-}
-
-// RemoveEnvKey is the single-key spelling of the same call and owes the same
-// distinction: it is what `blocks logout` removes the credential with.
-func TestRemoveEnvKey_ReportsAnUnreadableFile(t *testing.T) {
-	if err := RemoveEnvKey(unreadableEnvFile(t), "BLOCKS_API_KEY"); err == nil {
-		t.Error("a .env that exists and cannot be read must be reported")
-	}
-	if err := RemoveEnvKey(filepath.Join(t.TempDir(), ".env"), "BLOCKS_API_KEY"); err != nil {
-		t.Errorf("no .env is nothing to remove, not a failure: %v", err)
 	}
 }
 
@@ -931,31 +826,6 @@ func unreadableEnvFile(t *testing.T) string {
 		t.Skip("this platform reads a directory as a file, so an unreadable .env cannot be staged this way")
 	}
 	return path
-}
-
-func TestRemoveEnvKey(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	initial := "FOO=bar\nBLOCKS_API_KEY=old-key\nBAZ=qux\n"
-	if err := os.WriteFile(envFile, []byte(initial), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	RemoveEnvKey(envFile, "BLOCKS_API_KEY")
-
-	data, _ := os.ReadFile(envFile)
-	content := string(data)
-
-	if strings.Contains(content, "BLOCKS_API_KEY") {
-		t.Errorf("expected BLOCKS_API_KEY to be removed, got:\n%s", content)
-	}
-	if !strings.Contains(content, "FOO=bar") {
-		t.Error("other keys should be preserved")
-	}
-	if !strings.Contains(content, "BAZ=qux") {
-		t.Error("other keys should be preserved")
-	}
 }
 
 // A .env value is text a deployment supplied — the API key it minted is the whole
@@ -1093,28 +963,6 @@ func TestRemoveEnvKeys_RefusesAKeyThatIsNotAVariableName(t *testing.T) {
 	}
 	if _, err := RemoveEnvKeys(envFile, "BLOCKS=KEY"); err == nil {
 		t.Fatal("a name that is not a variable name must be refused")
-	}
-}
-
-// UpsertEnvKey is a second door into the same rewrite, and an unsafe value must not
-// get through it either.
-func TestUpsertEnvKey_RefusesAValueThatWouldWriteASecondAssignment(t *testing.T) {
-	envFile := filepath.Join(t.TempDir(), ".env")
-	initial := "BLOCKS_API_KEY=old\n"
-	if err := os.WriteFile(envFile, []byte(initial), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	err := UpsertEnvKey(envFile, "BLOCKS_API_KEY", "bk_live\nHTTPS_PROXY=http://attacker.example.test")
-	if err == nil {
-		t.Fatal("a value that would write a second assignment must be refused")
-	}
-	if !strings.Contains(err.Error(), "BLOCKS_API_KEY") {
-		t.Errorf("the refusal must name the variable it refused: %v", err)
-	}
-	data, _ := os.ReadFile(envFile)
-	if string(data) != initial {
-		t.Errorf(".env changed despite the refusal:\n%s", string(data))
 	}
 }
 
@@ -1868,7 +1716,7 @@ func TestApplyEnvAt_ForcesOwnerOnlyOnTheFileASharedEnvLinkPointsAt(t *testing.T)
 // A link that keeps its own name is followed too, so the rule is "the link names the file
 // it points at" rather than "the target is called .env": a package pointing .env.local at
 // the .env.local above it is the same shared-file setup under a different name.
-func TestUpsertEnvKey_FollowsASymlinkThatKeepsItsOwnName(t *testing.T) {
+func TestRemoveEnvKeys_FollowsASymlinkThatKeepsItsOwnName(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0700); err != nil {
 		t.Fatal(err)
@@ -1878,7 +1726,7 @@ func TestUpsertEnvKey_FollowsASymlinkThatKeepsItsOwnName(t *testing.T) {
 		t.Fatal(err)
 	}
 	shared := filepath.Join(root, ".env.local")
-	if err := os.WriteFile(shared, []byte("KEEP=me\n"), 0644); err != nil {
+	if err := os.WriteFile(shared, []byte("BLOCKS_API_KEY=bk_old\nKEEP=me\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(projDir, ".env.local")
@@ -1886,8 +1734,8 @@ func TestUpsertEnvKey_FollowsASymlinkThatKeepsItsOwnName(t *testing.T) {
 		t.Skipf("filesystem does not support symlinks: %v", err)
 	}
 
-	if err := UpsertEnvKey(link, "BLOCKS_API_KEY", "bk_new"); err != nil {
-		t.Fatalf("UpsertEnvKey through a same-named link: %v", err)
+	if _, err := RemoveEnvKeys(link, "BLOCKS_API_KEY"); err != nil {
+		t.Fatalf("RemoveEnvKeys through a same-named link: %v", err)
 	}
 
 	assertStillASymlink(t, link)
@@ -1895,10 +1743,7 @@ func TestUpsertEnvKey_FollowsASymlinkThatKeepsItsOwnName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "BLOCKS_API_KEY=bk_new") || !strings.Contains(string(data), "KEEP=me") {
-		t.Errorf("the shared file did not get the write:\n%s", string(data))
-	}
-	if perm := statPerm(t, shared); perm != 0600 {
-		t.Errorf("mode = %v, want 0600 for a file holding a credential", perm)
+	if strings.Contains(string(data), "bk_old") || !strings.Contains(string(data), "KEEP=me") {
+		t.Errorf("the shared file did not get the removal:\n%s", string(data))
 	}
 }

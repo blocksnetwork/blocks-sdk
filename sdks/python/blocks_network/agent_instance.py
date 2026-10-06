@@ -447,7 +447,9 @@ def start_agent_instance(
     api_key = _os_top.environ.get("BLOCKS_API_KEY", "")
     if not api_key:
         raise RuntimeError(
-            "BLOCKS_API_KEY is required. Run 'blocks login --write-env' to set up credentials."
+            "BLOCKS_API_KEY is required. Log in with 'blocks login' and start the agent with "
+            "'blocks run', which uses the key stored in your CLI profile, or set "
+            "BLOCKS_API_KEY in .env."
         )
 
     # -- Initialize AgentAuth (API key-based auth) -----------------------------

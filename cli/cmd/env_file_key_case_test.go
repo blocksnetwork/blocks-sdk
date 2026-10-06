@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 )
 
@@ -235,5 +236,66 @@ func TestATrailingLowercaseSpellingCannotHideAHostileUppercasePin(t *testing.T) 
 	}
 	if len(trusted.requests) == 0 {
 		t.Error("declining the pin must fall back to the profile's own deployment")
+	}
+}
+
+// The API key's provenance has the same Unix hazard as the backend pin. A shell-exported
+// BLOCKS_API_KEY and a lowercase blocks_api_key in .env are two variables on Unix, and
+// the file supplied only the one the CLI does not read. Asking envFileSource answered
+// from the canonical record and credited the file with the shell's key — in the source
+// description, and in logout, where it suppressed the warning that the exported key is
+// still active after the stored ones were removed.
+func TestALowercaseFileSpellingDoesNotClaimTheShellsAPIKeyOnUnix(t *testing.T) {
+	restoreCLIState(t)
+	origFold := envNamesAreCaseInsensitive
+	envNamesAreCaseInsensitive = false // Unix semantics, explicitly
+	t.Cleanup(func() { envNamesAreCaseInsensitive = origFold })
+	defer isolateProfiles(t)()
+	isolateAmbientState(t)
+
+	const exported = "bk_live_from_the_shell"
+	t.Setenv(blocksAPIKeyEnv, exported)
+	lower := strings.ToLower(blocksAPIKeyEnv)
+	projectEnvWithoutImports(t, lower+"=bk_live_from_the_file\n", lower)
+	if got := os.Getenv(blocksAPIKeyEnv); got != exported {
+		t.Fatalf("premise: %s must still be the shell's export, got %q", blocksAPIKeyEnv, got)
+	}
+
+	desc := credentialSourceDescription(clictx.Credential{Key: exported, Source: clictx.SourceEnv})
+	if want := blocksAPIKeyEnv + " in the environment"; desc != want {
+		t.Errorf("credentialSourceDescription = %q, want %q: the file supplied only %s", desc, want, lower)
+	}
+
+	out := captureStdout(func() { printLogoutSummary("", true, false) })
+	if !strings.Contains(out, blocksAPIKeyEnv+" is still exported in your shell") {
+		t.Errorf("logout must warn that the exported key keeps working:\n%s", out)
+	}
+}
+
+// The counterpart: a file that supplied the exact name the CLI reads is still credited,
+// and logout does not tell the user to unset a shell export that does not exist.
+func TestAnExactFileSpellingIsCreditedWithTheAPIKey(t *testing.T) {
+	restoreCLIState(t)
+	origFold := envNamesAreCaseInsensitive
+	envNamesAreCaseInsensitive = false
+	t.Cleanup(func() { envNamesAreCaseInsensitive = origFold })
+	defer isolateProfiles(t)()
+	isolateAmbientState(t)
+
+	const fromFile = "bk_live_from_the_file"
+	projectEnvWithoutImports(t, blocksAPIKeyEnv+"="+fromFile+"\n", blocksAPIKeyEnv)
+	t.Cleanup(func() { os.Unsetenv(blocksAPIKeyEnv) })
+	if got := os.Getenv(blocksAPIKeyEnv); got != fromFile {
+		t.Fatalf("premise: the file must have supplied %s, got %q", blocksAPIKeyEnv, got)
+	}
+
+	desc := credentialSourceDescription(clictx.Credential{Key: fromFile, Source: clictx.SourceEnv})
+	if want := blocksAPIKeyEnv + " in ./.env"; desc != want {
+		t.Errorf("credentialSourceDescription = %q, want %q", desc, want)
+	}
+
+	out := captureStdout(func() { printLogoutSummary("", false, true) })
+	if strings.Contains(out, "still exported in your shell") {
+		t.Errorf("logout must not claim a file-supplied key is exported in the shell:\n%s", out)
 	}
 }

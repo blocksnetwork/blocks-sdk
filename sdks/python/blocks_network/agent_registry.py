@@ -688,29 +688,26 @@ def fetch_agents_by_listing(
 def remove_agent(
     agent_name: str,
     base_url: Optional[str] = None,
-    agent_auth: Optional[Any] = None,
 ) -> bool:
     """
     Remove an agent from the registry.
 
+    Authenticates with an API key -- ``BLOCKS_API_KEY`` -- and not with the agent's
+    own runtime credential: removing an agent is a management action, and a runtime
+    holds no management standing. Passing a runtime credential here answered 403.
+
     Args:
         agent_name: The agent name identifier to remove.
         base_url: Optional base URL override.
-        agent_auth: Optional AgentAuth instance for API key-based auth.
 
     Returns:
         True if the agent was removed, False if it didn't exist.
     """
     url = _registry_url(query={"agentName": agent_name}, base_url=base_url)
+    api_key = os.environ.get("BLOCKS_API_KEY")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
-    if agent_auth is not None:
-        def _do_auth_delete() -> bool:
-            resp_data, status = agent_auth.authenticated_request(url, method="DELETE")
-            return status != 404
-
-        return with_retry(_do_auth_delete)
-
-    result = with_retry(lambda: _registry_fetch(url, method="DELETE"))
+    result = with_retry(lambda: _registry_fetch(url, method="DELETE", headers=headers))
 
     return result is not None
 

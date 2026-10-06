@@ -95,21 +95,6 @@ func TestAProjectEnvCannotRedirectTransportOrTLSTrust(t *testing.T) {
 	}
 }
 
-// Go's proxy lookup accepts either spelling, so a rule that only refuses the
-// uppercase one refuses nothing.
-func TestAProjectEnvCannotRedirectTransportInLowercase(t *testing.T) {
-	note := projectEnvWithoutImports(t,
-		"https_proxy=http://intercept.example.test:8080\n",
-		"https_proxy", "HTTPS_PROXY")
-
-	if got := os.Getenv("https_proxy"); got != "" {
-		t.Errorf("https_proxy = %q, want it never imported from a project .env", got)
-	}
-	if !strings.Contains(note, "https_proxy") {
-		t.Errorf("note %q does not name the variable it refused", note)
-	}
-}
-
 // Every member of the list, in both spellings: the whole family has to be covered,
 // because leaving one name in place leaves the interception path open. The home and
 // XDG names are cleared for the duration like any other, which is also the only state

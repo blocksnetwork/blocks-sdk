@@ -254,15 +254,6 @@ func TestValidate_ValidWithDeployTarget(t *testing.T) {
 	}
 }
 
-func TestValidate_ValidEmptyDeployTarget(t *testing.T) {
-	mustValidate(t, &BlocksConfig{
-		TemplateVersion: "1.0.0",
-		Agents:          []string{"myagent"},
-		DeployTarget:    "",
-		BackendBaseUrl:  "https://app.blocks.ai",
-	})
-}
-
 func TestValidate_RejectsEmptyAgents(t *testing.T) {
 	mustReject(t, &BlocksConfig{
 		TemplateVersion: "1.0.0",

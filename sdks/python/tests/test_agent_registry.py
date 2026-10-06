@@ -616,3 +616,31 @@ class TestRemoveAgent:
             result = remove_agent("nonexistent", base_url="http://localhost:8080")
 
         assert result is False
+
+    # Removing an agent is a management action and a runtime holds no management
+    # standing, so the credential has to be an API key. This used to accept an
+    # ``agent_auth`` and DELETE with the agent's own runtime token, which now 403s.
+    def test_sends_the_api_key_credential(self, monkeypatch) -> None:
+        monkeypatch.setenv("BLOCKS_API_KEY", "bk_test_key")
+        seen = {}
+
+        def mock_urlopen(req, **kwargs):
+            seen["auth"] = req.get_header("Authorization")
+            resp = MagicMock()
+            resp.read.return_value = json.dumps(
+                {"agentName": "acme_echo", "status": "deleted"}
+            ).encode("utf-8")
+            resp.__enter__ = lambda s: resp
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            assert remove_agent("acme_echo", base_url="http://localhost:8080") is True
+
+        assert seen["auth"] == "Bearer bk_test_key"
+
+    def test_no_longer_accepts_a_runtime_credential(self) -> None:
+        """``agent_auth`` is gone from the signature, so a caller passing one fails
+        here rather than with a 403 from the server."""
+        with pytest.raises(TypeError):
+            remove_agent("acme_echo", agent_auth=object())  # type: ignore[call-arg]

@@ -11,6 +11,7 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
+	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 )
 
 type orgChoice struct {
@@ -78,24 +79,51 @@ func printOrgPickerTarget(profileName string) {
 // deployment line printed just above it, or make two entries in the list render
 // alike, and the list is what the user's answer refers to.
 func promptOrgChoice(orgs []orgChoice) (orgChoice, error) {
-	fmt.Println("\nWhich organization should own this agent?")
-	for i, o := range orgs {
-		fmt.Printf("  [%d] %s\n", i+1, termsafe.Text(o.Name))
-	}
-	fmt.Print("Select organization: ")
-	line, ok, refused := readStdinLine()
-	if refused {
+	if noInputMode {
 		return orgChoice{}, fmt.Errorf("cannot ask organization selection with --no-input")
 	}
-	if !ok {
-		return orgChoice{}, fmt.Errorf("no input received")
+	names := make([]string, len(orgs))
+	for i, o := range orgs {
+		names[i] = termsafe.Text(o.Name)
 	}
-	var n int
-	if _, err := fmt.Sscanf(line, "%d", &n); err != nil || n < 1 || n > len(orgs) {
-		return orgChoice{}, fmt.Errorf("invalid selection — expected 1..%d", len(orgs))
+	if isTTY() {
+		fmt.Println()
+		idx, err := wizard.InteractiveSelect(orgQuestion, names, 0, helpOrgChoice)
+		if err != nil {
+			return orgChoice{}, err
+		}
+		return orgs[idx], nil
 	}
-	return orgs[n-1], nil
+
+	fmt.Println("\n" + orgQuestion)
+	for i, name := range names {
+		fmt.Printf("  [%d] %s\n", i+1, name)
+	}
+	for {
+		fmt.Printf("Select organization [1-%d] (? for help): ", len(orgs))
+		line, ok, _ := readStdinLine()
+		if !ok {
+			return orgChoice{}, fmt.Errorf("no organization selected — expected 1..%d", len(orgs))
+		}
+		if wizard.IsHelpRequest(line) {
+			fmt.Println(helpOrgChoice)
+			fmt.Println()
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(line, "%d", &n); err != nil || n < 1 || n > len(orgs) {
+			fmt.Printf("  Enter a number from 1 to %d.\n", len(orgs))
+			continue
+		}
+		return orgs[n-1], nil
+	}
 }
+
+const (
+	orgQuestion   = "Which organization should own this agent?"
+	helpOrgChoice = "  The organization that will own this agent on this deployment. Only the\n" +
+		"  organizations your account belongs to are listed."
+)
 
 // resolveOrgPublishKey returns the API key to publish under for orgId — the cached
 // per-org key when one is present and unexpired, otherwise one minted via

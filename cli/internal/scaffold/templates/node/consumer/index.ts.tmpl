@@ -1,38 +1,79 @@
 import 'dotenv/config';
-import { TaskClient, textPart } from '@blocks-network/sdk';
-import type { ProgressEvent, ArtifactEvent } from '@blocks-network/sdk';
+import { BillingModeMismatchError, RpcError, TaskClient, textPart } from '@blocks-network/sdk';
+import type { ProgressEvent, ArtifactEvent, TerminalEvent } from '@blocks-network/sdk';
 
 /**
- * {{.Name}} — Blocks Network consumer.
- * Sends a task to a target agent and prints progress, artifacts, and the
+ * {{.Name}} — a script that calls an agent.
+ * Sends a task to AGENT_NAME and prints progress, artifacts, and the
  * terminal result.
  *
  * Usage: npm run start
  */
 
-const apiKey = process.env.BLOCKS_API_KEY;
-if (!apiKey) {
+{{if .TargetAgent -}}
+// The agent this script calls, chosen when the project was created.
+const AGENT_NAME: string = '{{.TargetAgent}}';
+{{- else -}}
+// The bare name of the agent this script calls (e.g. 'translator'). To find
+// one, search with 'blocks init' (Call an agent), or browse with
+// 'blocks dashboard'.
+const AGENT_NAME: string = '';
+{{- end}}
+
+if (!AGENT_NAME) {
   console.error(
-    "BLOCKS_API_KEY not set. Run 'blocks login --write-env' or set it in .env before running this script.",
+    "AGENT_NAME is not set. Edit index.ts and set it to an agent you can call: search with 'blocks init' (Call an agent), or browse with 'blocks dashboard'.",
   );
   process.exit(1);
 }
 
-// TODO: replace with an agent you have published (see 'blocks publish').
-const AGENT_NAME = 'my_target_agent';
+const apiKey = process.env.BLOCKS_API_KEY;
+if (!apiKey) {
+  console.error(
+    "BLOCKS_API_KEY not set. This script runs without the Blocks CLI, so it cannot use your 'blocks login' profile: run 'blocks login --write-env' to copy its key into .env, or set BLOCKS_API_KEY in .env yourself.",
+  );
+  process.exit(1);
+}
+
+function isAgentNotFound(err: unknown): boolean {
+  if (!(err instanceof RpcError)) return false;
+  const data = err.data as { code?: unknown } | null | undefined;
+  return data?.code === 'NotFound' || err.rpcMessage.toLowerCase().includes('not found');
+}
+
+function describeTerminal(terminal: TerminalEvent): string {
+  const detail = terminal.error ?? terminal.reason;
+  return detail ? `${terminal.state}: ${detail}` : terminal.state;
+}
 
 async function main() {
-  // billingMode selects the PubNub keyset for this deployment — a protocol
-  // detail, not a pricing choice. Leave it as 'free'.
+  // billingMode must match the agent's registered billing mode, or the task is
+  // rejected with BillingModeMismatch.
   const client = await TaskClient.create({
-    billingMode: 'free',
+    billingMode: '{{.CallerBillingMode}}',
     apiKey,
   });
 
-  const session = await client.sendMessage({
-    agentName: AGENT_NAME,
-    requestParts: [textPart('Hello from {{.Name}}!', 'request')],
-  });
+  let session;
+  try {
+    session = await client.sendMessage({
+      agentName: AGENT_NAME,
+      requestParts: [textPart('Hello from {{.Name}}!', 'request')],
+    });
+  } catch (err) {
+    client.destroy();
+    if (err instanceof BillingModeMismatchError) {
+      console.error(
+        `Agent '${AGENT_NAME}' uses billing mode '${err.expected}'; set billingMode: '${err.expected}' in index.ts.`,
+      );
+      process.exit(1);
+    }
+    if (!isAgentNotFound(err)) throw err;
+    console.error(
+      `Agent '${AGENT_NAME}' was not found, or this API key cannot call it. Check AGENT_NAME in index.ts.`,
+    );
+    process.exit(1);
+  }
 
   console.log('Task created:', session.taskId);
 
@@ -49,7 +90,7 @@ async function main() {
   // hits don't hang.
   const terminal = await session.waitForTerminal(60_000);
   try {
-    console.log('[done]', terminal);
+    console.log('[done]', describeTerminal(terminal));
     for (const ref of session.listArtifacts()) {
       try {
         const downloaded = await session.downloadArtifact(ref);

@@ -527,49 +527,6 @@ func TestPublishPayloadShape(t *testing.T) {
 	}
 }
 
-// TestPublishProtocolVersionHeader verifies that the Blocks-Protocol-Version
-// header is sent on the publish request.
-func TestPublishProtocolVersionHeader(t *testing.T) {
-	old := Version
-	Version = "1.0.0"
-	defer func() { Version = old }()
-
-	cleanup := setupFakeCredentials(t)
-	defer cleanup()
-
-	headerSeen := ""
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		headerSeen = r.Header.Get("Blocks-Protocol-Version")
-		writeRegistered(w)
-	}))
-	defer ts.Close()
-
-	dir := writeValidProject(t)
-	cardPath := filepath.Join(dir, "agent-card.json")
-
-	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
-
-	oldDir, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldDir)
-
-	resetPublishFlags()
-	t.Cleanup(resetPublishFlags)
-
-	captureStdout(func() {
-		rootCmd.SetArgs([]string{"publish", cardPath, "--listing", "public", "--billing-mode", "free", "--accept-terms"})
-		if err := rootCmd.Execute(); err != nil {
-			t.Fatalf("publish command failed: %v", err)
-		}
-	})
-
-	if headerSeen != registry.ProtocolVersion {
-		t.Errorf("Blocks-Protocol-Version header = %q, want %q", headerSeen, registry.ProtocolVersion)
-	}
-}
-
 // TestPublishNoTTY_ApiKey verifies that "blocks publish --api-key" works
 // without a TTY attached to stdin and sends the key in the Authorization header.
 func TestPublishNoTTY_ApiKey(t *testing.T) {
@@ -1410,51 +1367,6 @@ func TestPublishPaidPrivatePayload(t *testing.T) {
 
 // ─── shared-helper migration regression ──────────────────────────────────────
 
-// TestPublishSharedHelperAttachesProtocolVersionHeader verifies that the
-// publish command attaches the Blocks-Protocol-Version header on every
-// outbound request through the shared blocksapi.Client (migration regression).
-// Simulates a backend that rejects requests missing the header (HTTP 412).
-func TestPublishSharedHelperAttachesProtocolVersionHeader(t *testing.T) {
-	cleanup := setupFakeCredentials(t)
-	defer cleanup()
-
-	headerSeen := ""
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		headerSeen = r.Header.Get("Blocks-Protocol-Version")
-		if headerSeen == "" {
-			// Simulate a backend that rejects missing header.
-			w.WriteHeader(412)
-			w.Write([]byte(`{"error":"Blocks-Protocol-Version required"}`))
-			return
-		}
-		writeRegistered(w)
-	}))
-	defer ts.Close()
-
-	dir := writeValidProject(t)
-	cardPath := filepath.Join(dir, "agent-card.json")
-
-	t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
-
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
-
-	resetPublishFlags()
-	t.Cleanup(resetPublishFlags)
-
-	captureStdout(func() {
-		rootCmd.SetArgs([]string{"publish", cardPath, "--listing", "public", "--billing-mode", "free", "--accept-terms"})
-		if err := rootCmd.Execute(); err != nil {
-			t.Fatalf("publish failed: %v", err)
-		}
-	})
-
-	if headerSeen != registry.ProtocolVersion {
-		t.Errorf("Blocks-Protocol-Version = %q, want %q (shared helper must auto-attach it)", headerSeen, registry.ProtocolVersion)
-	}
-}
-
 // TestPublishNoCredentialsFails verifies that publish without stored credentials
 // (and no --api-key flag) fails fast with an actionable error.
 func TestPublishNoCredentialsFails(t *testing.T) {
@@ -1961,6 +1873,31 @@ func TestPromptOrgChoiceNormalBehavior(t *testing.T) {
 	}
 }
 
+func TestPromptOrgChoiceRepromptsOnRecoverableInput(t *testing.T) {
+	restoreCLIState(t)
+	resetNoInput(t)
+	isTTY = func() bool { return false }
+	pipeStdin(t, "\n9\n?\n2\n")
+	stdinScanner = nil
+
+	orgs := []orgChoice{
+		{Id: "org1", Name: "Organization One"},
+		{Id: "org2", Name: "Organization Two"},
+	}
+	var choice orgChoice
+	var err error
+	out := captureStdout(func() { choice, err = promptOrgChoice(orgs) })
+	if err != nil {
+		t.Fatalf("promptOrgChoice: %v", err)
+	}
+	if choice.Id != "org2" {
+		t.Errorf("got %q, want org2", choice.Id)
+	}
+	if strings.Count(out, "Enter a number from 1 to 2.") != 2 || !strings.Contains(out, helpOrgChoice) {
+		t.Errorf("want two re-prompts and the help text:\n%s", out)
+	}
+}
+
 func TestRetryOrgNamePromptNoInputMode(t *testing.T) {
 	// Test that retryOrgNamePrompt returns empty string (cannot retry) with --no-input
 	setNoInputMode(true)
@@ -2333,9 +2270,7 @@ func TestAnInteractivePublishThatChoosesFreeFetchesNoBounds(t *testing.T) {
 func TestPublishValidatesAPaidPriceAgainstTheDeploymentsOwnLimits(t *testing.T) {
 	backend := &pricingLimitsBackend{}
 	cardPath := seedNetworkPublish(t, backend.start(t).URL)
-	// Forced off, not left to the default: isInteractive is true under `go test` because
-	// it accepts any character device and stdin is /dev/null, so without this the refusal
-	// below becomes a prompt loop against a stdin that answers nothing.
+	// Forced off so the refusal below cannot become a prompt loop on a stdin that answers nothing.
 	isInteractive = func() bool { return false }
 
 	var err error

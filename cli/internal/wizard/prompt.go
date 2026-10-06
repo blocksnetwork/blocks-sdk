@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mattn/go-runewidth"
+	"github.com/pubnub/blocks-sdk/cli/internal/stdinpoll"
 	"golang.org/x/term"
 )
 
@@ -20,6 +21,13 @@ var noInputMode bool
 // state to the wizard package.
 func SetNoInputMode(enabled bool) {
 	noInputMode = enabled
+}
+
+const PromptIntro = "Type ? at any prompt for an explanation. Press Enter to accept the value in brackets."
+
+// IsHelpRequest treats any leading ? as help, free-text prompts included, so ? behaves the same at every prompt.
+func IsHelpRequest(answer string) bool {
+	return strings.HasPrefix(strings.TrimSpace(answer), "?")
 }
 
 // readRequiredLine prompts until the answer passes validate. Unlike readLine
@@ -47,7 +55,7 @@ func readRequiredLine(r *bufio.Reader, label, flagHint, helpText string, validat
 		}
 		answer := strings.TrimSpace(line)
 		switch {
-		case answer == "?":
+		case IsHelpRequest(answer):
 			fmt.Println(helpText)
 			fmt.Println()
 		case answer == "":
@@ -60,6 +68,11 @@ func readRequiredLine(r *bufio.Reader, label, flagHint, helpText string, validat
 			return answer, nil
 		}
 	}
+}
+
+// printRawHelp rewrites \n as \r\n because raw mode does not return to column 0.
+func printRawHelp(helpText string) {
+	fmt.Fprintf(os.Stdout, "\r\x1b[J%s\r\n\r\n", strings.ReplaceAll(helpText, "\n", "\r\n"))
 }
 
 // readKey reads a single keypress from stdin (must be in raw mode).
@@ -85,7 +98,7 @@ func readKey() (string, error) {
 		// Poll briefly instead: an arrow burst is already buffered and polls
 		// ready at once, while a lone Esc resolves within the same window
 		// the autocomplete decoder uses (escTimeout) for this ambiguity.
-		if !stdinReadableWithin(escTimeout) {
+		if !stdinpoll.StdinReadableWithin(escTimeout) {
 			return "esc", nil
 		}
 		// Input followed the ESC, so this is a sequence, never a lone Esc.
@@ -155,7 +168,7 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText
 
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		return defaultIdx, nil
+		return 0, fmt.Errorf("cannot read keys for %q: %w", prompt, err)
 	}
 
 	cursor := defaultIdx
@@ -215,10 +228,7 @@ func InteractiveSelect(prompt string, options []string, defaultIdx int, helpText
 				cursor++
 			}
 		case "?":
-			// Print help below the menu and re-render.
-			// In raw mode \n doesn't return to column 0, so replace with \r\n.
-			fmt.Fprintf(os.Stdout, "\r\x1b[J")
-			fmt.Fprintf(os.Stdout, "%s\r\n\r\n", strings.ReplaceAll(helpText, "\n", "\r\n"))
+			printRawHelp(helpText)
 		case "enter":
 			cleanup(options[cursor])
 			return cursor, nil

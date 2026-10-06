@@ -216,6 +216,7 @@ func writeAssetsDir(t *testing.T, files map[string]string) string {
 // TestCloudflareUpload_HappyPath_AllMissing exercises the full manifest-first
 // flow when Cloudflare reports every hash as missing (cold deploy).
 func TestCloudflareUpload_HappyPath_AllMissing(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	fastPoll(t)
 	state := &cfMockState{}
 	ts := newCFMockServer(t, state, nil) // nil = all hashes missing
@@ -295,6 +296,7 @@ func TestCloudflareUpload_HappyPath_AllMissing(t *testing.T) {
 // TestCloudflareUpload_HappyPath_NoneMissing skips the upload leg when every
 // hash already exists on the partner side.
 func TestCloudflareUpload_HappyPath_NoneMissing(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	fastPoll(t)
 	state := &cfMockState{}
 	ts := newCFMockServer(t, state, func(hashes []string) []string { return []string{} })
@@ -321,6 +323,7 @@ func TestCloudflareUpload_HappyPath_NoneMissing(t *testing.T) {
 // TestCloudflareUpload_AccountsAuthDenied surfaces a 401 from the accounts
 // endpoint as a clear authentication error.
 func TestCloudflareUpload_AccountsAuthDenied(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -339,6 +342,7 @@ func TestCloudflareUpload_AccountsAuthDenied(t *testing.T) {
 
 // TestCloudflareUpload_CheckMissingFailure surfaces a 5xx from check-missing.
 func TestCloudflareUpload_CheckMissingFailure(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	state := &cfMockState{}
 	ts := newCFMockServer(t, state, nil)
 	defer ts.Close()
@@ -367,6 +371,7 @@ func TestCloudflareUpload_CheckMissingFailure(t *testing.T) {
 
 // TestCloudflareUpload_UploadFailure surfaces a 5xx from /pages/assets/upload.
 func TestCloudflareUpload_UploadFailure(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/client/v4/accounts", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"success": true, "result": []map[string]string{{"id": "acct-001"}}})
@@ -404,6 +409,7 @@ func TestCloudflareUpload_UploadFailure(t *testing.T) {
 
 // TestCloudflareUpload_DeploymentFailure surfaces a poll-stage failure.
 func TestCloudflareUpload_DeploymentFailure(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	fastPoll(t)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/client/v4/accounts", func(w http.ResponseWriter, r *http.Request) {

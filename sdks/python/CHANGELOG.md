@@ -7,6 +7,22 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ## [Unreleased]
 
+### Changed
+
+- Starting an agent without ``BLOCKS_API_KEY`` now explains that ``blocks run``
+  supplies the key stored by ``blocks login``, or that you can set
+  ``BLOCKS_API_KEY`` in ``.env``, instead of pointing only at
+  ``blocks login --write-env``.
+- ``remove_agent()`` no longer takes an ``agent_auth``. Removing an agent is a
+  management action, and an agent's own runtime credential carries no management
+  standing, so the previous ``agent_auth`` path now answers ``403``. A caller that
+  keeps passing it raises ``TypeError`` rather than failing against the server.
+- ``remove_agent()`` now authenticates with the API key in ``BLOCKS_API_KEY``.
+  Without ``agent_auth`` it previously sent no credential at all, which the
+  service refuses. **Migration** (both changes): drop the ``agent_auth`` argument
+  and set ``BLOCKS_API_KEY`` to a key whose owner owns the agent or holds Agent
+  Management in its organization.
+
 ### Added
 
 - Registry read helpers accept a credential. `fetch_agent_registry()`,

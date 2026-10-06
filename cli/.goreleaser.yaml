@@ -61,6 +61,3 @@ release:
     name: blocks-sdk
   draft: false
   prerelease: auto
-  extra_files:
-    - glob: install.sh
-    - glob: install.ps1

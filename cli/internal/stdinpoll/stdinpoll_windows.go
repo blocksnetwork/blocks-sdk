@@ -1,17 +1,16 @@
 //go:build windows
 
-package wizard
+package stdinpoll
 
 import (
 	"syscall"
 	"time"
 )
 
-// stdinReadableWithin reports whether os.Stdin has input waiting within
-// wait, without consuming anything. It is the Esc disambiguation's way to
-// tell a lone Esc from the start of an arrow sequence without blocking on a
-// second read — which would park the picker until the user's next keypress
-// and consume that key as the disambiguator.
+// StdinReadableWithin reports whether os.Stdin has input waiting within
+// wait, without consuming anything. The wizard uses it to tell a lone Esc
+// from the start of an arrow sequence without blocking on a second read. Line
+// input does not use it on a console: see Lines.
 //
 // On Windows the console (or pipe) handle is waited on with
 // WaitForSingleObject, which is signalled when input is available and
@@ -25,7 +24,7 @@ import (
 // precise remedy, if this is ever reported in the wild, is PeekConsoleInput
 // scanning the pending records for an actual KEY_EVENT instead of waiting
 // on the handle.
-func stdinReadableWithin(wait time.Duration) bool {
+func StdinReadableWithin(wait time.Duration) bool {
 	h, err := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
 	if err != nil {
 		return false

@@ -42,12 +42,10 @@ var rootNoInput bool
 //
 // "Closed" is not always "refused": the deploy target joins the non-interactive
 // branch and resolves from the positional argument or the saved deployTarget, and
-// only errors when neither exists. Of what remains here, one has no answer at all
-// (the browser-login organization picker); the partner token prompt is answered by
-// exporting the provider's token, not by a flag.
+// only errors when neither exists. The one read left, the partner token prompt, is
+// answered by exporting the provider's token, not by a flag.
 const noInputFlagHelp = "Never prompt: fail with an actionable error naming the flag or variable that answers instead. " +
-	"Not yet honoured by the organization picker shown during browser login, " +
-	"or 'blocks login --provider cloudflare|vercel|netlify' token prompts"
+	"Not yet honoured by 'blocks login --provider cloudflare|vercel|netlify' token prompts"
 
 func init() {
 	// Load .env from cwd before any command runs (don't override existing env).
@@ -441,11 +439,20 @@ var rootCmd = &cobra.Command{
 	Use:     "blocks",
 	Version: Version,
 	Short:   "Blocks CLI",
-	Long: `Blocks CLI — build and manage AI agents.
+	Long: `Blocks CLI — call, build and manage AI agents.
 
-Quick start:
-  blocks init my_agent                    Scaffold a new agent (provider) project
-  blocks init my_consumer --mode consumer Scaffold a new consumer project
+Run 'blocks init' in a terminal to choose what you want to do.
+
+Quick start: call an agent
+  blocks search <query>                   Find an agent you can call
+  blocks init my_caller --mode consumer --agent <name> --yes
+                                          Scaffold a script that calls <name>
+  cd my_caller && blocks login --write-env
+                                          Authenticate (first time only)
+  pip install -e . && python main.py      Install and call the agent (Node: npm install && npm run start)
+
+Quick start: build an agent that others can call
+  blocks init my_agent --yes              Scaffold an agent project
   cd my_agent && blocks login --write-env Authenticate (first time only)
   blocks register                         Register the agent privately and free (recommended first step)
   blocks run                              Start the agent locally

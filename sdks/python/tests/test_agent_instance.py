@@ -262,7 +262,7 @@ class TestBlocksApiKeyRequired:
         pn = _make_mock_pubnub()
         monkeypatch.delenv("BLOCKS_API_KEY", raising=False)
 
-        with pytest.raises(RuntimeError, match="BLOCKS_API_KEY is required"):
+        with pytest.raises(RuntimeError, match=r"BLOCKS_API_KEY is required\..*'blocks run'"):
             start_agent_instance(
                 AgentInstanceOptions(card=minimal_card(), pubnub=pn, agent_name="acme_echo")
             )

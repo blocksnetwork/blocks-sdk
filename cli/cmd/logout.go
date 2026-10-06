@@ -23,7 +23,13 @@ var logoutCmd = &cobra.Command{
 profile's cached org keys; its deployment target and branding are preserved so
 'blocks login' (no URL) resolves the same instance afterward. Other profiles
 are left untouched. Does not revoke the API key on the server. Use 'blocks
-profile remove' to forget the deployment entirely.`,
+profile remove' to forget the deployment entirely.
+
+What is removed:
+  - the active profile's API keys in ~/.config/blocks/contexts.json
+    (pick another profile with --profile <name>; list them with 'blocks profile list')
+  - BLOCKS_API_KEY in ./.env, when this directory has one
+A BLOCKS_API_KEY exported in your shell is not touched; unset it yourself.`,
 	RunE: runLogout,
 }
 
@@ -66,7 +72,7 @@ func runBlocksLogout() error {
 	// authenticating credential (loadCredentials reads it before the legacy
 	// credentials.json fallback), so a failure here means the user is NOT
 	// actually logged out — we must report it rather than print "Logged out.".
-	clearErr := clearActiveProfileKeys()
+	clearedName, clearedProfile, clearErr := clearActiveProfileKeys()
 
 	// Remove only the "blocks" namespace so partner credentials are preserved.
 	// Attempted even when the profile clear failed, so everything reachable is
@@ -86,7 +92,7 @@ func runBlocksLogout() error {
 	// or could not rewrite still authenticates every later command in this directory,
 	// so it is a failed logout for the same reason a surviving profile key is: the
 	// credential is still on disk and still usable.
-	envErr := removeEnvApiKey(".env")
+	clearedEnv, envErr := removeEnvApiKey(".env")
 
 	if err := errors.Join(clearErr, legacyErr, envErr); err != nil {
 		// The profile is named through the resolved context so the suggestion
@@ -95,7 +101,7 @@ func runBlocksLogout() error {
 		return logoutIncompleteError(clictx.Profile(), err)
 	}
 
-	printLogoutSummary()
+	printLogoutSummary(clearedName, clearedProfile, clearedEnv)
 	return nil
 }
 
@@ -125,8 +131,24 @@ func clearLegacyBlocksCredential() error {
 // clears the credentials of that profile, so the profile — and its brand — is
 // exactly what the sentence is about. An ambient backend URL redirects requests,
 // not the store this command edits.
-func printLogoutSummary() {
+func printLogoutSummary(clearedName string, clearedProfile, clearedEnv bool) {
 	fmt.Printf("Logged out of %s.\n", branding.ProductName())
+	if clearedProfile {
+		fmt.Printf("  Removed the API keys of profile %q from %s.\n", termsafe.Text(clearedName), profileStoreDisplayPath())
+	} else if clearedName != "" {
+		fmt.Printf("  Profile %q had no stored API key in %s.\n", termsafe.Text(clearedName), profileStoreDisplayPath())
+	}
+	if clearedEnv {
+		fmt.Printf("  Removed %s from %s.\n", blocksAPIKeyEnv, displayEnvPath(".env"))
+	}
+	if clearedProfile || clearedEnv {
+		fmt.Println("  The key is not revoked on the server; revoke it from the dashboard if it may have leaked.")
+	}
+	// envFileSuppliedCLIVar, not envFileSource: on Unix a lowercase blocks_api_key in .env
+	// is a different variable, and must not hide that the shell's BLOCKS_API_KEY survives.
+	if envFileSuppliedCLIVar(blocksAPIKeyEnv) == "" && strings.TrimSpace(os.Getenv(blocksAPIKeyEnv)) != "" {
+		fmt.Printf("  Note: %s is still exported in your shell, and commands keep using it until you unset it.\n", blocksAPIKeyEnv)
+	}
 	name := clictx.Profile()
 	if name == "" || name == profiles.DefaultProfile {
 		return
@@ -146,37 +168,40 @@ func printLogoutSummary() {
 // clearActiveProfileKeys removes the cached org keys and default-org pointer from
 // the selected profile (--profile → BLOCKS_PROFILE → active), preserving its
 // deployment target and branding (base_url/enterprise/product_name/dashboard) so
-// `blocks login` (no URL) still resolves the same instance afterward. It returns
-// an error if the store cannot be read or the cleared state cannot be persisted —
-// callers MUST treat that as a failed logout, since the org key remains usable.
-func clearActiveProfileKeys() error {
+// `blocks login` (no URL) still resolves the same instance afterward. It reports
+// whether there was a key to clear, so the summary can say what was removed. It
+// returns an error if the store cannot be read or the cleared state cannot be
+// persisted — callers MUST treat that as a failed logout, since the org key remains
+// usable.
+func clearActiveProfileKeys() (name string, cleared bool, err error) {
 	c, err := profiles.Load()
 	if err != nil {
-		return fmt.Errorf("read credentials store: %w", err)
+		return "", false, fmt.Errorf("read credentials store: %w", err)
 	}
 	// Resolve the target the same way every other command does. Using c.Active
 	// directly would ignore an explicit --profile flag and clear the wrong profile.
-	name := profiles.SelectedName()
+	name = profiles.SelectedName()
 	if name == "" {
 		name = c.Active
 	}
 	p, ok := c.Profiles[name]
 	if !ok {
-		return nil // no such profile — nothing cached to clear
+		return "", false, nil // no such profile — nothing cached to clear
 	}
 	if len(p.Orgs) == 0 && p.DefaultOrgID == "" {
-		return nil // already clear — no write (and no failure surface) needed
+		return name, false, nil // already clear — no write (and no failure surface) needed
 	}
 	p.Orgs = map[string]profiles.OrgKey{}
 	p.DefaultOrgID = ""
 	c.Profiles[name] = p
 	if err := profiles.Save(c); err != nil {
-		return fmt.Errorf("write credentials store: %w", err)
+		return name, false, fmt.Errorf("write credentials store: %w", err)
 	}
-	return nil
+	return name, true, nil
 }
 
-// removeEnvApiKey removes the BLOCKS_API_KEY line from the given .env file. Its
+// removeEnvApiKey removes the BLOCKS_API_KEY line from the given .env file and
+// reports whether the file carried one. Its
 // failure is returned rather than warned about: the logout summary says the key is
 // gone, and a logout that cannot prove it removed the key must not claim it did. No
 // .env at all is not a failure — most projects have none — but a .env that exists and
@@ -189,9 +214,10 @@ func clearActiveProfileKeys() error {
 // forgets a deployment: it judges the two pins independently and, when the backend
 // pin was one of the matches, drops BLOCKS_API_KEY with them — because the key
 // records where it is spent, not where it was minted.
-func removeEnvApiKey(path string) error {
-	if err := auth.RemoveEnvKey(path, blocksAPIKeyEnv); err != nil {
-		return fmt.Errorf("could not remove %s from %s: %w", blocksAPIKeyEnv, displayEnvPath(path), err)
+func removeEnvApiKey(path string) (removed bool, err error) {
+	assigned, err := auth.RemoveEnvKeys(path, blocksAPIKeyEnv)
+	if err != nil {
+		return false, fmt.Errorf("could not remove %s from %s: %w", blocksAPIKeyEnv, displayEnvPath(path), err)
 	}
-	return nil
+	return len(assigned) > 0, nil
 }

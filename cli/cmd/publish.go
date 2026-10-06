@@ -18,6 +18,7 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/registry"
 	"github.com/pubnub/blocks-sdk/cli/internal/termsafe"
+	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 )
@@ -102,6 +103,7 @@ func runPublish(ctx context.Context, cmd *cobra.Command, args []string) error {
 	// deployment itself before it asks, so the half of the target that is settled
 	// early is still seen before the picker's own first side effect.
 	clictx.PrintBanner()
+	noteStoredCredential(os.Stderr)
 
 	org, err := resolveOrgNameInput(cmd, prep, interactive, "org-name", publishOrgName)
 	if err != nil {
@@ -298,6 +300,11 @@ type publishPrep struct {
 // and the enterprise verdict all come from the invocation's resolved context,
 // so neither command re-derives any of them.
 func preparePublish(commandName string, args []string) (*publishPrep, error) {
+	if len(args) == 0 {
+		if err := callerProjectError(mustCwd(), commandName); err != nil {
+			return nil, err
+		}
+	}
 	backendURL := resolveBackendURL()
 
 	apiKey, err := resolvePublishApiKey()
@@ -743,6 +750,7 @@ func printPublishIntro(agentName string) {
 	}
 	fmt.Println()
 	fmt.Println("We'll collect the details we need, then publish your agent.")
+	fmt.Println(wizard.PromptIntro)
 }
 
 func printPublishSummary(agentName string, input registry.PromotionInput) {
@@ -1101,7 +1109,7 @@ func retryOrgNamePrompt(defaultName string) string {
 		if !ok {
 			return ""
 		}
-		if line == "?" {
+		if wizard.IsHelpRequest(line) {
 			fmt.Println(registry.HelpOrgNameText())
 			continue
 		}

@@ -221,12 +221,6 @@ func TestWithCLIVersionUsesCurrentVersion(t *testing.T) {
 	}
 }
 
-func TestCLIVersionEnvKeyConstant(t *testing.T) {
-	if cliVersionEnvKey != "BLOCKS_CLI_VERSION" {
-		t.Errorf("cliVersionEnvKey = %q, want %q", cliVersionEnvKey, "BLOCKS_CLI_VERSION")
-	}
-}
-
 func TestProtocolVersionFormat(t *testing.T) {
 	v := registry.ProtocolVersion
 	if v != "2026-05-01" {

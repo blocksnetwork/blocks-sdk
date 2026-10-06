@@ -90,6 +90,18 @@ describe('agent instance harness', () => {
     );
   });
 
+  it('points a missing BLOCKS_API_KEY at blocks run', async () => {
+    const { pubnub } = createFakePubNub();
+    vi.stubEnv('BLOCKS_API_KEY', '');
+    try {
+      await expect(startAgentInstance({ pubnub, agentName: 'acme_echo', card: makeTestCard() })).rejects.toThrow(
+        /^BLOCKS_API_KEY is required\..*'blocks run'/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('subscribes and handles StartTask with explicit agentName and heartbeat', async () => {
     const { pubnub, listeners } = createFakePubNub();
     // NOTE: No longer need to add task to index - agent instance publishes to task channel only

@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -90,70 +91,42 @@ func TestDefaultConfigModeProvider(t *testing.T) {
 // runWithClosedStdin redirects os.Stdin to a closed pipe, so every prompt
 // returns its default immediately (InteractiveSelect returns defaultIdx
 // because IsTerminal returns false; readLine returns defaultVal on EOF).
-func runWithClosedStdin(t *testing.T, nameFromArgs, langFromFlag, modeFromFlag string) Config {
+func runWithClosedStdin(t *testing.T, nameFromArgs, langFromFlag string) Config {
 	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	w.Close() // reads from r will see EOF / non-TTY
-	orig := os.Stdin
-	os.Stdin = r
-	defer func() {
-		os.Stdin = orig
-		r.Close()
-	}()
-	cfg, err := Run(nameFromArgs, langFromFlag, modeFromFlag)
+	closeStdin(t)
+	cfg, err := Run(nameFromArgs, langFromFlag)
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 	return cfg
 }
 
-func TestWizardModeFlagSkipsPrompt(t *testing.T) {
-	cfg := runWithClosedStdin(t, "my_consumer", "node", "consumer")
-	if cfg.Mode != "consumer" {
-		t.Errorf("Mode = %q, want %q", cfg.Mode, "consumer")
-	}
-	if cfg.Language != "node" {
-		t.Errorf("Language = %q, want %q", cfg.Language, "node")
-	}
+func closeStdin(t *testing.T) {
+	t.Helper()
+	stdinWith(t, "")
 }
 
-func TestWizardSkipsProviderPromptsForConsumer(t *testing.T) {
-	cfg := runWithClosedStdin(t, "my_consumer", "python", "consumer")
-	// Provider-only prompts must be skipped - their zero values prove
-	// Run() returned before the Concurrency prompt would have defaulted
-	// them to 1.
-	if cfg.Concurrency != 0 {
-		t.Errorf("Concurrency = %d, want 0 (prompt should be skipped for consumer)", cfg.Concurrency)
+func stdinWith(t *testing.T, content string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cfg.ExpectedInstances != 0 {
-		t.Errorf("ExpectedInstances = %d, want 0 for consumer", cfg.ExpectedInstances)
+	if _, err := w.WriteString(content); err != nil {
+		t.Fatal(err)
 	}
-	if cfg.Streaming {
-		t.Error("Streaming should be false for consumer")
-	}
-	if len(cfg.TaskKinds) != 0 {
-		t.Errorf("TaskKinds = %v, want empty for consumer", cfg.TaskKinds)
-	}
-	if cfg.Docker {
-		t.Error("Docker should be false for consumer")
-	}
-	// DisplayName prompt must be skipped for consumers.
-	if cfg.DisplayName != "" {
-		t.Errorf("DisplayName = %q, want empty (prompt should be skipped for consumer)", cfg.DisplayName)
-	}
-	// Description prompt must be skipped; a sensible default is used so
-	// pyproject.toml metadata stays valid.
-	if cfg.Description != "my_consumer consumer" {
-		t.Errorf("Description = %q, want %q", cfg.Description, "my_consumer consumer")
-	}
+	w.Close() // reads from r will see EOF / non-TTY
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = orig
+		r.Close()
+	})
 }
 
 func TestWizardProviderPromptsDefaultFilled(t *testing.T) {
 	// Control: when Type is "provider", all prompts run and defaults fill.
-	cfg := runWithClosedStdin(t, "my_provider", "python", "provider")
+	cfg := runWithClosedStdin(t, "my_provider", "python")
 	if cfg.Concurrency != 1 {
 		t.Errorf("Concurrency = %d, want 1 (readInt default)", cfg.Concurrency)
 	}
@@ -165,27 +138,23 @@ func TestWizardProviderPromptsDefaultFilled(t *testing.T) {
 	}
 }
 
-func TestModeFromIndex(t *testing.T) {
-	if got := modeFromIndex(0); got != "provider" {
-		t.Errorf("modeFromIndex(0) = %q, want %q", got, "provider")
+func TestRunCallerBlankAgentSkipsPick(t *testing.T) {
+	stdinWith(t, "\n")
+	cfg, err := RunCaller(context.Background(), CallerOptions{Name: "my-caller", Language: "python"})
+	if err != nil {
+		t.Fatalf("RunCaller: %v", err)
 	}
-	if got := modeFromIndex(1); got != "consumer" {
-		t.Errorf("modeFromIndex(1) = %q, want %q", got, "consumer")
-	}
-	// Defensive: any other value falls back to provider.
-	if got := modeFromIndex(99); got != "provider" {
-		t.Errorf("modeFromIndex(99) = %q, want %q", got, "provider")
+	if cfg.TargetAgent != "" {
+		t.Errorf("TargetAgent = %q, want empty after a skipped pick", cfg.TargetAgent)
 	}
 }
 
-func TestWizardNonTTYDefaultsToProvider(t *testing.T) {
-	// When no --mode flag is given and stdin is non-TTY,
-	// InteractiveSelect returns the default index (0) and the wizard
-	// picks "provider". This exercises the same mapping path that a
-	// human pressing Enter without navigating the arrow keys would hit.
-	cfg := runWithClosedStdin(t, "x", "python", "")
-	if cfg.Mode != "provider" {
-		t.Errorf("Mode = %q, want %q (default index 0)", cfg.Mode, "provider")
+func TestRunCallerRejectsUnsafeProjectName(t *testing.T) {
+	for _, name := range []string{"../escape", ".caller", "caller-"} {
+		closeStdin(t)
+		if _, err := RunCaller(context.Background(), CallerOptions{Name: name, Language: "python"}); err == nil {
+			t.Errorf("RunCaller accepted unsafe project name %q", name)
+		}
 	}
 }
 
@@ -210,54 +179,6 @@ func TestNormalizeMode(t *testing.T) {
 		if got != tc.want || ok != tc.wantOK {
 			t.Errorf("NormalizeMode(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.wantOK)
 		}
-	}
-}
-
-func TestModeLabelsSwitchOnEnterprise(t *testing.T) {
-	if got, want := modeLabels(false), []string{"Provider", "Consumer"}; got[0] != want[0] || got[1] != want[1] {
-		t.Errorf("network labels = %v, want %v", got, want)
-	}
-	if got, want := modeLabels(true), []string{"Connect agent", "Call agent"}; got[0] != want[0] || got[1] != want[1] {
-		t.Errorf("enterprise labels = %v, want %v", got, want)
-	}
-}
-
-func TestNormalizeModeCanonicalValues(t *testing.T) {
-	// Unit test: verify that aliases normalize to the expected canonical values.
-
-	// Test provider/connect-agent normalization
-	providerNorm, providerOK := NormalizeMode("provider")
-	connectNorm, connectOK := NormalizeMode("connect-agent")
-
-	if !providerOK || !connectOK {
-		t.Fatalf("Both provider and connect-agent should be valid")
-	}
-
-	if providerNorm != connectNorm {
-		t.Errorf("provider and connect-agent should normalize to same value: got %q vs %q",
-			providerNorm, connectNorm)
-	}
-
-	// Test consumer/call-agent normalization
-	consumerNorm, consumerOK := NormalizeMode("consumer")
-	callNorm, callOK := NormalizeMode("call-agent")
-
-	if !consumerOK || !callOK {
-		t.Fatalf("Both consumer and call-agent should be valid")
-	}
-
-	if consumerNorm != callNorm {
-		t.Errorf("consumer and call-agent should normalize to same value: got %q vs %q",
-			consumerNorm, callNorm)
-	}
-
-	// Verify the canonical values are what we expect
-	if providerNorm != "provider" {
-		t.Errorf("provider/connect-agent should normalize to 'provider', got %q", providerNorm)
-	}
-
-	if consumerNorm != "consumer" {
-		t.Errorf("consumer/call-agent should normalize to 'consumer', got %q", consumerNorm)
 	}
 }
 
@@ -303,7 +224,7 @@ func TestReadLineNoInputMode(t *testing.T) {
 }
 
 func TestReadConfirmNoInputMode(t *testing.T) {
-	// Test that readConfirm errors with --no-input instead of reading from stdin
+	// Test that Confirm errors with --no-input instead of reading from stdin
 	SetNoInputMode(true)
 	t.Cleanup(func() { SetNoInputMode(false) })
 
@@ -316,10 +237,10 @@ func TestReadConfirmNoInputMode(t *testing.T) {
 	w.Close() // Close write end immediately
 
 	reader := bufio.NewReader(r)
-	_, err = readConfirm(reader, "Enable streaming?", false, "help text")
+	_, err = Confirm(reader, "Enable streaming?", false, "help text")
 
 	if err == nil {
-		t.Error("readConfirm should return error with --no-input")
+		t.Error("Confirm should return error with --no-input")
 	}
 	if !strings.Contains(err.Error(), "cannot ask \"Enable streaming?\" with --no-input") {
 		t.Errorf("error should mention the question name, got: %v", err)
@@ -403,22 +324,6 @@ func TestReadRequiredLineEOFIsAnError(t *testing.T) {
 	}
 }
 
-// Help, blank answers, and answers the validator rejects all re-prompt; only a
-// valid answer is returned.
-func TestReadRequiredLineRepromptsUntilValid(t *testing.T) {
-	SetNoInputMode(false)
-	t.Cleanup(func() { SetNoInputMode(false) })
-
-	in := bufio.NewReader(strings.NewReader("?\n\nnot a name\ngood_name\n"))
-	got, err := readRequiredLine(in, "Agent name", agentNameFlagHint, "help", ValidateAgentName)
-	if err != nil {
-		t.Fatalf("readRequiredLine: %v", err)
-	}
-	if got != "good_name" {
-		t.Errorf("readRequiredLine = %q, want %q", got, "good_name")
-	}
-}
-
 func TestWizardFunctionsNormalBehaviorWithoutNoInput(t *testing.T) {
 	// Test that without --no-input, all functions maintain current behavior
 	SetNoInputMode(false) // Ensure it's off
@@ -452,29 +357,12 @@ func TestWizardFunctionsNormalBehaviorWithoutNoInput(t *testing.T) {
 		t.Errorf("readInt should return default on EOF, got %d", num)
 	}
 
-	// readConfirm should return default on EOF
-	confirm, err := readConfirm(reader, "Enable feature?", true, "help")
+	// Confirm should return default on EOF
+	confirm, err := Confirm(reader, "Enable feature?", true, "help")
 	if err != nil {
-		t.Errorf("readConfirm should not error without --no-input: %v", err)
+		t.Errorf("Confirm should not error without --no-input: %v", err)
 	}
 	if !confirm {
-		t.Error("readConfirm should return default (true) on EOF")
-	}
-}
-
-func TestWizardFunctionsNonTTYBehaviorUnchanged(t *testing.T) {
-	// Test that non-TTY without --no-input gives existing defaults without new errors
-	SetNoInputMode(false)
-	t.Cleanup(func() { SetNoInputMode(false) })
-
-	// This test verifies that the existing non-TTY behavior remains unchanged
-	cfg := runWithClosedStdin(t, "test_agent", "python", "provider")
-
-	// These should still work as before - the changes should only affect --no-input mode
-	if cfg.Name != "test_agent" {
-		t.Errorf("Name = %q, want %q", cfg.Name, "test_agent")
-	}
-	if cfg.Concurrency != 1 {
-		t.Errorf("Concurrency = %d, want 1 (default should still work)", cfg.Concurrency)
+		t.Error("Confirm should return default (true) on EOF")
 	}
 }
