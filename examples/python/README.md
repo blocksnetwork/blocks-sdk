@@ -111,5 +111,5 @@ canonical schema. Before authoring a card, read:
 Summary rules: every `io.inputs[]` entry MUST declare `description`;
 `contentType` MUST be lowercase canonical form; form-class inputs MUST
 declare `schema` + `example`; file-class inputs MAY declare `accept`
-and `maxSizeBytes` (≤ `BLOCKS_MAX_UPLOAD_BYTES` = 26 MB). Run
+and `maxSizeBytes` (≤ `BLOCKS_MAX_UPLOAD_BYTES`). Run
 `blocks check` locally to catch violations before registration.

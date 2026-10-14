@@ -536,6 +536,11 @@ func applyPromotionToEnvelope(envelope map[string]interface{}, promInput registr
 	}
 }
 
+const (
+	agentNameTakenCode   = "AgentNameTaken"
+	agentOrgMismatchCode = "AgentOrgMismatch"
+)
+
 // submitPublishError maps a failed registry POST into an actionable error.
 // 401 messaging depends on how the API key was supplied; other statuses fall
 // through to the shared publish-failure formatter.
@@ -554,6 +559,12 @@ func submitPublishError(err error, agentName string, promInput registry.Promotio
 		}
 		return authFailedStoredCredentialError(opts.commandName)
 	case 403:
+		switch apiErr.Code {
+		case agentNameTakenCode:
+			return agentNameTakenError(agentName)
+		case agentOrgMismatchCode:
+			return agentOrgMismatchError(agentName)
+		}
 		return permissionDenied403Error()
 	default:
 		return publishFailedError(agentName, promInput, apiErrorToMap(apiErr), opts.commandName)

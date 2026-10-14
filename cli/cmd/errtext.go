@@ -181,6 +181,25 @@ func permissionDenied403Error() error {
 	return fmt.Errorf("permission denied (HTTP 403) — check that your API key owns this agent")
 }
 
+func agentNameTakenError(agentName string) error {
+	name := termsafe.Text(agentName)
+	if label := deploymentLabel(); clictx.Enterprise() && label != "" {
+		return fmt.Errorf("Agent name %q is already registered to a different organization on %s.\n  Choose a more specific identity.agentName in agent-card.json, then retry.",
+			name, label)
+	}
+	return fmt.Errorf("agent name %q is already registered to a different organization — agent names are unique across Blocks Network, so choose a more specific identity.agentName in agent-card.json (e.g. prefix it with your company or product) and retry", name)
+}
+
+func agentOrgMismatchError(agentName string) error {
+	name := termsafe.Text(agentName)
+	const remedy = "Log in to that organization with 'blocks login --org <organization>', or use an API key from it, then retry."
+	if label := deploymentLabel(); clictx.Enterprise() && label != "" {
+		return fmt.Errorf("Agent %q belongs to another organization you are a member of on %s, not the one your API key is for.\n  %s",
+			name, label, remedy)
+	}
+	return fmt.Errorf("agent %q belongs to another organization you are a member of, not the one your API key is for\n  %s", name, remedy)
+}
+
 // validationBeforeCommandError is the agent-card validation summary.
 // commandName decides the verb so `blocks register` no longer tells the user
 // to fix errors "before publishing".
@@ -345,4 +364,12 @@ func webappMultiOrgPrivateAgentsError(groups []privateOrgGroup) error {
 		"  Keep private agents from one organization per page, or make the others public:\n"+
 		"  run 'blocks publish --listing public' for the agents that should be reachable by anyone.",
 		strings.Join(lines, "\n"))
+}
+
+func reasonOmittedWarning() string {
+	return "Warning: no --reason given. A reason will be required from April 1, 2027; pass --reason to record why in the audit log."
+}
+
+func reasonRejectedError(err error) error {
+	return fmt.Errorf("%w\n(this deployment may predate --reason; retry without it)", err)
 }

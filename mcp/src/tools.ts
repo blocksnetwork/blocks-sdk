@@ -321,7 +321,7 @@ export async function sendTask(
         content: [
           {
             type: 'text',
-            text: `File too large (${size} bytes). Maximum upload size is ${deps.maxUploadBytes} bytes (25 MB).`,
+            text: `File too large (${size} bytes). Maximum upload size is ${deps.maxUploadBytes} bytes.`,
           },
         ],
         isError: true,

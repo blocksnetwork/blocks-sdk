@@ -1543,6 +1543,69 @@ func TestPublish401ReturnsActionableError(t *testing.T) {
 	}
 }
 
+func TestPublish403SeparatesNameConflictsFromPermissionDenied(t *testing.T) {
+	cases := []struct {
+		name, body, want, notWant string
+	}{
+		{
+			name:    "name taken",
+			body:    `{"error":"Agent is registered to a different organization","code":"AgentNameTaken"}`,
+			want:    "already registered to a different organization",
+			notWant: "API key",
+		},
+		{
+			name:    "key from another of your organizations",
+			body:    `{"error":"Agent is registered to a different organization","code":"AgentOrgMismatch"}`,
+			want:    "belongs to another organization you are a member of",
+			notWant: "more specific",
+		},
+		{
+			name: "permission denied",
+			body: `{"error":"Forbidden: agent owned by another user"}`,
+			want: "check that your API key owns this agent",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := setupFakeCredentials(t)
+			defer cleanup()
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(403)
+				w.Write([]byte(tc.body))
+			}))
+			defer ts.Close()
+
+			dir := writeValidProject(t)
+			cardPath := filepath.Join(dir, "agent-card.json")
+			t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+
+			oldDir, _ := os.Getwd()
+			os.Chdir(dir)
+			defer os.Chdir(oldDir)
+
+			resetPublishFlags()
+			t.Cleanup(resetPublishFlags)
+
+			var publishErr error
+			captureStdout(func() {
+				rootCmd.SetArgs([]string{"publish", cardPath, "--listing", "public", "--billing-mode", "free", "--accept-terms"})
+				publishErr = rootCmd.Execute()
+			})
+
+			if publishErr == nil {
+				t.Fatal("expected error on 403")
+			}
+			if !strings.Contains(publishErr.Error(), tc.want) {
+				t.Errorf("error should contain %q, got: %s", tc.want, publishErr)
+			}
+			if tc.notWant != "" && strings.Contains(publishErr.Error(), tc.notWant) {
+				t.Errorf("error should not contain %q, got: %s", tc.notWant, publishErr)
+			}
+		})
+	}
+}
+
 // TestPublish401WithApiKeyFlag verifies that a 401 when using --api-key
 // tells the user to replace the key, not to run 'blocks login'.
 func TestPublish401WithApiKeyFlag(t *testing.T) {

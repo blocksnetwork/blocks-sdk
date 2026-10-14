@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
@@ -36,6 +37,7 @@ var inviteSendEmail string
 var inviteSendOrg string
 var inviteRevokeEmail string
 var inviteRevokeOrg string
+var inviteRevokeReason string
 
 func init() {
 	rootCmd.AddCommand(inviteCmd)
@@ -50,6 +52,7 @@ func init() {
 	inviteCmd.AddCommand(inviteRevokeCmd)
 	inviteRevokeCmd.Flags().StringVar(&inviteRevokeEmail, "email", "", "Email of the person or agent whose access and pending invitations to withdraw")
 	inviteRevokeCmd.Flags().StringVar(&inviteRevokeOrg, "org", "", "Slug or ID of the organization whose access and pending invitations to withdraw")
+	inviteRevokeCmd.Flags().StringVar(&inviteRevokeReason, "reason", "", "Why access is being withdrawn (recorded in the audit log)")
 
 	inviteCmd.AddCommand(inviteGrantsCmd)
 }
@@ -129,6 +132,9 @@ var inviteRevokeCmd = &cobra.Command{
 	Short: "Revoke access to a private agent and cancel pending invitations",
 	Args:  agentNameArg,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := rejectBlankReason(cmd); err != nil {
+			return err
+		}
 		if inviteRevokeEmail == "" && inviteRevokeOrg == "" {
 			return fmt.Errorf("either --email or --org is required")
 		}
@@ -348,8 +354,12 @@ func runInviteRevoke(agentName string) error {
 	}
 
 	revokeURL := fmt.Sprintf("%s/api/v1/agents/%s/access/revoke", backendURL, agentPathSegment(agentName))
+	reason := strings.TrimSpace(inviteRevokeReason)
+	if reason == "" {
+		fmt.Fprintln(os.Stderr, reasonOmittedWarning())
+	}
 	var resp *http.Response
-	for _, payload := range revokeTargetPayloads() {
+	for _, payload := range revokeTargetPayloads(reason) {
 		if resp != nil {
 			resp.Body.Close()
 		}
@@ -364,6 +374,9 @@ func runInviteRevoke(agentName string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusBadRequest && reason != "" {
+			return revokeBadRequestError(resp)
+		}
 		return handleErrorResponse(resp)
 	}
 
@@ -394,15 +407,43 @@ func runInviteRevoke(agentName string) error {
 var orgIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // A UUID-shaped --org is tried as an ID first, then as a slug, since a slug can look like a UUID.
-func revokeTargetPayloads() []map[string]string {
+func revokeTargetPayloads(reason string) []map[string]string {
+	var payloads []map[string]string
 	switch {
 	case inviteRevokeEmail != "":
-		return []map[string]string{{"email": inviteRevokeEmail}}
+		payloads = []map[string]string{{"email": inviteRevokeEmail}}
 	case orgIDPattern.MatchString(inviteRevokeOrg):
-		return []map[string]string{{"targetOrgId": inviteRevokeOrg}, {"targetOrgSlug": inviteRevokeOrg}}
+		payloads = []map[string]string{{"targetOrgId": inviteRevokeOrg}, {"targetOrgSlug": inviteRevokeOrg}}
 	default:
-		return []map[string]string{{"targetOrgSlug": inviteRevokeOrg}}
+		payloads = []map[string]string{{"targetOrgSlug": inviteRevokeOrg}}
 	}
+	if reason != "" {
+		for _, p := range payloads {
+			p["reason"] = reason
+		}
+	}
+	return payloads
+}
+
+// A deployment that predates --reason rejects the key through a strict zod schema:
+// `Unrecognized key: "reason"`.
+func reasonKeyUnrecognized(body []byte) bool {
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(body, &errResp)
+	msg := strings.ToLower(errResp.Error + " " + errResp.Message)
+	return strings.Contains(msg, "unrecognized") && strings.Contains(msg, "reason")
+}
+
+func revokeBadRequestError(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if reasonKeyUnrecognized(body) {
+		return reasonRejectedError(handleErrorResponse(resp))
+	}
+	return handleErrorResponse(resp)
 }
 
 // 400 as well as 404: the deployment refuses a hex string that is not an RFC 4122 UUID as an ID.

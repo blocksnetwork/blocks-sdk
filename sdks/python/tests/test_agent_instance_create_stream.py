@@ -413,3 +413,185 @@ class TestSharedAffinityPreservation:
             )
         finally:
             result["stop"]()
+
+
+def _keyset(env: str) -> Dict[str, str]:
+    return {"subscribe_key": f"{env}-sub", "publish_key": f"{env}-pub"}
+
+
+def _fake_credential(label: str) -> str:
+    return f"fake-{label}"
+
+
+_PG = _keyset("pg")
+_NW = _keyset("nw")
+
+
+def _wait_until(predicate: Any, what: str, timeout: float = 3.0) -> None:
+    deadline = time.time() + timeout
+    while not predicate() and time.time() < deadline:
+        time.sleep(0.01)
+    assert predicate(), what
+
+
+class _SwitchHarness:
+    """Two-keyset instance; each handler blocks until ``finish(task_id)``, then creates a stream."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from blocks_network.agent_registry import AgentEntry, ConnectAgentResult
+        from blocks_network.cdm_config import CdmApiConfig, CdmConfig, CdmKeyset
+
+        cdm = CdmConfig(
+            playground=CdmKeyset(**_PG),
+            network=CdmKeyset(**_NW),
+            api=CdmApiConfig(base_url="http://localhost:3001"),
+        )
+        self.created: List[Dict[str, Any]] = []
+        self._gates: Dict[str, threading.Event] = {}
+        self._started: Dict[str, threading.Event] = {}
+        self._done: Dict[str, threading.Event] = {}
+
+        def _create(**kwargs: Any) -> MagicMock:
+            pn = _make_mock_pubnub_with_abort_setup("echo")
+            self.created.append({"kwargs": kwargs, "pn": pn})
+            return pn
+
+        monkeypatch.setattr(_ai_mod, "create_pubnub_client", _create)
+        monkeypatch.setattr(_ai_mod, "fetch_cdm_config", lambda *a, **k: cdm)
+        monkeypatch.setattr(
+            _ai_mod,
+            "get_agent",
+            lambda *a, **k: AgentEntry(
+                agent_name="echo", name="Echo", listing="public", billing_mode="free"
+            ),
+        )
+        monkeypatch.setattr(
+            "blocks_network.agent_registry.connect_agent",
+            lambda *a, **k: ConnectAgentResult(
+                pam_token=_fake_credential("pam"), control_channel="agent.echo-id.control"
+            ),
+        )
+
+        def _handler(task: StartTaskMessage, ctx: TaskContext) -> Dict[str, Any]:
+            self._started[task.task_id].set()
+            assert self._gates[task.task_id].wait(timeout=3.0)
+            ctx.create_stream(subscribe_grace_ms=0)
+            self._done[task.task_id].set()
+            return {}
+
+        self._handler = _handler
+        self._result: Optional[Dict[str, Any]] = None
+
+    def start(self) -> MagicMock:
+        """Start the instance and return its control-channel client."""
+        self._result = start_agent_instance(
+            AgentInstanceOptions(
+                card={"streams": {"_default": {"direction": "outbound", "format": "bytes"}}},
+                agent_name="echo",
+                handler=self._handler,
+                concurrency=2,
+            )
+        )
+        control = next(
+            c["pn"] for c in self.created if c["kwargs"].get("presence_timeout") == 20
+        )
+        _wait_until(lambda: control.subscribe.called, "control channel never subscribed")
+        return control
+
+    def receive(self, control: MagicMock, task_id: str) -> None:
+        """Deliver StartTask on ``control`` and wait for the handler to begin."""
+        for events in (self._gates, self._started, self._done):
+            events[task_id] = threading.Event()
+        _simulate_start_task(control, task_id=task_id, has_stream=True, task_kind="pipe")
+        assert self._started[task_id].wait(timeout=3.0), f"{task_id} never started"
+
+    def switch_to(self, control: MagicMock, environment: str) -> MagicMock:
+        """Deliver SwitchEnvironment; return the replacement control client."""
+        before = len(self.created)
+        event = MagicMock()
+        event.message = {
+            "type": "SwitchEnvironment",
+            "environment": environment,
+            "pamToken": _fake_credential(environment),
+        }
+        event.user_metadata = None
+        for listener in list(control._listeners):
+            listener.message(control, event)
+        # The new control client replaces the old one and receives later messages.
+        new_control = next(
+            (c["pn"] for c in self.created[before:] if c["kwargs"].get("presence_timeout") == 20),
+            None,
+        )
+        assert new_control is not None, "SwitchEnvironment did not create a new control client"
+        return new_control
+
+    def finish(self, task_id: str) -> None:
+        """Release the task's handler and wait until its stream is created."""
+        self._gates[task_id].set()
+        assert self._done[task_id].wait(timeout=3.0), f"{task_id} never created its stream"
+
+    def stream_client_for(self, task_id: str) -> Dict[str, Any]:
+        """Return the single captured StreamClient built for ``task_id``."""
+        # Dedicated stream ids are `{task_id}-{n}`.
+        matches = [
+            c for c in _CapturingStreamClient.captures
+            if str(c["stream_id"]).startswith(f"{task_id}-")
+        ]
+        assert len(matches) == 1
+        return matches[0]
+
+    def stop(self) -> None:
+        """Idempotent stop (safe when not running)."""
+        if self._result is not None:
+            self._result["stop"]()
+
+
+@pytest.fixture
+def switch_harness(monkeypatch: pytest.MonkeyPatch):
+    """Yield a harness and always stop its instance."""
+    harness = _SwitchHarness(monkeypatch)
+    try:
+        yield harness
+    finally:
+        harness.stop()
+
+
+class TestStreamKeysetAfterSwitchEnvironment:
+    """An embedded stream keeps the keyset of its task's receiving environment."""
+
+    def test_stream_client_uses_task_received_keyset(
+        self, switch_harness: _SwitchHarness
+    ) -> None:
+        """A task received before the switch keeps the playground keys."""
+        control = switch_harness.start()
+        switch_harness.receive(control, "task-pg")
+        switch_harness.switch_to(control, "network")
+        switch_harness.finish("task-pg")
+
+        assert switch_harness.stream_client_for("task-pg").items() >= _PG.items()
+
+    def test_task_received_after_switch_uses_network_keyset(
+        self, switch_harness: _SwitchHarness
+    ) -> None:
+        """A task received after the switch uses the network keys."""
+        control = switch_harness.start()
+        network_control = switch_harness.switch_to(control, "network")
+        switch_harness.receive(network_control, "task-nw")
+        switch_harness.finish("task-nw")
+
+        assert switch_harness.stream_client_for("task-nw").items() >= _NW.items()
+
+    def test_overlapping_tasks_each_use_their_own_keyset(
+        self, switch_harness: _SwitchHarness
+    ) -> None:
+        """Each task keeps its original keyset despite later switches."""
+        control = switch_harness.start()
+        switch_harness.receive(control, "task-pg")
+        network_control = switch_harness.switch_to(control, "network")
+        switch_harness.receive(network_control, "task-nw")
+        # Finish the older task last so "most recently received task wins" cannot pass.
+        switch_harness.finish("task-nw")
+        switch_harness.finish("task-pg")
+
+        assert switch_harness.stream_client_for("task-pg").items() >= _PG.items()
+        assert switch_harness.stream_client_for("task-nw").items() >= _NW.items()

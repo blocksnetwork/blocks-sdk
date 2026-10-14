@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/agentname"
 	"github.com/pubnub/blocks-sdk/cli/internal/auth"
 	"github.com/pubnub/blocks-sdk/cli/internal/blocksapi"
 	"github.com/pubnub/blocks-sdk/cli/internal/cardfetch"
@@ -34,9 +34,6 @@ var (
 	initBlocksBaseURL string
 	initBackendURL    string
 )
-
-// initAgentNameRe enforces the bare agent-name pattern (matches registry column).
-var initAgentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 func init() {
 	initCmd.Flags().BoolVarP(&initYes, "yes", "y", false, "Use defaults (non-interactive)")
@@ -380,7 +377,7 @@ func runWebapp(ctx context.Context, nameFromArgs string) error {
 		if name == "" {
 			return fmt.Errorf("--agent values must be non-empty")
 		}
-		if !initAgentNameRe.MatchString(name) {
+		if !agentname.Pattern.MatchString(name) {
 			return fmt.Errorf("use the bare agent name (e.g. 'translator'), not the namespaced form (e.g. 'acme/translator'); got %q", name)
 		}
 		if _, dup := seen[name]; dup {
@@ -550,7 +547,7 @@ func callerAgentFromFlag() (string, error) {
 		return "", fmt.Errorf("--mode consumer calls one agent; pass --agent once")
 	}
 	name := initAgents[0]
-	if !initAgentNameRe.MatchString(name) {
+	if !agentname.Pattern.MatchString(name) {
 		return "", fmt.Errorf("use the bare agent name (e.g. 'translator'), not the namespaced form (e.g. 'acme/translator'); got %q", name)
 	}
 	return name, nil

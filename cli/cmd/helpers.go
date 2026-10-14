@@ -12,6 +12,7 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
 	"github.com/pubnub/blocks-sdk/cli/internal/scaffold"
+	"github.com/spf13/cobra"
 )
 
 // Build-time defaults injected via ldflags.
@@ -408,4 +409,14 @@ func credentialSupplied() bool {
 // decision that is allowed to depend on interactivity must go through here.
 func interactiveSession() bool {
 	return isInteractive() && !noInputMode
+}
+
+// rejectBlankReason fails a --reason that was passed but is blank, typically an empty
+// shell variable. Left alone it would be sent as no reason at all, which the
+// deployment accepts and records as null.
+func rejectBlankReason(cmd *cobra.Command) error {
+	if f := cmd.Flags().Lookup("reason"); f != nil && f.Changed && strings.TrimSpace(f.Value.String()) == "" {
+		return errors.New("--reason must not be blank; say why, or omit --reason")
+	}
+	return nil
 }

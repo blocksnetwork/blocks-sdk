@@ -146,6 +146,8 @@ declaration, or (for request tasks) the consumer didn't opt in via
 `extensions.blocks.stream`. Guard on `ctx.hasStream` before
 calling it.
 
+Stream setup is refused once the task has finished (for example a late `createStream()` or `activate()` after cancel or expiry); the SDK throws an `Error` whose message starts `Stream setup failed: [InvalidArgument]`, so open streams while the task runs and start a new task for new streaming work.
+
 ### agent-card.json (streams section)
 
 For request-only agents (`taskKinds: ["request"]`), streams must contain only `_default` (schema-enforced).
@@ -532,6 +534,17 @@ const client = await TaskClient.create({
   ```
 
   The list helpers (`fetchAgentRegistry`, `fetchAgentsByTag`, `fetchAgentsByListing`) take the same `baseUrl` / `apiKey` options.
+
+  Two more registry helpers are exported. `connectAgent(agentName, options)` gets an instance its runtime credentials from `POST /api/v1/auth/agent/connect` and returns `{ pamToken?, agentId?, controlChannel? }`. `startAgentInstance` calls it for you at boot: it fills in `instanceId` and the registry's `billingMode` and passes the `agentAuth` that `connectAgent` requires, so you rarely call it yourself. It sends no card or tags; those go up with `blocks publish`. `removeAgent(agentName, { baseUrl?, reason? })` soft-deletes the agent through `DELETE /api/v1/registry/agents?agentName=`, signed with `BLOCKS_API_KEY`. It returns `true` when the agent was removed and `false` when it was not found. Deleting is a management action, so it needs a person's API key; an agent's own runtime credential gets a 403. Pass `reason` to record why in the audit log (a blank one throws); without it the SDK warns, and the backend will require one from 2027-04-01.
+
+  ```ts
+  import { removeAgent } from '@blocks-network/sdk';
+
+  const removed = await removeAgent('acme_echo', {
+    baseUrl: api.baseUrl,
+    reason: 'Retired in favour of acme_echo_v2',
+  });
+  ```
 - Exactly one auth mode: `apiKey`, `tokenEndpoint`, or `tokenProvider`
 - `rpcHeaders?: Record<string, string>` — optional extra request headers merged onto every RPC call (not the token mint). Merged UNDER SDK-owned headers, so a caller cannot override `Authorization`, `Content-Type`, `Blocks-Protocol-Version`, or `X-Write-Affinity` (case-insensitive). Request metadata, not auth; the canonical dashboard use is `X-Active-Org` to scope a multi-org user's submission to the agent's owning org.
 - Returns `Promise<TaskClient>`
@@ -865,6 +878,7 @@ public or set pricing; it can also promote an already-registered agent.
 blocks unregister                               # Name read from ./agent-card.json
 blocks unregister <agentName>                   # Remove an agent from anywhere
 blocks unregister <agentName> --yes             # Skip the confirmation (required in CI)
+blocks unregister <agentName> --reason "…"      # Record why in the audit log
 blocks unregister <agentName> --api-key "$KEY"  # Inline auth (also --api-key-stdin)
 ```
 
@@ -875,6 +889,8 @@ the removal, which **cannot be undone**; no organization is named, because
 the removal is authorized by your rights over this agent rather than by the
 organization the key belongs to, and the confirmation prompt names the agent
 itself. A non-interactive session refuses to remove anything without `--yes`.
+Pass `--reason` to record why in the audit log; without it the command
+prints a warning, and a reason will be required from 2027-04-01.
 
 ### Publish (go public / set pricing)
 
@@ -940,11 +956,14 @@ blocks invite list <agentName>                            # list unaccepted invi
 blocks invite grants <agentName>                          # list active grants (users + orgs)
 blocks invite revoke <agentName> --email user@example.com # revoke a user's access and pending invitations
 blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org's access and pending invitations
+blocks invite revoke <agentName> --email user@example.com --reason "…" # record why in the audit log
 blocks invite accept <token>                              # consumer-side: accept an invitation token
 ```
 
 `--email` and `--org` are mutually exclusive on `send` / `revoke`. All
 commands require prior `blocks login`.
+`revoke` also takes `--reason`, recorded in the audit log; without it the
+command prints a warning, and a reason will be required from 2027-04-01.
 
 ### Maintenance
 

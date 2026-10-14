@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/pubnub/blocks-sdk/cli/internal/cdm"
 	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 	"github.com/pubnub/blocks-sdk/cli/internal/profiles"
+	"github.com/spf13/cobra"
 )
 
 func TestResolveWebappBackendURL_Precedence(t *testing.T) {
@@ -688,5 +691,32 @@ func TestLoadCredentialsReportsAnUnreadableStore(t *testing.T) {
 	// The two mappers read the same Credential, so they must agree on this arm.
 	if _, perr := resolvePublishApiKey(); perr == nil || !errors.Is(perr, boom) {
 		t.Errorf("resolvePublishApiKey must report the same cause, got %v", perr)
+	}
+}
+
+// An explicitly blank --reason (typically an empty shell variable) must fail before
+// any request, not pass as an omitted reason that the deployment records as null.
+func TestBlankReasonFlagIsRejectedBeforeAnyRequest(t *testing.T) {
+	for _, cmd := range []*cobra.Command{unregisterCmd, inviteRevokeCmd} {
+		for _, reason := range []string{"", "   "} {
+			t.Run(cmd.Name()+"/"+strconv.Quote(reason), func(t *testing.T) {
+				t.Setenv("BLOCKS_BACKEND_URL", "http://127.0.0.1:1")
+				flag := cmd.Flags().Lookup("reason")
+				prevCtx := cmd.Context()
+				t.Cleanup(func() {
+					_ = flag.Value.Set(flag.DefValue)
+					flag.Changed = false
+					cmd.SetContext(prevCtx)
+				})
+				if err := cmd.Flags().Set("reason", reason); err != nil {
+					t.Fatal(err)
+				}
+				cmd.SetContext(context.Background())
+				err := cmd.RunE(cmd, []string{"my_agent"})
+				if err == nil || !strings.Contains(err.Error(), "--reason must not be blank") {
+					t.Fatalf("err = %v, want the blank --reason error", err)
+				}
+			})
+		}
 	}
 }

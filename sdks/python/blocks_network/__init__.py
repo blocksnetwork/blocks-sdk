@@ -38,7 +38,7 @@ Public API exports:
     CallbackErrorContext    - Context for callback error routing.
     ArtifactRef             - Reference to a task output artifact.
     TokenEndpointConfig     - TypedDict for Mode 2 token-endpoint config object form.
-    BLOCKS_MAX_UPLOAD_BYTES - Platform upload ceiling in bytes (mirrors backend MAX_FILE_SIZE_BYTES).
+    BLOCKS_MAX_UPLOAD_BYTES - Platform upload ceiling in bytes; the service rejects larger files.
     BillingModeMismatchError - Raised when the backend rejects SendMessage with a BillingModeMismatch.
     RpcError                - Base structured error for JSON-RPC error responses.
     AnonTaskAccessDenied    - Raised when the anon-task-read-token endpoint returns 403.

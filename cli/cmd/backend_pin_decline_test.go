@@ -59,6 +59,7 @@ func resetUnregisterFlags(t *testing.T) {
 		unregisterYes = false
 		unregisterApiKey = ""
 		unregisterApiKeyStdin = false
+		unregisterReason = ""
 	})
 }
 

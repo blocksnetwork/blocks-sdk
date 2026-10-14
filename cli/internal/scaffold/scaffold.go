@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"text/template"
 	"time"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/agentname"
 	"github.com/pubnub/blocks-sdk/cli/internal/cardfetch"
 	"github.com/pubnub/blocks-sdk/cli/internal/config"
 	"github.com/pubnub/blocks-sdk/cli/internal/wizard"
@@ -26,9 +26,6 @@ const SDKVersion = "latest"
 // unset. It is also the last-resort fallback for the webapp backend origin
 // when no profile / flag / env provides one.
 const DefaultAssetBaseURL = "https://app.blocks.ai"
-
-// agentNameRe enforces the bare agent-name pattern (matches registry column).
-var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 // Project generates all project files in dir based on the given config.
 //
@@ -383,7 +380,7 @@ func scaffoldWebapp(dir string, cfg wizard.Config, cards []*cardfetch.AgentCard)
 		return fmt.Errorf("scaffoldWebapp: expected %d cards, got %d", len(cfg.Agents), len(cards))
 	}
 	for _, name := range cfg.Agents {
-		if !agentNameRe.MatchString(name) {
+		if !agentname.Pattern.MatchString(name) {
 			return fmt.Errorf("use the bare agent name (e.g. 'translator'), not the namespaced form (e.g. 'acme/translator'); got %q", name)
 		}
 	}

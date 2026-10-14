@@ -276,6 +276,14 @@ func TestAuthFailedAndPermissionDeniedWording(t *testing.T) {
 		if got := permissionDenied403Error().Error(); got != want {
 			t.Errorf("403: got %q, want %q", got, want)
 		}
+		want = `agent name "weather_bot" is already registered to a different organization — agent names are unique across Blocks Network, so choose a more specific identity.agentName in agent-card.json (e.g. prefix it with your company or product) and retry`
+		if got := agentNameTakenError("weather_bot").Error(); got != want {
+			t.Errorf("name taken: got %q, want %q", got, want)
+		}
+		want = "agent \"weather_bot\" belongs to another organization you are a member of, not the one your API key is for\n  Log in to that organization with 'blocks login --org <organization>', or use an API key from it, then retry."
+		if got := agentOrgMismatchError("weather_bot").Error(); got != want {
+			t.Errorf("org mismatch: got %q, want %q", got, want)
+		}
 	})
 	t.Run("enterprise_profile", func(t *testing.T) {
 		inEnterpriseProfileContext(t)
@@ -309,6 +317,17 @@ func TestAuthFailedAndPermissionDeniedWording(t *testing.T) {
 		if got != want {
 			t.Errorf("401: got %q, want %q", got, want)
 		}
+		got = agentNameTakenError("weather_bot").Error()
+		want = "Agent name \"weather_bot\" is already registered to a different organization on " + host + ".\n  Choose a more specific identity.agentName in agent-card.json, then retry."
+		if got != want {
+			t.Errorf("name taken: got %q, want %q", got, want)
+		}
+		got = agentOrgMismatchError("weather_bot").Error()
+		want = "Agent \"weather_bot\" belongs to another organization you are a member of on " + host + ", not the one your API key is for.\n  Log in to that organization with 'blocks login --org <organization>', or use an API key from it, then retry."
+		if got != want {
+			t.Errorf("org mismatch: got %q, want %q", got, want)
+		}
+		assertNoValueOnACommandLine(t, got, "weather_bot", host)
 	})
 }
 

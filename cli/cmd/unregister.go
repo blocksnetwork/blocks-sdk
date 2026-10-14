@@ -20,12 +20,14 @@ import (
 var unregisterApiKey string
 var unregisterApiKeyStdin bool
 var unregisterYes bool
+var unregisterReason string
 
 func init() {
 	rootCmd.AddCommand(unregisterCmd)
 	unregisterCmd.Flags().StringVar(&unregisterApiKey, "api-key", "", "Use a pre-obtained API key")
 	unregisterCmd.Flags().BoolVar(&unregisterApiKeyStdin, "api-key-stdin", false, "Read API key from stdin")
 	unregisterCmd.Flags().BoolVar(&unregisterYes, "yes", false, "Skip the confirmation prompt")
+	unregisterCmd.Flags().StringVar(&unregisterReason, "reason", "", "Why the agent is being removed (recorded in the audit log)")
 }
 
 var unregisterCmd = &cobra.Command{
@@ -43,6 +45,9 @@ var unregisterCmd = &cobra.Command{
 		"Non-interactive use (CI, scripts) requires --yes to confirm the removal.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := rejectBlankReason(cmd); err != nil {
+			return err
+		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 		defer stop()
 		return runUnregister(ctx, args)
@@ -93,7 +98,13 @@ func runUnregister(ctx context.Context, args []string) error {
 
 	client := blocksapi.NewClient(backendURL, apiKey)
 	var resp agentDeleteResponse
-	if err := client.DoJSON(ctx, "DELETE", "/api/v1/registry/agents?agentName="+url.QueryEscape(agentName), nil, &resp); err != nil {
+	var body interface{}
+	if r := strings.TrimSpace(unregisterReason); r != "" {
+		body = map[string]string{"reason": r}
+	} else {
+		fmt.Fprintln(os.Stderr, reasonOmittedWarning())
+	}
+	if err := client.DoJSON(ctx, "DELETE", "/api/v1/registry/agents?agentName="+url.QueryEscape(agentName), body, &resp); err != nil {
 		return fmt.Errorf("could not remove %s from %s: %w", shownName(agentName), clictx.TargetName(), err)
 	}
 	if err := resp.confirms(agentName); err != nil {

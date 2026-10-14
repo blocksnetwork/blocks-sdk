@@ -9,9 +9,9 @@ provider/runtime use:
 - ARTIFACT_INLINE_LIMIT_BYTES -- artifact inline threshold
 
 Plus one platform-contract constant (NOT env-driven, intentionally
-non-tunable — mirrors backend MAX_FILE_SIZE_BYTES):
+non-tunable — the platform's upload limit):
 
-- BLOCKS_MAX_UPLOAD_BYTES -- platform upload ceiling (25 MiB)
+- BLOCKS_MAX_UPLOAD_BYTES -- platform upload ceiling
 """
 
 from __future__ import annotations
@@ -62,4 +62,4 @@ ARTIFACT_INLINE_LIMIT_BYTES: int = _int_env("ARTIFACT_INLINE_LIMIT_BYTES", 16384
 # ---------------------------------------------------------------------------
 # Platform upload ceiling (NOT env-driven — fixed contract with backend)
 # ---------------------------------------------------------------------------
-BLOCKS_MAX_UPLOAD_BYTES: int = 26_214_400  # 25 MB — must match the service's MAX_FILE_SIZE_BYTES
+BLOCKS_MAX_UPLOAD_BYTES: int = 1_073_741_824  # platform upload limit; the service rejects larger files

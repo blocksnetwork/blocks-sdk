@@ -688,6 +688,7 @@ def fetch_agents_by_listing(
 def remove_agent(
     agent_name: str,
     base_url: Optional[str] = None,
+    reason: Optional[str] = None,
 ) -> bool:
     """
     Remove an agent from the registry.
@@ -699,15 +700,36 @@ def remove_agent(
     Args:
         agent_name: The agent name identifier to remove.
         base_url: Optional base URL override.
+        reason: Why the agent is being removed; recorded in the audit log.
+            Omitting it is deprecated and logs a warning; a reason is required
+            from 2027-04-01.
 
     Returns:
         True if the agent was removed, False if it didn't exist.
+
+    Raises:
+        ValueError: If ``reason`` is given but blank.
     """
+    trimmed = reason.strip() if reason else ""
+    # A blank reason is a caller bug (e.g. an empty variable), not an omission.
+    if reason is not None and not trimmed:
+        raise ValueError("[AgentRegistry] remove_agent reason must not be blank")
     url = _registry_url(query={"agentName": agent_name}, base_url=base_url)
     api_key = os.environ.get("BLOCKS_API_KEY")
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+    headers: Dict[str, str] = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    body: Optional[bytes] = None
+    if trimmed:
+        headers["Content-Type"] = "application/json"
+        body = json.dumps({"reason": trimmed}).encode("utf-8")
+    else:
+        logger.warning(
+            "remove_agent called without a reason for %s; a reason will be required from 2027-04-01",
+            agent_name,
+        )
 
-    result = with_retry(lambda: _registry_fetch(url, method="DELETE", headers=headers))
+    result = with_retry(
+        lambda: _registry_fetch(url, method="DELETE", body=body, headers=headers or None)
+    )
 
     return result is not None
 

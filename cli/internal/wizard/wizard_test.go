@@ -79,6 +79,10 @@ func TestValidateAgentName(t *testing.T) {
 			t.Errorf("ValidateAgentName(%q) error = %q, want message about alphanumeric", name, err)
 		}
 	}
+
+	if err := ValidateAgentName("acme-echo"); err == nil || !strings.Contains(err.Error(), `try "acme_echo"`) {
+		t.Errorf("ValidateAgentName(%q) error = %v, want the corrected name suggested", "acme-echo", err)
+	}
 }
 
 func TestDefaultConfigModeProvider(t *testing.T) {

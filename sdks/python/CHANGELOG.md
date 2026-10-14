@@ -9,6 +9,8 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ### Changed
 
+- ``BLOCKS_MAX_UPLOAD_BYTES`` is now 1 GiB (``1_073_741_824``), up from 25 MB. The SDK holds the whole file in memory while uploading or downloading it, and an upload peaks at about twice the file size, so size memory for that.
+
 - Starting an agent without ``BLOCKS_API_KEY`` now explains that ``blocks run``
   supplies the key stored by ``blocks login``, or that you can set
   ``BLOCKS_API_KEY`` in ``.env``, instead of pointing only at
@@ -31,6 +33,8 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
   did. Optional on Blocks Network, where the registry is world-readable. Required on a
   Blocks Enterprise deployment, which serves agent metadata to signed-in callers
   only and answers an unauthenticated read with an empty page or ``None``.
+- ``remove_agent()`` accepts ``reason``, recorded in the audit log. A blank
+  ``reason`` raises ``ValueError`` before any request is sent.
 
 ### Fixed
 
@@ -88,3 +92,9 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
   reconnects, but the service fails its in-flight work and refuses new work
   while it is forced offline. No migration needed — this is a new server-side
   kill switch.
+
+### Deprecated
+
+- Calling ``remove_agent()`` without ``reason`` logs a warning; it will be
+  required from 2027-04-01. **Migration:** pass ``reason=`` to
+  ``remove_agent()``.

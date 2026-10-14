@@ -10,15 +10,15 @@ Node SDK or npm.
 |---------|-------------|
 | `blocks init` | Scaffold a project: call an agent, build an agent, or build a web app |
 | `blocks search [query]` | Find agents you can call, best match first — the same order as the `blocks init` picker and the dashboard's Discover page. Like the Discover page it lists online agents by default; `--status offline` lists only offline ones and `--status all` lists both. Takes the dashboard's search syntax — `tag:`, `provider:`, `category:`, `agentname:` and `desc:` qualifiers, quoted phrases and `-exclusions`; `blocks search --help` lists it. Logged in, it includes your private agents and agents shared with you. In a terminal, page in place with ← → (? shows the search syntax, q to quit); in scripts, `--json` returns a `next` cursor for `--cursor`. `--limit` sets the page size; no query lists the agents visible to you alphabetically |
-| `blocks check` | Validate `agent-card.json` and handler file, and warn when the card differs from the registered version |
+| `blocks check` | Validate `agent-card.json` and handler file, and warn when the card differs from the registered version. A validation failure exits non-zero. With a credential, the check then fetches the registered card (5 s limit) and prints a `[WARN]` naming the fields that differ, plus the command that republishes without changing listing or billing mode: `blocks register` for a private, free agent, otherwise `blocks publish` with the current flags. Registered pricing is carried over only for task kinds the card still has; a paid agent left with no price for them gets a note that publish asks for new prices. The comparison never fails the check. Without a credential it is skipped and no request is sent, because an anonymous lookup of a private agent looks the same as an unregistered one |
 | `blocks login [instanceUrl\|shortName]` | Authenticate and store credentials for future commands. An optional instance URL targets a specific deployment (the CLI auto-discovers whether it is enterprise). Short names like `acme` target `https://acme.blocks.ai`; a name matching an existing profile reuses that profile's deployment. Pass `--network` to target Blocks Network without prompting. In a terminal, with no argument and no deployment resolved for this invocation at all, prompts for which one to target. `--no-browser` logs in from a browser on another device; `--org <id or name>` picks the organization. See [What `blocks login` accepts as a deployment](#what-blocks-login-accepts-as-a-deployment) and [Credentials and headless login](#credentials-and-headless-login). |
 | `blocks register` | Register an agent privately and free — the recommended first step (requires prior `blocks login` or `--api-key`) |
-| `blocks unregister` | Remove an agent from the deployment you are targeting, the inverse of `blocks register`. Requires `--yes` in non-interactive use (CI, scripts). |
+| `blocks unregister` | Remove an agent from the deployment you are targeting, the inverse of `blocks register`. Requires `--yes` in non-interactive use (CI, scripts). With no argument the name comes from `identity.agentName` in `agent-card.json`, read without schema validation, so it works on a card that is mid-edit. Declining the prompt prints `Cancelled — nothing was removed.` and exits 0. `--reason "…"` records why in the audit log, and a blank one is an error; without it the command warns, and a reason will be required from 2027-04-01. |
 | `blocks publish` | Publish an agent to the network, choosing public/private and free/paid (requires prior `blocks login` or `--api-key`) |
 | `blocks run` | Start an agent (delegates to the SDK's `blocks-run` binary for Node, venv Python `-m blocks_network` for Python). Passes the agent the key stored by `blocks login` when `.env` sets no `BLOCKS_API_KEY`, and says so |
-| `blocks logout` | Clear the selected profile's cached org keys and strip `BLOCKS_API_KEY` from the project `.env`. Keeps the profile's deployment target and says so, so a later `blocks login` returns to it; use `blocks profile remove` to forget the deployment. Does not revoke the key on the server. |
+| `blocks logout` | Clear the selected profile's cached org keys and strip `BLOCKS_API_KEY` from the project `.env`. Keeps the profile's deployment target and says so, so a later `blocks login` returns to it; use `blocks profile remove` to forget the deployment. Does not revoke the key on the server. A `.env` that exists but cannot be read or rewritten fails the logout (`logout incomplete — Blocks credentials remain on disk`); no `.env` at all is a normal success. |
 | `blocks profile` | Manage deployment profiles — `list`, `use <name>`, `rename <old> <new>`, `remove <name>` |
-| `blocks whoami` | Display the active profile's identity, where its key is stored, and any `BLOCKS_API_KEY` in `.env` or the environment that outranks it (`--json` adds `credentials_path`, `key_override`) |
+| `blocks whoami` | Display the active profile's identity, where its key is stored, and any `BLOCKS_API_KEY` in `.env` or the environment that outranks it. `--json` carries `profile`, `org_name`, `org_id`, `key_id`, `expires_at`, `days_remaining` and `expired` (the last three only when the key expires), `credentials_path` (absolute), and `key_override` and `backend_url_override` only while an override is in force. Optional keys are left out rather than empty |
 | `blocks upgrade` | Upgrade the CLI to the latest release |
 
 `blocks run` is the canonical way to start any agent. It detects the
@@ -81,6 +81,45 @@ blocks init my_caller --mode consumer --agent echo --yes   # script that calls e
 blocks init my_agent --yes                   # agent project (provider, the default)
 blocks init my_ui --mode webapp --agent echo # webapp wired to the echo agent
 ```
+
+When the invocation resolved a deployment you chose (not just the build-time
+default), `blocks init` also writes `BLOCKS_BACKEND_URL` and `BLOCKS_CDM_URL`
+into the **scaffolded** project's `.env`, not the `.env` of the directory you
+ran it in. It adds `BLOCKS_API_KEY` only when the invocation has a key. With no
+chosen deployment, such as a stock Blocks Network login, it writes none of the
+three. A trigger or caller script run straight out of the new project then
+reaches the same deployment the CLI targets.
+
+### `blocks publish` and `blocks register`
+
+`blocks register` sends `listing="private"` and `billingMode="free"` and takes
+no listing or pricing flags. `blocks publish` asks for both:
+
+- **Listing.** In a terminal the visibility picker starts on Private. Without a
+  terminal, `--listing public` or `--listing private` is required.
+- **Price flags follow `capabilities.taskKinds`.** For a request-only agent,
+  `--price` sets the per-task price and `--free-units` the free tasks. For a
+  pipe-only agent they set the per-minute price and free minutes. A card with no
+  task kinds it recognises counts as request-only. An agent with both kinds
+  refuses `--price` and `--free-units`; use `--price-per-task`,
+  `--price-per-minute`, `--free-tasks` and `--free-minutes` instead.
+- **Organization name, Blocks Network only.** Before `register` or `publish`
+  sends the agent, the CLI reads
+  `GET /api/v1/registry/publish-context` (org id, org name, agent count). When
+  the org has no agents yet, it asks for the organization name and saves it with
+  `PATCH /api/v1/orgs/:orgId` just before the agent is sent. Names are unique; a taken
+  name re-prompts in a terminal and fails without one. `--org-name` answers the
+  question up front; if that name is taken, the publish fails even in a terminal,
+  with no re-prompt. Without a terminal and without the flag, the name stays as
+  it is. On an Enterprise deployment there is no prompt and `--org-name` does
+  nothing, because the admin seeds the organizations and a publish must not
+  rename them.
+- **After a publish** in a terminal, the CLI opens the agent's dashboard page.
+  It uses the URL the deployment returned, else builds one from
+  `BLOCKS_APP_BASE_URL` or `BLOCKS_DASHBOARD_URL`, then the active profile's
+  `DashboardBaseURL` (while the profile is still the deployment targeted), then
+  the deployment origin. A
+  URL the CLI will not hand to a browser is printed with a note and not opened.
 
 ## Profiles & deployments
 
@@ -146,6 +185,20 @@ sent, so it is checked before anything is transmitted:
 A refused argument is an error naming the accepted forms. Nothing is sent
 and no profile is created.
 
+A few more things `blocks login` does:
+
+- At the interactive Enterprise prompt, an empty answer is asked once more and
+  then fails. It never falls through to Blocks Network.
+- Before it authenticates, the CLI probes the target's `cli-config`. An instance
+  you named that cannot be reached at all (TLS name mismatch, unknown host,
+  refused connection, timeout) fails the login at once. A host that answers with
+  an error status or a body it cannot parse only gets a warning.
+- With `--api-key` or `--api-key-stdin`, the key's organization is looked up
+  through the publish-context endpoint. A key whose organization cannot be found
+  is not stored, and the login fails.
+- A failed `.env` write is fatal only when you passed `--write-env`. Otherwise it
+  is a warning and the login still succeeds.
+
 ### Selecting a profile per command
 
 Every command resolves which profile to use in this order:
@@ -185,7 +238,9 @@ variable. And the fold applies on every platform, so on Unix a `blocks_api_key`
 line you wrote by hand is a line `blocks login` will overwrite and `blocks logout`
 will delete — a cross-platform behaviour change, not a Windows-only fix. It does
 not make the CLI read that spelling as a variable on Unix; it decides which line
-the writer edits.
+the writer edits. The writer finds a variable's line the same way the loader
+parses one (trimmed, `#` starts a comment, the name is the text before the first
+`=`), so `KEY = value` is replaced rather than left behind as a duplicate.
 
 A value that would not survive the round trip — one
 containing a line break or a NUL byte, which the loader would read back as a
@@ -427,7 +482,10 @@ that answer them up front:
 - `blocks login --write-env` or `--no-write-env` — answer the .env write prompt
 - `blocks login --org <id or name>` — answer the organization prompt a browser
   login shows for an account in several organizations
-- `blocks unregister --yes` — confirm a destructive removal
+- `blocks unregister --yes` — confirm a destructive removal; add `--reason "…"` to
+  record why in the audit log (required from 2027-04-01)
+- `blocks invite revoke --reason "…"` — record why access is withdrawn (required
+  from 2027-04-01)
 - `blocks init --yes` — use all defaults without prompting
 - `blocks publish --listing … --billing-mode … --accept-terms` — answer the
   registry prompts. On a deployment with no marketplace, billing is off, so

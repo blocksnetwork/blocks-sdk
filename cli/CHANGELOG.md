@@ -9,6 +9,9 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
 
 ### Added
 
+- An invalid agent name now comes with the corrected form to use: `blocks init
+  my-agent` suggests `my_agent`, and `blocks check` does the same for
+  `identity.agentName` in `agent-card.json`.
 - `blocks login --no-browser` prints the login URL and step-by-step instructions
   instead of opening a browser, then accepts the address your browser lands on
   pasted back into the terminal. Use it over SSH, in containers, or on any
@@ -130,8 +133,13 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
   the page opens, or paste a token you already have at the same prompt. The
   prompt only appears when no token is already stored or set for the
   partner.
+- `blocks unregister` and `blocks invite revoke` take `--reason`, recorded in the
+  audit log. A blank `--reason` is an error, so an empty variable cannot pass as
+  no reason.
 
 ### Changed
+
+- Agent-card validation now accepts a file input `maxSizeBytes` of up to 1 GiB (`1073741824`), up from 25 MB.
 
 - `blocks run`, `blocks register` and `blocks publish` say when they are using
   the API key stored by `blocks login` because the project `.env` sets no
@@ -321,7 +329,20 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
   unaffected and are still matched exactly, because `FOO` and `foo` really are two
   variables on macOS and Linux and a project may keep both on purpose.
 
+### Deprecated
+
+- Running `blocks unregister` or `blocks invite revoke` without `--reason` prints a
+  warning; a reason will be required from 2027-04-01. **Migration:** pass
+  `--reason "..."` to `blocks unregister` and `blocks invite revoke`.
+
 ### Fixed
+
+- `blocks publish` and `blocks register` now say when an agent name is already
+  registered to a different organization, and suggest choosing a more specific
+  name, instead of reporting a permission error that pointed at your API key.
+  When the agent belongs to another organization you are a member of, they say
+  so and tell you to log in to that organization with `blocks login --org`, or
+  use an API key from it, instead of reporting that you lack permission.
 
 - `blocks invite revoke` can now take back an invitation that has not been
   accepted yet, such as one sent to a mistyped address. It used to fail with
