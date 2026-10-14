@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -201,6 +203,9 @@ func TestValidateInvalidAgentNameFormat(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected agentName format error, got: %v", res.Errors)
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), `try "acme_echo"`) {
+		t.Errorf("expected the corrected agentName suggested, got: %v", res.Errors)
 	}
 }
 
@@ -698,29 +703,42 @@ func TestValidateAcceptItemValidation(t *testing.T) {
 	}
 }
 
+func schemaMaxSizeBytes(t *testing.T) int {
+	t.Helper()
+	m := regexp.MustCompile(`"maxSizeBytes"\s*:\s*\{[^}]*"maximum"\s*:\s*(\d+)`).FindSubmatch(agentCardSchemaJSON)
+	if m == nil {
+		t.Fatal("maxSizeBytes.maximum not found in the embedded schema")
+	}
+	n, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 func TestValidateMaxSizeBytesBounds(t *testing.T) {
-	// 25 MB exact ok.
+	ceiling := schemaMaxSizeBytes(t)
+
 	path := cardWithInput(t, t.TempDir(), map[string]interface{}{
 		"id":           "in1",
 		"description":  "d",
 		"contentType":  "image/png",
 		"required":     true,
-		"maxSizeBytes": 26214400,
+		"maxSizeBytes": ceiling,
 	})
 	if hasSchemaError(Validate(path).Errors) {
-		t.Error("maxSizeBytes=26214400 should pass")
+		t.Errorf("maxSizeBytes=%d should pass", ceiling)
 	}
 
-	// One over rejected.
 	path = cardWithInput(t, t.TempDir(), map[string]interface{}{
 		"id":           "in1",
 		"description":  "d",
 		"contentType":  "image/png",
 		"required":     true,
-		"maxSizeBytes": 26214401,
+		"maxSizeBytes": ceiling + 1,
 	})
 	if !hasSchemaError(Validate(path).Errors) {
-		t.Error("maxSizeBytes=26214401 should be rejected")
+		t.Errorf("maxSizeBytes=%d should be rejected", ceiling+1)
 	}
 }
 

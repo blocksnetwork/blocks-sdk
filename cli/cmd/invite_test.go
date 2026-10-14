@@ -363,6 +363,7 @@ func resetInviteFlags() {
 	inviteSendOrg = ""
 	inviteRevokeEmail = ""
 	inviteRevokeOrg = ""
+	inviteRevokeReason = ""
 	inviteSendCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	inviteRevokeCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 }
@@ -1028,6 +1029,17 @@ func TestInviteRevokeNamesTheTargetAndReportsWhatWasWithdrawn(t *testing.T) {
 			wantBodies: []map[string]string{{"targetOrgId": nonRFCUUID}, {"targetOrgSlug": nonRFCUUID}},
 			wantOut:    []string{"Access revoked for org " + nonRFCUUID},
 		},
+		{
+			name:     "a reason, carried on both the ID and the slug attempt",
+			flags:    []string{"--org", orgFixtureID, "--reason", "contract ended"},
+			notFound: "targetOrgId",
+			grants:   1,
+			wantBodies: []map[string]string{
+				{"targetOrgId": orgFixtureID, "reason": "contract ended"},
+				{"targetOrgSlug": orgFixtureID, "reason": "contract ended"},
+			},
+			wantOut: []string{"Access revoked for org " + orgFixtureID},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1073,6 +1085,61 @@ func TestInviteRevokeNamesTheTargetAndReportsWhatWasWithdrawn(t *testing.T) {
 				if !strings.Contains(out, want) {
 					t.Errorf("output = %q, want it to contain %q", out, want)
 				}
+			}
+		})
+	}
+}
+
+func TestInviteRevokeRejectedReasonSuggestsRetryingWithoutIt(t *testing.T) {
+	const hint = "retry without it"
+	const strictSchema = `{"error":"Unrecognized key: \"reason\""}`
+	cases := []struct {
+		name     string
+		flags    []string
+		body     string
+		wantHint bool
+	}{
+		{"with a reason", []string{"--email", "a@example.com", "--reason", "contract ended"}, strictSchema, true},
+		{"without a reason", []string{"--email", "a@example.com"}, strictSchema, false},
+		{
+			"an unrelated validation error",
+			[]string{"--email", "a@example.com", "--reason", "contract ended"},
+			`{"error":"Valid email is required"}`,
+			false,
+		},
+		{
+			"the reason itself rejected",
+			[]string{"--email", "a@example.com", "--reason", "contract ended"},
+			`{"error":"Reason must be at most 1000 characters","code":"REASON_TOO_LONG"}`,
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := setupFakeCredentials(t)
+			defer cleanup()
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(tc.body))
+			}))
+			defer ts.Close()
+			t.Setenv("BLOCKS_BACKEND_URL", ts.URL)
+			resetInviteFlags()
+			t.Cleanup(resetInviteFlags)
+
+			var err error
+			captureStdoutStderr(func() {
+				rootCmd.SetArgs(append([]string{"invite", "revoke", "my_agent"}, tc.flags...))
+				err = rootCmd.Execute()
+			})
+			if err == nil {
+				t.Fatal("a 400 must be an error")
+			}
+			if !strings.Contains(err.Error(), "HTTP 400") {
+				t.Errorf("the deployment's error must still be reported: %v", err)
+			}
+			if got := strings.Contains(err.Error(), hint); got != tc.wantHint {
+				t.Errorf("hint present = %v, want %v: %v", got, tc.wantHint, err)
 			}
 		})
 	}

@@ -207,6 +207,7 @@ agent from the deployment you are currently targeting.
 blocks unregister                     # name read from ./agent-card.json
 blocks unregister <agentName>         # remove an agent from anywhere
 blocks unregister <agentName> --yes   # skip the confirmation (required in CI)
+blocks unregister <agentName> --reason "…"  # record why in the audit log
 ```
 
 With no argument the name comes from `identity.agentName` in
@@ -218,6 +219,8 @@ confirmation prompt names the agent one line later.
 A non-interactive session refuses to remove anything without `--yes`, and
 `--no-input` turns the confirmation into an error naming `--yes`.
 `--api-key` / `--api-key-stdin` work here as they do on `blocks register`.
+Pass `--reason` to record why in the audit log; without it the command
+prints a warning, and a reason will be required from 2027-04-01.
 
 ### Verify Identity
 
@@ -238,10 +241,13 @@ blocks invite list <agentName>                            # list unaccepted invi
 blocks invite grants <agentName>                          # list active grants
 blocks invite revoke <agentName> --email user@example.com # revoke a user's access and pending invitations
 blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org's access and pending invitations
+blocks invite revoke <agentName> --email user@example.com --reason "…" # record why in the audit log
 blocks invite accept <token>                              # consumer-side: accept an invitation
 ```
 
 `--email` and `--org` are mutually exclusive on `send` and `revoke`.
+`revoke` also takes `--reason`, recorded in the audit log; without it the
+command prints a warning, and a reason will be required from 2027-04-01.
 
 ### CI/CD Auth (Reference)
 
@@ -251,7 +257,7 @@ blocks login --network --write-env            # target Blocks Network, no deploy
 blocks login acme --write-env                 # target an Enterprise instance (short name or full URL)
 blocks publish --api-key "$KEY"               # use a pre-obtained API key
 echo "$KEY" | blocks publish --api-key-stdin  # read from stdin
-blocks unregister <agentName> --yes           # remove an agent (confirmation skipped)
+blocks unregister <agentName> --yes --reason "…"  # remove an agent (irreversible), recording why
 blocks logout                                 # clear stored credentials
 blocks version                                # print CLI version
 blocks upgrade                                # self-update (POSIX installer flow)

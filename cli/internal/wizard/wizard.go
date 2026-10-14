@@ -11,11 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/agentname"
 	"github.com/pubnub/blocks-sdk/cli/internal/branding"
 	"github.com/pubnub/blocks-sdk/cli/internal/clictx"
 )
-
-var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 // agentNameFlagHint and webappNameFlagHint name the argument that supplies each
 // project name without a terminal. They are the answer to "how do I run this in
@@ -49,7 +48,7 @@ func helpDisplayNameText() string {
 
 // projectNameRe constrains a webapp project directory name to safe characters
 // (no path separators, no spaces). It is intentionally looser than
-// agentNameRe — a directory may contain '.' and '-'.
+// agentname.Pattern — a directory may contain '.' and '-'.
 var projectNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // callerProjectNameRe is stricter than projectNameRe because a caller project
@@ -186,10 +185,10 @@ func (c Config) CallerBillingMode() string {
 	return "free"
 }
 
-// ValidateAgentName checks that name matches /^[a-zA-Z0-9_]+$/.
+// ValidateAgentName checks name against agentname.Pattern.
 func ValidateAgentName(name string) error {
-	if !agentNameRe.MatchString(name) {
-		return fmt.Errorf("agentName must contain only alphanumeric characters and underscores")
+	if !agentname.Pattern.MatchString(name) {
+		return fmt.Errorf("agentName must contain only alphanumeric characters and underscores%s", agentname.Hint(name))
 	}
 	return nil
 }

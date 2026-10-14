@@ -15,6 +15,7 @@ import {
   normalizeTagSlug,
 } from './channel-manager.js';
 import { getEnv } from '../env.js';
+import { log as baseLog } from './logger.js';
 import type { AgentAuth, RegistrationPayload } from './agent-auth.js';
 import {
   CURRENT_PROTOCOL_VERSION,
@@ -23,6 +24,9 @@ import {
   PROTOCOL_VERSION_HEADER,
 } from './protocol-version.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
+
+const log = (level: 'warn', message: string, meta?: Record<string, unknown>): void =>
+  baseLog('[AgentRegistry]', level, message, meta);
 
 // ============================================================================
 // Types
@@ -580,20 +584,33 @@ export async function fetchAgentsByListing(
  * Authenticates with an API key — `BLOCKS_API_KEY` — and not with the agent's own
  * runtime credential: removing an agent is a management action, and a runtime
  * holds no management standing. Passing a runtime credential here answered 403.
+ *
+ * `reason` goes to the audit log. Omitting it is deprecated; it is required from 2027-04-01.
+ * A blank `reason` throws rather than being treated as omitted.
  */
 export async function removeAgent(
   agentName: string,
-  options?: { baseUrl?: string },
+  options?: { baseUrl?: string; reason?: string },
 ): Promise<boolean> {
+  const reason = options?.reason?.trim();
+  // A blank reason is a caller bug (e.g. an empty variable), not an omission.
+  if (options?.reason !== undefined && !reason) {
+    throw new Error('[AgentRegistry] removeAgent reason must not be blank');
+  }
   const url = registryUrl({ agentName }, options?.baseUrl);
 
   const afToken = getEnv('BLOCKS_API_KEY');
+  if (!reason) {
+    log('warn', 'removeAgent called without a reason; a reason will be required from 2027-04-01', { agentName });
+  }
   const result = await withRetry(async () =>
     registryFetch<{ agentName: string; status: string }>(url, {
       method: 'DELETE',
       headers: {
         ...(afToken ? { Authorization: `Bearer ${afToken}` } : {}),
+        ...(reason ? { 'Content-Type': 'application/json' } : {}),
       },
+      ...(reason ? { body: JSON.stringify({ reason }) } : {}),
     }),
   );
 

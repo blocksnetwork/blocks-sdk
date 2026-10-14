@@ -42,7 +42,7 @@ export {
 } from './runtime/agent-registry.js';
 export { DEFAULTS } from './defaults.js';
 import { DEFAULTS } from './defaults.js';
-/** Platform-wide upload ceiling (bytes). Mirrors the service's MAX_FILE_SIZE_BYTES. */
+/** Platform-wide upload ceiling (bytes); the service rejects larger files. */
 export const BLOCKS_MAX_UPLOAD_BYTES = DEFAULTS.maxUploadBytes;
 export { loadBlocksConfig, type BlocksConfig } from './config-loader.js';
 

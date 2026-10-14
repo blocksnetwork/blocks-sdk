@@ -213,7 +213,7 @@ export function makeFakeDeps(overrides: FakeDepsOverrides = {}) {
     resolveSavePath,
     writeFile,
     fileSize,
-    maxUploadBytes: overrides.maxUploadBytes ?? 25 * 1024 * 1024,
+    maxUploadBytes: overrides.maxUploadBytes ?? Number.MAX_SAFE_INTEGER,
     filePartFromPath,
     textPart,
   };

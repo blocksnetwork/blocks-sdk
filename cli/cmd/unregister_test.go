@@ -676,3 +676,52 @@ func TestUnregisterConfirmsAResponseWithoutTheOptionalTimestamp(t *testing.T) {
 		t.Errorf("the removal must be reported:\n%s", out)
 	}
 }
+
+func TestUnregisterSendsTheReasonWhenGiven(t *testing.T) {
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		writeDeleted(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	seedEnterpriseProfileForTest(t, srv.URL)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
+	t.Setenv("BLOCKS_API_KEY", "bk_test")
+	resolveCLIContext(t, unregisterCmd)
+	unregisterYes, unregisterReason = true, "retired"
+	t.Cleanup(func() { unregisterYes, unregisterReason = false, "" })
+	_ = captureStdout(func() {
+		if err := runUnregister(t.Context(), []string{"my_agent"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if gotBody["reason"] != "retired" {
+		t.Fatalf("reason = %q, want retired", gotBody["reason"])
+	}
+}
+
+func TestUnregisterWithoutReasonWarnsAndSendsNoBody(t *testing.T) {
+	var gotLen int64 = -1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotLen = r.ContentLength
+		writeDeleted(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	seedEnterpriseProfileForTest(t, srv.URL)
+	t.Setenv("BLOCKS_BACKEND_URL", srv.URL)
+	t.Setenv("BLOCKS_API_KEY", "bk_test")
+	resolveCLIContext(t, unregisterCmd)
+	unregisterYes = true
+	t.Cleanup(func() { unregisterYes = false })
+	out := captureStdoutStderr(func() {
+		if err := runUnregister(t.Context(), []string{"my_agent"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if gotLen > 0 {
+		t.Fatalf("sent a body (%d bytes) without --reason", gotLen)
+	}
+	if !strings.Contains(out, reasonOmittedWarning()) {
+		t.Fatalf("missing deprecation warning in:\n%s", out)
+	}
+}

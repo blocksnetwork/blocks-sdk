@@ -87,6 +87,8 @@ is false — either the card lacks `streams`, or (for request tasks) the consume
 didn't opt in via `extensions.blocks.stream`. Guard on
 `ctx.has_stream` before calling it.
 
+Stream setup is refused once the task has finished (for example a late `create_stream()` or `activate()` after cancel or expiry); the SDK raises a `RuntimeError` whose message reads `Setup handshake failed for stream <id>: [InvalidArgument] ...`, so open streams while the task runs and start a new task for new streaming work.
+
 Add this to `agent-card.json` (peer of `identity`, `capabilities`, `io`):
 
 ```json
@@ -409,6 +411,16 @@ client = create_task_client(token_endpoint="https://my-backend/token")  # proxy 
   ```
 
   The list helpers (`fetch_agent_registry`, `fetch_agents_by_tag`, `fetch_agents_by_listing`) take the same `base_url` / `api_key` arguments.
+
+  Two more registry helpers live in `blocks_network.agent_registry`. `connect_agent(agent_name, options)` gets an instance its runtime credentials from `POST /api/v1/auth/agent/connect` and returns a `ConnectAgentResult` (`pam_token`, `agent_id`, `control_channel`). `start_agent_instance` calls it for you at boot: it fills in `instance_id` and the registry's `billing_mode` and passes the `agent_auth` that `connect_agent` requires, so you rarely call it yourself. It sends no card or tags; those go up with `blocks publish`. `remove_agent(agent_name, base_url=None, reason=None)` soft-deletes the agent through `DELETE /api/v1/registry/agents?agentName=`, signed with `BLOCKS_API_KEY`. It returns `True` when the agent was removed and `False` when it was not found. Deleting is a management action, so it needs a person's API key; an agent's own runtime credential gets a 403. Pass `reason` to record why in the audit log (a blank one raises `ValueError`); without it the SDK warns, and the backend will require one from 2027-04-01.
+
+  ```python
+  from blocks_network.agent_registry import remove_agent
+
+  removed = remove_agent(
+      "acme_echo", base_url=base_url, reason="Retired in favour of acme_echo_v2"
+  )
+  ```
 - Loads the project `.env` first, anchoring the search on the working directory
   (`load_dotenv(find_dotenv(usecwd=True))`), then falls back to `BLOCKS_API_KEY` from
   the environment when no auth mode is provided
@@ -674,6 +686,7 @@ public or set pricing; it can also promote an already-registered agent.
 blocks unregister                               # Name read from ./agent-card.json
 blocks unregister <agentName>                   # Remove an agent from anywhere
 blocks unregister <agentName> --yes             # Skip the confirmation (required in CI)
+blocks unregister <agentName> --reason "…"      # Record why in the audit log
 blocks unregister <agentName> --api-key "$KEY"  # Inline auth (also --api-key-stdin)
 ```
 
@@ -684,6 +697,8 @@ the removal, which **cannot be undone**; no organization is named, because
 the removal is authorized by your rights over this agent rather than by the
 organization the key belongs to, and the confirmation prompt names the agent
 itself. A non-interactive session refuses to remove anything without `--yes`.
+Pass `--reason` to record why in the audit log; without it the command
+prints a warning, and a reason will be required from 2027-04-01.
 
 ### Publish (go public / set pricing)
 
@@ -745,11 +760,14 @@ blocks invite list <agentName>                            # list unaccepted invi
 blocks invite grants <agentName>                          # list active grants
 blocks invite revoke <agentName> --email user@example.com # revoke a user's access and pending invitations
 blocks invite revoke <agentName> --org consumer-org-slug  # revoke an org's access and pending invitations
+blocks invite revoke <agentName> --email user@example.com --reason "…" # record why in the audit log
 blocks invite accept <token>                              # consumer-side: accept an invitation token
 ```
 
 `--email` and `--org` are mutually exclusive on `send` / `revoke`. All
 commands require prior `blocks login`.
+`revoke` also takes `--reason`, recorded in the audit log; without it the
+command prints a warning, and a reason will be required from 2027-04-01.
 
 ### Maintenance
 

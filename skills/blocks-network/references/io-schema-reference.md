@@ -31,7 +31,8 @@ which determines what other fields are allowed on the input:
   `model/gltf+json` (catalog override), `application/octet-stream`) —
   `schema` is forbidden; optional `accept` (array of `contentType` or
   bare family glob entries) and `maxSizeBytes` (integer in
-  `[1, 26214400]` = 25 MB ceiling) are permitted.
+  `[1, BLOCKS_MAX_UPLOAD_BYTES]`, the platform upload limit both SDKs
+  export) are permitted.
 
 `io.inputs[].description` is **required** on every input.
 `io.outputs[].description` remains optional. Outputs have no per-class
@@ -101,7 +102,9 @@ inputs, so `schema.properties[*].default` does not apply. Example:
 No default is supported — file pickers cannot be pre-filled with file
 bytes. Declare `accept` to constrain file types and `maxSizeBytes` to
 hint at the per-input upload ceiling, but the user must always select
-a file at task-submit time.
+a file at task-submit time. `maxSizeBytes` is not enforced when a file
+is uploaded, so a provider must handle any file input up to the
+platform upload limit, whatever its card declares.
 
 Each `schema` follows JSON Schema format and **must** include `type:
 "object"` and a `properties` map for form-class inputs. Each property

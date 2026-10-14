@@ -7,6 +7,7 @@ All registry functions now use REST endpoints. Tests mock urllib.request.urlopen
 from __future__ import annotations
 
 import json
+import logging
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -610,6 +611,49 @@ class TestRemoveAgent:
         assert result is True
         assert captured["method"] == "DELETE"
         assert "acme_echo" in captured["url"]
+
+    def test_sends_the_reason_as_a_json_body(self) -> None:
+        captured = {}
+
+        def mock_urlopen(req, **kwargs):
+            captured["data"] = req.data
+            captured["ctype"] = req.get_header("Content-type")
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({"agentName": "acme_echo", "status": "deleted"}).encode()
+            resp.__enter__ = lambda s: resp
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            assert remove_agent("acme_echo", base_url="http://test", reason="retired") is True
+        assert json.loads(captured["data"]) == {"reason": "retired"}
+        assert captured["ctype"] == "application/json"
+
+    def test_warns_and_sends_no_body_without_a_reason(self, caplog) -> None:
+        captured = {}
+
+        def mock_urlopen(req, **kwargs):
+            captured["data"] = req.data
+            captured["ctype"] = req.get_header("Content-type")
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({"agentName": "acme_echo", "status": "deleted"}).encode()
+            resp.__enter__ = lambda s: resp
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        with caplog.at_level(logging.WARNING, logger="blocks_network.agent_registry"):
+            with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+                assert remove_agent("acme_echo", base_url="http://test") is True
+        assert captured["data"] is None
+        assert captured["ctype"] is None
+        assert len([r for r in caplog.records if "reason" in r.getMessage()]) == 1
+
+    @pytest.mark.parametrize("reason", ["", "   "])
+    def test_rejects_an_explicit_blank_reason_without_sending(self, reason: str) -> None:
+        with patch("urllib.request.urlopen") as urlopen:
+            with pytest.raises(ValueError, match="reason"):
+                remove_agent("acme_echo", base_url="http://test", reason=reason)
+        urlopen.assert_not_called()
 
     def test_returns_false_on_404(self) -> None:
         with patch("urllib.request.urlopen", side_effect=_mock_urlopen_json({"code": "NotFound"}, status=404)):

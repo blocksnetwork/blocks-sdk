@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/agentname"
 	"github.com/pubnub/blocks-sdk/cli/internal/deploy"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
@@ -32,8 +33,6 @@ var (
 //go:generate cp ../../../schemas/agent-card.schema.json schemas/agent-card.schema.json
 //go:embed schemas/agent-card.schema.json
 var agentCardSchemaJSON []byte
-
-var agentNameRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 // ValidationResult holds the outcome of a check run.
 type ValidationResult struct {
@@ -94,8 +93,8 @@ func ValidateBytes(raw []byte, cardPath string) ValidationResult {
 	if hasIdentity {
 		if idMap, ok := identity.(map[string]interface{}); ok {
 			if agentName, ok := idMap["agentName"].(string); ok && agentName != "" {
-				if !agentNameRe.MatchString(agentName) {
-					res.Errors = append(res.Errors, "identity.agentName must contain only alphanumeric characters and underscores")
+				if !agentname.Pattern.MatchString(agentName) {
+					res.Errors = append(res.Errors, "identity.agentName must contain only alphanumeric characters and underscores"+agentname.Hint(agentName))
 				} else {
 					res.Successes = append(res.Successes, fmt.Sprintf("identity.agentName: %s", agentName))
 				}

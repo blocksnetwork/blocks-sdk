@@ -16,7 +16,15 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
   Enterprise deployment, which serves agent metadata to signed-in callers only and
   answers an unauthenticated read with an empty page or `null`.
 
+- `removeAgent()` accepts `reason`, recorded in the audit log. A blank `reason`
+  throws before any request is sent.
+
 ### Fixed
+
+- **Node SDK:** A stream created with `ctx.createStream()` by a task that is still running when the
+  agent switches environments now uses the same keys as the rest of that task. Before,
+  the stream was built with the keys of the environment the agent had just switched to,
+  so it could fail to connect. Tasks received after the switch are unaffected.
 
 - `ConsumerAuth.getLastAuthError()` now reports a failed **reactive** refresh, not
   only a permanently-failed proactive one. `onAuthFailure()` signals failure as a
@@ -44,6 +52,8 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ### Changed
 
+- `BLOCKS_MAX_UPLOAD_BYTES` is now 1 GiB (`1_073_741_824`), up from 25 MB. To send a large file from `TaskClient` without loading it into memory, pass a `Blob` or `File` as the part's `file` (for example from `fs.openAsBlob()`); byte inputs and `publishArtifact` data are copied into a `Blob`, peaking at about twice their size, and downloaded artifacts are held in memory in full.
+
 - Starting an agent without `BLOCKS_API_KEY` now explains that `blocks run`
   supplies the key stored by `blocks login`, or that you can set `BLOCKS_API_KEY`
   in `.env`, instead of pointing only at `blocks login --write-env`.
@@ -66,6 +76,11 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
   organization. TypeScript callers get a compile error at the removed option; a
   plain-JavaScript caller that keeps passing it has the option ignored and
   authenticates with the API key as above.
+
+### Deprecated
+
+- Calling `removeAgent()` without `reason` logs a warning; it will be required
+  from 2027-04-01. **Migration:** pass `{ reason }` to `removeAgent()`.
 
 ### Security
 

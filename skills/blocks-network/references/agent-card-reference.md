@@ -68,7 +68,8 @@ descriptors). On every `io.inputs[]` entry, **required**: `id`,
 `description`, `contentType`, `required`. **Optional**: `example`,
 `schema`, `accept` (file-class only — array of
 `contentType`-or-family-glob entries), `maxSizeBytes` (file-class only
-— integer in `[1, 26214400]`). On every `io.outputs[]` entry,
+— integer in `[1, BLOCKS_MAX_UPLOAD_BYTES]`, the platform upload limit
+both SDKs export). On every `io.outputs[]` entry,
 **required**: `id`, `contentType`, `guaranteed`. **Optional**:
 `description`, `example`, `schema`. Per-class invariants on inputs
 (form requires `schema` and `example`; text and file forbid `schema`;

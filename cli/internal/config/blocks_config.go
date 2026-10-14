@@ -10,12 +10,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/pubnub/blocks-sdk/cli/internal/agentname"
 	"github.com/pubnub/blocks-sdk/cli/internal/deploy"
 )
-
-// agentNamePattern is the bare agent-name pattern enforced by the Blocks registry
-// (agent.agentName column). No slashes — bare name only.
-var agentNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 // BlocksConfig is the in-memory representation of blocks.config.json.
 //
@@ -125,10 +122,10 @@ func Validate(cfg *BlocksConfig) error {
 				))
 				continue
 			}
-			if !agentNamePattern.MatchString(agent) {
+			if !agentname.Pattern.MatchString(agent) {
 				errs = append(errs, fmt.Sprintf(
-					"agent name %q is invalid: must match ^[a-zA-Z0-9_]+$ (bare agent name, no slashes)",
-					agent,
+					"agent name %q is invalid: must match %s (bare agent name, no slashes)",
+					agent, agentname.Pattern,
 				))
 				continue
 			}

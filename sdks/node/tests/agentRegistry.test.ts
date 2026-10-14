@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, /* afterAll, */ vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, /* afterAll, */ vi, type MockInstance } from 'vitest';
 // import PubNub from 'pubnub';
 // try { await import('dotenv/config'); } catch { /* dotenv not installed — live tests require it */ }
 import {
@@ -414,14 +414,17 @@ describe('Agent Registry (unit)', () => {
     let fetchSpy: ReturnType<typeof vi.fn>;
     const originalFetch = globalThis.fetch;
     const originalKey = process.env.BLOCKS_API_KEY;
+    let warnSpy: MockInstance<typeof console.warn>;
 
     beforeEach(() => {
       fetchSpy = vi.fn();
       globalThis.fetch = fetchSpy;
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     });
 
     afterEach(() => {
       globalThis.fetch = originalFetch;
+      warnSpy.mockRestore();
       if (originalKey === undefined) delete process.env.BLOCKS_API_KEY;
       else process.env.BLOCKS_API_KEY = originalKey;
     });
@@ -446,6 +449,29 @@ describe('Agent Registry (unit)', () => {
       expect(url).toBe(`${TEST_BASE_URL}/api/v1/registry/agents?agentName=acme-echo`);
       expect(init.method).toBe('DELETE');
       expect(new Headers(init.headers).get('Authorization')).toBe('Bearer bk_test_key');
+    });
+
+    it('sends the reason as a JSON body', async () => {
+      fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ agentName: 'acme-echo', status: 'deleted' }) });
+      await removeAgent('acme-echo', { baseUrl: TEST_BASE_URL, reason: 'retired' });
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(JSON.parse(init.body)).toEqual({ reason: 'retired' });
+      expect(new Headers(init.headers).get('Content-Type')).toBe('application/json');
+    });
+
+    it('warns once and sends no body when no reason is given', async () => {
+      fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ agentName: 'acme-echo', status: 'deleted' }) });
+      await expect(removeAgent('acme-echo', { baseUrl: TEST_BASE_URL })).resolves.toBe(true);
+      const [, init] = fetchSpy.mock.calls[0];
+      expect(init.body).toBeUndefined();
+      expect(new Headers(init.headers).get('Content-Type')).toBeNull();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0][1]?.message)).toMatch(/reason/);
+    });
+
+    it.each(['', '   '])('rejects an explicit blank reason (%j) without sending anything', async (reason) => {
+      await expect(removeAgent('acme-echo', { baseUrl: TEST_BASE_URL, reason })).rejects.toThrow(/reason/);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
 
     it('reports a missing agent as not removed', async () => {

@@ -1114,6 +1114,7 @@ export const startAgentInstance = async (
     ownerId: string,
     orgId: string,
     controller: AbortController,
+    taskEnv: PnEnvironment,
   ): Promise<void> => {
     const effectiveAgentName = agentName;
     const isPipeTask = task.taskKind === 'pipe';
@@ -1667,9 +1668,11 @@ export const startAgentInstance = async (
           throw err;
         }
 
+        // Task-received keyset, not the module-level keys a SwitchEnvironment overwrites.
+        const taskEnvKeys = envKeysets[taskEnv] ?? envKeysets[primaryEnv];
         const client = new StreamClient({
-          subscribeKey,
-          publishKey,
+          subscribeKey: taskEnvKeys.subscribeKey,
+          publishKey: taskEnvKeys.publishKey,
           token: t7a,
           agentName: effectiveAgentName,
           streamId,
@@ -2062,7 +2065,7 @@ export const startAgentInstance = async (
         if (opts.onStartTask) {
           await opts.onStartTask(msg, taskPubNub);
         } else {
-          await executeHandler(handlerTask as StartTaskMessage, taskPubNub, ownerId, orgId, controller);
+          await executeHandler(handlerTask as StartTaskMessage, taskPubNub, ownerId, orgId, controller, taskEnv);
         }
       } catch (e) {
         // A fatal auth error (forced offline / revoked key) can surface here
