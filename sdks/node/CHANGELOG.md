@@ -52,6 +52,14 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ### Changed
 
+- The realtime clients the SDK creates for agents, `TaskClient`, task sessions and
+  streams, including those built with `createPubNubClient`, now reuse HTTPS
+  connections, so publishes, history reads and file downloads after the first no
+  longer pay a fresh TLS handshake each. A client you construct yourself and pass
+  in is unchanged. To route an SDK-built client through a proxy with `setProxy()`,
+  create it with `createPubNubClient({ ..., keepAlive: false })`: PubNub refuses a
+  proxy on a keep-alive client.
+
 - `BLOCKS_MAX_UPLOAD_BYTES` is now 1 GiB (`1_073_741_824`), up from 25 MB. To send a large file from `TaskClient` without loading it into memory, pass a `Blob` or `File` as the part's `file` (for example from `fs.openAsBlob()`); byte inputs and `publishArtifact` data are copied into a `Blob`, peaking at about twice their size, and downloaded artifacts are held in memory in full.
 
 - Starting an agent without `BLOCKS_API_KEY` now explains that `blocks run`
@@ -84,6 +92,15 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 
 ### Security
 
+- The SDK now requires Node.js 22.x from 22.23.4, 24.x from 24.22.1, or 26.12.1
+  and later. Any other release, including a 24.x before 24.22.1, still trusts the
+  eMudhra intermediate certificate authorities whose private keys were compromised
+  in October 2026, so a party on the network path could impersonate the service
+  to your agent or client. Node.js checks certificates against roots built into
+  the runtime, so upgrading the SDK does not fix an older Node.js: upgrade Node.js
+  itself, rebuild container images with `docker build --pull`, and restart running
+  agents. Browsers are unaffected. The MCP server (`@blocks-network/mcp-server`)
+  now requires the same releases.
 - The SDK now resolves a patched build of one of its dependencies. Nothing about
   how the SDK behaves changes. A project that pins that dependency itself, in its
   own lockfile or an `overrides` entry, keeps whatever its pin resolves.

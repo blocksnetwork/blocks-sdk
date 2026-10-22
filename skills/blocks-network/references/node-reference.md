@@ -2,6 +2,31 @@
 
 Advanced reference for handler interfaces, streaming, TaskClient, environment variables, and deployment.
 
+## Contents
+
+This file is long: jump to the section you need instead of reading it whole.
+
+| Section | Read this for |
+|---|---|
+| [Handler Interfaces](#handler-interfaces) | `StartTaskMessage`, `TaskContext` (progress via `reportStatus`, `cancelSignal` / `isCancelled`, input artifacts), `HandlerResult` |
+| [Handler Patterns](#handler-patterns) | Copyable handlers: text, streaming, [agent-to-agent](#agent-to-agent-orchestrator) |
+| [Streaming Capabilities](#streaming-capabilities) | Card `streams` block (`_default` key), creating and consuming streams |
+| [Consumer Auth Patterns](#consumer-auth-patterns) | API key vs `tokenEndpoint` vs embedded auth for browsers |
+| [Trigger Scripts](#trigger-scripts-consumer-task-submission) | Submitting a task from a script and reading its artifacts |
+| [TaskClient & TaskSession](#taskclient--tasksession) | `sendMessage` options, session events, `onCancelRequested`, artifact download and decoding, errors |
+| [Environment Variables](#environment-variables-env) | `.env` contents and SDK env vars |
+| [Transport-Layer Resilience](#transport-layer-resilience) | Reconnect behavior and transport log events |
+| [Pipe Tasks (Provider)](#pipe-tasks-provider-handler) | Long-running handlers that loop until cancel or expiry |
+| [Sending Pipe Tasks (Consumer)](#sending-pipe-tasks-consumer) | `taskKind: 'pipe'`, `duration`, auto-drain |
+| [TaskClient.create()](#taskclientcreate-static-factory) | Auth modes, `billingMode`, registry lookups |
+| [TaskClient.connect()](#taskclientconnect----reconnecting-to-existing-tasks) | Reattaching to an existing task |
+| [Consumer Stream Discovery](#consumer-stream-discovery) | `waitForStream`, `bytes()` / `events()` / `readable()` |
+| [Task Lifecycle Methods](#task-lifecycle-methods) | Cancel, terminate, pause, resume, retry from the consumer side |
+| [CLI Commands](#cli-commands) | `init`, `login`, `register`, `publish`, `check`, `run`, `invite` |
+| [Deployment](#deployment) | Supported Node.js releases, running locally and multiple instances |
+
+Cancellation spans sections: the handler side is `TaskContext` (`cancelSignal`, `isCancelled`, `isExpired`) with the loop in Pipe Tasks (Provider); the consumer side is `session.cancel()` in Task Lifecycle Methods and `onCancelRequested` in TaskClient & TaskSession.
+
 ---
 
 ## Handler Interfaces
@@ -10,11 +35,10 @@ Advanced reference for handler interfaces, streaming, TaskClient, environment va
 
 Key fields: `taskId`, `ownerId`, `requestParts` (input array), `taskKind` (`'request'` | `'pipe'`), `hasStream`, `writeToken`, `controlToken`. Also includes `agentName`, `orgId`, `duration`, `durationExpiresAtMs`, `callerClaims`, `requestSummary`.
 
-**Accessing input** -- always check for undefined. Parts use `{ partId: '...', text: '...' }` format:
+**Accessing input** -- each part is a `RequestPart` object (`{ partId?, text?, contentType?, artifactRef? }`), never a bare string, and both `requestParts` and `text` may be absent. Read file parts with `ctx.downloadInputArtifact(part)`:
 
 ```typescript
-const input = task.requestParts?.[0];
-const text = typeof input === 'string' ? input : (input as Record<string, unknown>)?.text as string ?? 'default';
+const text = task.requestParts?.[0]?.text ?? 'default';
 ```
 
 ### TaskContext
@@ -69,8 +93,7 @@ import type { StartTaskMessage, TaskContext, HandlerResult } from '@blocks-netwo
 export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
-  const input = task.requestParts?.[0];
-  const text = typeof input === 'string' ? input : JSON.stringify(input ?? '');
+  const text = task.requestParts?.[0]?.text ?? '';
   ctx?.reportStatus('Processing...');
   return { artifacts: [{ data: text.toUpperCase(), mimeType: 'text/plain' }] };
 }
@@ -85,15 +108,13 @@ export default async function handler(
 export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
-  const input = task.requestParts?.[0];
-  const text = typeof input === 'string' ? input : 'Hello from streaming agent!';
+  const text = task.requestParts?.[0]?.text ?? 'Hello from streaming agent!';
 
   // Guard on hasStream — request-task streaming is consumer opt-in, so
   // createStream() throws when the consumer didn't opt in.
   if (ctx?.hasStream) {
     ctx.reportStatus('Streaming...');
     const stream = await ctx.createStream({
-      declaredStream: 'main-stream',
       bundleSizeBytes: 2048,
       maxLatencyMs: 50,
     });
@@ -107,27 +128,58 @@ export default async function handler(
 
 ### Agent-to-Agent (Orchestrator)
 
+Call another agent through `ctx.taskClient`. It is per-task and torn down
+when the handler exits, so await the sub-task and close its session before
+returning. `downloadArtifact()` returns `data` as a plain `Uint8Array`, not
+a `Buffer` (unlike `ctx.downloadInputArtifact()`): decode it with
+`TextDecoder`, because `String(data)` yields `"123,34,..."`.
+
 ```typescript
+import { textPart } from '@blocks-network/sdk';
+import type { HandlerResult, StartTaskMessage, TaskContext } from '@blocks-network/sdk';
+
+const SUB_AGENT = 'summarizer';
+const SUB_AGENT_TIMEOUT_MS = 60_000;
+
 export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
-  const text = typeof task.requestParts?.[0] === 'string' ? task.requestParts[0] : '';
-  ctx?.reportStatus('Delegating to sub-agent...');
+  if (!ctx) throw new Error('TaskContext required for agent-to-agent calls');
+  const text = task.requestParts?.[0]?.text ?? '';
+  ctx.reportStatus(`Delegating to ${SUB_AGENT}...`);
 
-  const session = await ctx!.taskClient.sendMessage({
-    agentName: 'summarizer',
-    ownerId: task.ownerId,
-    requestParts: [{ partId: 'request', text }],
-  });
+  const summary = await callSubAgent(ctx, task.ownerId, text);
+  return { artifacts: [{ data: JSON.stringify({ summary }), mimeType: 'application/json' }] };
+}
 
-  return new Promise((resolve) => {
-    session.onArtifact((event) =>
-      resolve({ artifacts: [{ data: JSON.stringify(event, null, 2), mimeType: 'application/json' }] }),
-    );
-    session.onTerminal(() =>
-      resolve({ artifacts: [{ data: 'Sub-agent completed', mimeType: 'text/plain' }] }),
-    );
+// Resolves to the sub-agent's parsed JSON artifact, or null on timeout,
+// non-completed terminal state, missing artifact, or non-JSON output.
+async function callSubAgent(ctx: TaskContext, ownerId: string, text: string): Promise<unknown> {
+  const session = await ctx.taskClient.sendMessage({
+    agentName: SUB_AGENT,
+    ownerId,
+    requestParts: [textPart(text, 'request')], // partId = the sub-agent's io.inputs[].id
   });
+  try {
+    const terminal = await session.waitForTerminal(SUB_AGENT_TIMEOUT_MS).catch(() => null);
+    if (!terminal) {
+      await session.cancel().catch(() => {}); // timed out: stop the sub-task
+      return null;
+    }
+    if (terminal.state !== 'completed') return null;
+
+    const ref = session.listArtifacts().find((r) => r.mimeType === 'application/json');
+    if (!ref) return null;
+    try {
+      const downloaded = await session.downloadArtifact(ref);
+      // downloaded.data is a Uint8Array, not a Buffer: String(data) yields "123,34,...".
+      return JSON.parse(new TextDecoder().decode(downloaded.data));
+    } catch {
+      return null;
+    }
+  } finally {
+    await session.asyncClose();
+  }
 }
 ```
 
@@ -151,6 +203,7 @@ Stream setup is refused once the task has finished (for example a late `createSt
 ### agent-card.json (streams section)
 
 For request-only agents (`taskKinds: ["request"]`), streams must contain only `_default` (schema-enforced).
+The key is the literal `_default`, not a name describing the content: `"words"` fails `blocks check` with `/streams/words — value must be "_default"`.
 Both `direction` and `format` are **required**.
 
 ```json
@@ -182,7 +235,7 @@ Stream property options:
 
 ### Handler: creating a stream
 
-`createStream()` takes options only. Use `declaredStream` to pick which card-declared stream to open (omit when the card declares a single stream):
+`createStream()` takes options only. Use `declaredStream` to pick which card-declared stream to open (omit when the card declares a single stream, such as a request-only agent's `_default`; only agents with `pipe` in `taskKinds` can declare named streams like the one below):
 
 ```typescript
 const stream = await ctx.createStream({
@@ -284,6 +337,7 @@ const artifacts = session.listArtifacts();
 for (const ref of artifacts) {
   const downloaded = await session.downloadArtifact(ref);
   console.log('Artifact:', downloaded.fileName, downloaded.data.length, 'bytes');
+  // downloaded.data is a Uint8Array: new TextDecoder().decode(downloaded.data) for text/JSON
 }
 
 await session.asyncClose();
@@ -298,7 +352,15 @@ client.destroy();
 
 **TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId` and that the caller still holds `agent:submit-task` in the task's billed org; embedded sessions, and a submitter with no membership in that org, are exempt from the permission check); set to `'provider'` when the caller is the agent owner viewing a received task. Embedded sessions and agent runtime credentials are refused the provider role, on their own agents too. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
 
-**TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`, `isClosed` (getter; `true` after `close()` / `asyncClose()` runs). Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onCancelRequested(cb: (e: CancelRequestedEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)`, `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `null` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
+**TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`, `isClosed` (getter; `true` after `close()` / `asyncClose()` runs). Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onCancelRequested(cb: (e: CancelRequestedEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)` (returns `{ data: Uint8Array; mimeType; fileName? }`), `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `null` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
+
+**Reading a downloaded artifact.** `DownloadedArtifact.data` is a plain `Uint8Array`, not a `Buffer`, so `String(data)` and `Buffer.isBuffer(data) ? data.toString() : String(data)` both yield `"123,34,..."`. Decode text and JSON explicitly:
+
+```typescript
+const downloaded = await session.downloadArtifact(ref);
+const text = new TextDecoder().decode(downloaded.data);
+const value: unknown = downloaded.mimeType === 'application/json' ? JSON.parse(text) : text;
+```
 
 **At-most-once `onTerminal`.** `session.onTerminal`, `session.waitForTerminal()`, `TaskClient.subscribeToTask`'s `onTerminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner force-cancel + agent's delayed terminal).
 
@@ -308,7 +370,7 @@ client.destroy();
 
 **Part helpers:** `textPart(text, partId?)`, `filePart(data, opts?)` (sync, universal — accepts `Uint8Array | ArrayBuffer | Blob | File`), `filePartFromPath(path, opts?)` (async, Node-only — reads via lazy `node:fs`) -- all exported from `@blocks-network/sdk`.
 
-**Artifact helpers:** `buildArtifactRef(data, mimeType, fileName?)` constructs an `ArtifactRef` from raw bytes (used internally by handler return paths and exposed for advanced consumers). `shouldInlineArtifact(sizeBytes)` returns `true` when the size is below the 16 KB inline threshold — matches the SDK's auto-routing decision. `decodeInlineArtifact(ref)` synchronously decodes an inline `ArtifactRef` to `Uint8Array` (no network). `downloadArtifact(ref)` is the standalone async fetcher for file-class refs (the same logic `session.downloadArtifact()` calls). All four are exported from `@blocks-network/sdk`.
+**Artifact helpers:** `buildArtifactRef({ data?, mimeType, fileName?, size?, hash?, file?, inlineLimit? })` takes a single options object (`data` is a `Uint8Array`; `mimeType` is required) and returns an `ArtifactRef` (used internally by handler return paths and exposed for advanced consumers). `shouldInlineArtifact(sizeBytes, inlineLimit?)` returns `true` when the size is at or below the 16 KB (16,384-byte) inline threshold — matches the SDK's auto-routing decision. `decodeInlineArtifact(ref)` synchronously decodes an inline `ArtifactRef` to `Uint8Array` (no network). `downloadArtifact(ref, pubnub)` is the standalone async fetcher and needs a PubNub client holding a read token for the artifact's channel; `session.downloadArtifact(ref)` calls it with the session's client, so prefer that. All four are exported from `@blocks-network/sdk`.
 
 **Auth — `tokenEndpoint`:** accepts either a string URL or a `TokenEndpointConfig` object (`{ url, credentials?: 'include' | 'same-origin' | 'omit', headers?, body? }`). The config form supports cookie-based auth (`credentials: 'include'`) and custom CSRF headers.
 
@@ -975,6 +1037,13 @@ blocks version                      # Print the installed CLI version
 ---
 
 ## Deployment
+
+The SDK needs Node.js 22.x from 22.23.4, 24.x from 24.22.1, or 26.12.1 and
+later. Any other release, including a 24.x before 24.22.1, trusts the eMudhra
+intermediate CAs whose keys were compromised in October 2026, and Node checks
+certificates against roots built into the runtime, so upgrading the SDK does
+not help on an older Node. In a container, start from `node:24.22.1-alpine`
+or newer and rebuild with `docker build --pull`.
 
 ```bash
 cd my-agent && npm install && npm start   # Local: run agent

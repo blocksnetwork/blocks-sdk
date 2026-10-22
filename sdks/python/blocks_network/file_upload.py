@@ -13,14 +13,12 @@ from __future__ import annotations
 
 import io
 import json
-import ssl
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
-import certifi
-
 from .protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
+from .tls import https_context
 from .write_affinity import capture_affinity, inject_affinity
 
 
@@ -120,7 +118,7 @@ def _authenticated_json_post(
         return hdrs
 
     def _execute(hdrs: Dict[str, str]) -> Dict[str, Any]:
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        ssl_ctx = https_context()
         req = urllib.request.Request(url, data=payload, headers=hdrs, method="POST")
 
         try:
@@ -235,7 +233,7 @@ def upload_to_presigned_url(
     """
     body, content_type = _build_multipart_body(form_fields, file_data, file_name, mime_type)
 
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = https_context()
     req = urllib.request.Request(
         upload_url,
         data=body,

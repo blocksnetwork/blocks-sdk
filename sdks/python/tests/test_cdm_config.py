@@ -101,3 +101,95 @@ class TestFetchCdmConfig:
 
         with pytest.raises(urllib.error.HTTPError):
             fetch_cdm_config()
+
+
+@pytest.fixture
+def https_cdm_server(tmp_path):
+    """Serve MOCK_CDM_RESPONSE over TLS with a throwaway self-signed CA.
+
+    Yields ``(url, ca_file)``. ``ca_file`` is in no system or certifi store,
+    so only a client that verifies against exactly that file can connect.
+    """
+    import http.server
+    import shutil
+    import ssl
+    import subprocess
+    import threading
+
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl CLI not available to mint a test certificate")
+    cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+    subprocess.run(
+        [
+            "openssl", "req", "-x509", "-newkey", "ec",
+            "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+            "-keyout", str(key), "-out", str(cert), "-days", "1",
+            "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    body = json.dumps(MOCK_CDM_RESPONSE).encode("utf-8")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"https://127.0.0.1:{server.server_port}/config.json", str(cert)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+class TestCdmConfigTrust:
+    """The CDM response sets the backend URL and PubNub keys, so it must be
+    verified against the SDK's certifi bundle like every other SDK request,
+    not against the interpreter's default store."""
+
+    def test_trusts_the_sdk_bundle(self, https_cdm_server, monkeypatch) -> None:
+        import certifi
+
+        from blocks_network.cdm_config import fetch_cdm_config
+
+        url, ca_file = https_cdm_server
+        monkeypatch.setattr(certifi, "where", lambda: ca_file)
+
+        config = fetch_cdm_config(url)
+
+        assert config.playground.publish_key == "pub-c-playground-key"
+
+    def test_rejects_a_server_outside_the_sdk_bundle(self, https_cdm_server) -> None:
+        import ssl
+        import urllib.error
+
+        from blocks_network.cdm_config import fetch_cdm_config
+
+        url, _ = https_cdm_server
+
+        with pytest.raises(urllib.error.URLError) as excinfo:
+            fetch_cdm_config(url)
+        assert isinstance(excinfo.value.reason, ssl.SSLCertVerificationError)
+
+    def test_refuses_a_non_http_url(self, tmp_path) -> None:
+        from blocks_network.cdm_config import fetch_cdm_config
+
+        local = tmp_path / "config.json"
+        local.write_text(json.dumps(MOCK_CDM_RESPONSE))
+
+        with pytest.raises(ValueError, match="http or https"):
+            fetch_cdm_config(local.as_uri())

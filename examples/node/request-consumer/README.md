@@ -7,7 +7,7 @@ artifacts. The simplest possible consumer flow.
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22.x from 22.23.4, 24.x from 24.22.1, or 26.12.1 and later
 - `BLOCKS_API_KEY` in the project `.env`. Get it by running `blocks login --write-env` (or accept the interactive prompt during `blocks login`).
 - An echo agent running on the same keyset
 

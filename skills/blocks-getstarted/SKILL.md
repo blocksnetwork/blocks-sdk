@@ -3,7 +3,7 @@ name: blocks-getstarted
 description: Linear first-time quickstart for building a brand-new Blocks Network agent. Walks the LLM through ask-name → scaffold → register → run end-to-end. Defaults to TypeScript; use Python only on explicit request.
 metadata:
   author: blocks-network
-  version: "0.1.0"
+  version: "0.1.1"
   domain: real-time
   triggers: build, create, new agent, scaffold, quickstart, getting started, first agent, help me build an agent, make a new agent, build an agent, create a new agent, blocks quickstart
   role: specialist
@@ -52,9 +52,11 @@ proceeding.
 working directory name, the repo name, or the user's first sentence are
 *hints*, not answers. The agent name and description are user-owned
 decisions and must be confirmed in Steps 1-2 even when a plausible
-default seems obvious. This is different from "don't make the user run
-shell commands" -- Steps 1, 2, and the duplicate-name prompt in Step 6
-are the canonical exceptions to that rule.
+default seems obvious. A name or description the user already stated
+explicitly in this conversation counts as confirmed. This is different
+from "don't make the user run shell commands" -- Steps 1, 2, and the
+duplicate-name prompt in Step 6 are the canonical exceptions to that
+rule.
 
 **No TTY available.** This skill runs inside Claude Code, Cursor, or a
 similar coding assistant -- there is **no interactive terminal** for
@@ -109,17 +111,30 @@ descriptive, specific name (e.g. `weather_forecast_bot`,
 ## Step 2: Confirm Description
 
 Propose a one-sentence description based on the name and ask the user
-to accept or customize it (see [Asking the User Questions]). Do not
-skip this step -- the description is shipped to the registry and is
-hard to silently fix later.
+to accept or customize it (see [Asking the User Questions]). Skip
+**only if** the user has already given an explicit description in this
+conversation; otherwise do not skip this step -- the description is
+shipped to the registry and is hard to silently fix later.
 
 ## Step 3: Install & Authenticate CLI
+
+You run the install yourself; it is not user setup. `blocks init`
+(Step 4) and `blocks check` (Step 7) need no account and no login, so
+run both even when the user cannot or will not log in yet. Only
+`blocks login`, `blocks register` / `blocks publish` and `blocks run`
+need the user (Steps 6 and 8).
 
 Always install (or update) the Blocks CLI to ensure the latest version:
 
 ```bash
 npm i -g @blocks-network/cli
 ```
+
+If a global install is not possible (no permission, sandboxed shell) or
+`blocks` is still not on the `PATH`, do not skip init or check: run each
+`blocks <cmd>` in this skill as `npx -y @blocks-network/cli <cmd>`
+instead, for example
+`npx -y @blocks-network/cli init <your-agent-name> --yes --language node`.
 
 On OpenBSD, npm is not in base: install Node.js, which ships npm,
 before running the command above:
@@ -241,6 +256,12 @@ For Python agents, use `--language node` → `--language python`. The CLI
 defaults to Python when `--language` is omitted, so always pass
 `--language node` explicitly for TypeScript agents.
 
+`blocks init` needs no login. For a Node agent it writes `.env`,
+`.gitignore`, `agent-card.json`, `handler.ts`, `package.json` and
+`trigger.ts`. If you create the project files by hand instead, also
+write a `.gitignore` that lists `.env` (the scaffold's lists `.env`,
+`pip.conf` and `.npmrc`) so `BLOCKS_API_KEY` is never committed.
+
 `blocks init` defaults `--mode provider` -- it scaffolds a handler
 agent (`handler.{ts,py}`, `trigger.{ts,py}`, `agent-card.json`). That's
 what this skill is for. If the user actually wants to **call** other
@@ -271,6 +292,9 @@ For the full IO schema rules (transport classes, form/text/file class
 constraints, examples, defaults), see [IO Schema Reference]. For
 streaming agents, see [Node Reference] / [Python Reference]. For handler
 signatures and patterns, see [Node Reference] / [Python Reference].
+
+When the handler and card are written, run `blocks check` (Step 7)
+before handing off Step 6 -- it does not wait for registration.
 
 ## Step 6: Register (or Publish)
 
@@ -333,6 +357,12 @@ alternative (see [Asking the User Questions]), update `agent-card.json`
 command.
 
 ## Step 7: Validate
+
+Run this yourself before finishing, even if the user has not logged in
+or registered: the schema and handler checks run locally and need no
+account. Never report `blocks check` as not run because the CLI is
+missing -- fall back to `npx -y @blocks-network/cli check` (see Step 3).
+Fix every `[FAIL]` and re-run until it passes.
 
 ```bash
 cd <your-agent-name> && blocks check

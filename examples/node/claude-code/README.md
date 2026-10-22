@@ -10,7 +10,7 @@ Python agent (`claude-code-python`).
 
 ## Prerequisites
 
-- **Node.js 22+**
+- **Node.js 22.x from 22.23.4, 24.x from 24.22.1, or 26.12.1 and later**
 - **`claude` CLI** on your PATH -- install with `npm install -g @anthropic/claude-code`
 - **Anthropic API key** from <https://console.anthropic.com/>
 - **`BLOCKS_API_KEY`** (run `blocks login` to generate)

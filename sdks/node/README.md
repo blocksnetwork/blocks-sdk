@@ -593,8 +593,11 @@ Import from the package root — no special browser entrypoint needed:
 
     import { TaskClient, TaskSession, StreamRef } from '@blocks-network/sdk';
 
-The Node SDK package.json declares `engines.node >= 22.0.0` (Node 22
-Maintenance LTS) alongside the `browser` exports field. Node 22+ has native
+The Node SDK package.json declares `engines.node` as
+`^22.23.4 || ^24.22.1 || >=26.12.1` alongside the `browser` exports field.
+The floor is per release line: each one names the first release that stops
+trusting the compromised eMudhra intermediate CAs, which Node checks against
+roots compiled into the binary rather than the OS store. Node 22+ has native
 `FormData`, `fetch`, `Blob`, `Uint8Array`, `TextEncoder`, and
 `TextDecoder`, which the SDK uses directly — no polyfill required on
 either platform. CI tests against Node 22, 24, and 26.

@@ -12,15 +12,13 @@ from __future__ import annotations
 
 import json
 import logging
-import ssl
 import threading
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
-import certifi
-
 from .protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
+from .tls import https_context
 from .write_affinity import capture_affinity, inject_affinity
 
 logger = logging.getLogger(__name__)
@@ -343,7 +341,7 @@ class AgentAuth:
         ``/auth/agent/refresh``) -- precisely so the SDK's first follow-up
         data-plane read hits primary after a fresh connect or refresh.
         """
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        ssl_ctx = https_context()
         req = urllib.request.Request(
             url,
             data=body,

@@ -7,7 +7,7 @@ demonstrates a different way to acquire and refresh tokens.
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22.x from 22.23.4, 24.x from 24.22.1, or 26.12.1 and later
 - `BLOCKS_API_KEY` for api-key and custom-provider modes
 - A running echo agent on the same keyset
 

@@ -1,6 +1,6 @@
 module github.com/pubnub/blocks-sdk/cli
 
-go 1.24.0
+go 1.27.3
 
 require (
 	github.com/creack/pty v1.1.24

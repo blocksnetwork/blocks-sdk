@@ -32,7 +32,7 @@ from blocks_network.types import StartTaskMessage, TaskContext
 
 def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[str, Any]:
     parts = task.request_parts or []
-    text = parts[0].text if parts and hasattr(parts[0], "text") else ""
+    text = (parts[0].text or "") if parts else ""
 
     if ctx:
         ctx.report_status("Processing...")
@@ -104,7 +104,7 @@ Add this to `agent-card.json` (peer of `identity`, `capabilities`, `io`):
 **Critical rules:**
 - `streams` is a **top-level** property -- NOT inside `capabilities`.
 - `capabilities` only accepts `taskKinds` -- anything else fails `blocks check`.
-- For request-only agents (`taskKinds: ["request"]`), streams must contain only `_default`.
+- For request-only agents (`taskKinds: ["request"]`), streams must contain only `_default`. The key is the literal `_default`, not a name describing the content: `"words"` fails `blocks check` with `/streams/words — value must be "_default"`.
 - Both `direction` and `format` are required on each stream.
 - A stream declared with `affinity: "shared"` is a cross-task broadcast and is **pipe-only** — `create_stream()` raises on request tasks, and per-task `stream.end()` does not publish a `stream_end` marker. See the SDK contract for the full stream lifecycle.
 - Re-register or re-publish (`blocks register` / `blocks publish`) after adding `streams`. Use `blocks publish` here if the agent has already been promoted to public or paid — `blocks register` would reset the listing back to private+free.
@@ -132,14 +132,13 @@ Type exports for handler code: `from blocks_network import InboundMessage, Strea
 ```python
 def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[str, Any]:
     parts = task.request_parts or []
-    text = parts[0].text if parts and hasattr(parts[0], "text") else "Hello!"
+    text = (parts[0].text or "Hello!") if parts else "Hello!"
 
     # Guard on has_stream — request-task streaming is consumer opt-in, so
     # create_stream() raises when the consumer didn't opt in.
     if ctx and ctx.has_stream:
         ctx.report_status("Streaming...")
         stream = ctx.create_stream(
-            declared_stream="main-stream",
             bundle_size_bytes=2048,
             max_latency_ms=50,
         )
@@ -154,46 +153,67 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 ## Agent-to-Agent (Orchestrator)
 
-Uses `ctx.task_client` (injected by the runtime — no extra imports needed).
-Handler-level imports (`StartTaskMessage`, `TaskContext`) come from the
-handler file's header shown in the Handler Signature section above.
+Uses `ctx.task_client` (injected by the runtime). Wait for the sub-task and
+close its session before the handler returns. `download_artifact()` returns
+`data` as `bytes`: decode it (or pass it straight to `json.loads`), because
+`str(data)` yields `"b'{...}'"`.
 
 ```python
+from __future__ import annotations
+
 import json
-import threading
+from typing import Any, Dict, Optional
+
+from blocks_network import text_part
+from blocks_network.types import StartTaskMessage, TaskContext
+
+SUB_AGENT = "summarizer"
+SUB_AGENT_TIMEOUT_S = 60
+
 
 def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[str, Any]:
-    text = ""
+    if ctx is None or ctx.task_client is None:
+        raise RuntimeError("TaskContext with task_client required for agent-to-agent calls")
     parts = task.request_parts or []
-    if parts and hasattr(parts[0], "text"):
-        text = parts[0].text
+    text = (parts[0].text or "") if parts else ""
+    ctx.report_status(f"Delegating to {SUB_AGENT}...")
 
-    if ctx:
-        ctx.report_status("Delegating to sub-agent...")
+    summary = call_sub_agent(ctx, task.owner_id, text)
+    return {"artifacts": [{"data": json.dumps({"summary": summary}), "mimeType": "application/json"}]}
 
+
+def call_sub_agent(ctx: TaskContext, owner_id: str, text: str) -> Optional[Any]:
+    """Return the sub-agent's parsed JSON artifact, or None on timeout,
+    non-completed terminal state, missing artifact, or non-JSON output."""
+    assert ctx.task_client is not None
     session = ctx.task_client.send_message(
-        agent_name="summarizer",
-        owner_id=task.owner_id,
-        request_parts=[{"partId": "request", "text": text}],
+        agent_name=SUB_AGENT,
+        owner_id=owner_id,
+        request_parts=[text_part(text, "request")],  # part_id = the sub-agent's io.inputs[].id
     )
+    try:
+        try:
+            terminal = session.wait_for_terminal(timeout=SUB_AGENT_TIMEOUT_S)
+        except TimeoutError:
+            try:
+                session.cancel()  # timed out: stop the sub-task
+            except Exception:
+                pass
+            return None
+        if terminal.state != "completed":
+            return None
 
-    result_holder = {}
-    done = threading.Event()
-
-    def on_artifact(event):
-        result_holder["data"] = event
-        done.set()
-
-    def on_terminal(_event):
-        done.set()
-
-    session.on_artifact(on_artifact)
-    session.on_terminal(on_terminal)
-    done.wait()
-    session.close()
-
-    data = result_holder.get("data", "Sub-agent completed")
-    return {"artifacts": [{"data": json.dumps(data), "mimeType": "application/json"}]}
+        ref = next((r for r in session.list_artifacts() if r.mime_type == "application/json"), None)
+        if ref is None:
+            return None
+        try:
+            downloaded = session.download_artifact(ref)
+            # downloaded.data is bytes: decode it; str(data) yields "b'{...}'".
+            return json.loads(downloaded.data.decode("utf-8"))
+        except Exception:
+            return None
+    finally:
+        session.close()
 ```
 
 ---
@@ -204,7 +224,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 **TaskClient.connect(task_id, auto_drain=True, drain_window_s=None, role="consumer")** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`. `role` defaults to `"consumer"` (task submitter — server checks `user_id == task.owner_id` and that the caller still holds `agent:submit-task` in the task's billed org; embedded sessions, and a submitter with no membership in that org, are exempt from the permission check); set to `"provider"` when the caller is the agent owner viewing a received task. Embedded sessions and agent runtime credentials are refused the provider role, on their own agents too. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
 
-**TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_cancel_requested(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_artifacts()`, `download_artifact(ref)`, `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `None` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
+**TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_cancel_requested(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_artifacts()`, `download_artifact(ref)` (returns `DownloadedArtifact` with `data: bytes`, `mime_type`, `file_name`; decode text with `downloaded.data.decode("utf-8")`, not `str(downloaded.data)`), `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `None` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
 
 **At-most-once `on_terminal`.** `session.on_terminal`, `session.wait_for_terminal()`, `subscribe_to_task`'s `on_terminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner force-cancel + agent's delayed terminal).
 
@@ -214,7 +234,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
 
 **Part helpers:** `text_part(text, part_id=)`, `file_part(path_or_data, **opts)` -- exported from `blocks_network`.
 
-**Artifact helpers:** `build_artifact_ref(data, mime_type, file_name=None)` constructs an `ArtifactRef` from raw bytes. `should_inline_artifact(size_bytes)` returns `True` when the size is below the 16 KB inline threshold (matches the SDK's auto-routing decision). `decode_inline_artifact(ref)` synchronously decodes an inline `ArtifactRef` to `bytes` (no network). `download_artifact(ref)` is the standalone async-fetcher equivalent (the same logic `session.download_artifact()` calls). All four are exported from `blocks_network`.
+**Artifact helpers:** `build_artifact_ref(*, data=None, mime_type="application/octet-stream", size=None, hash=None, file=None, file_name=None, inline_limit=None)` takes keyword arguments only and returns a camelCase `dict` ready to publish, not an `ArtifactRef` instance; wrap it with `ArtifactRef.from_dict(...)` before passing it to the helpers below. `should_inline_artifact(size_bytes, inline_limit=None)` returns `True` when the size is at or below the 16 KB (16,384-byte) inline threshold (matches the SDK's auto-routing decision). `decode_inline_artifact(ref)` synchronously decodes an inline `ArtifactRef` to `bytes` (no network). `download_artifact(ref, pubnub)` is the standalone synchronous fetcher and needs a PubNub client holding a read token for the artifact's channel; `session.download_artifact(ref)` calls it with the session's client, so prefer that. All four, and `ArtifactRef`, are exported from `blocks_network`.
 
 **File uploads:** `presigned_upload_flow(api_key_or_client, file_path_or_bytes, mime_type, file_name=None)` uploads a file via the Blocks presigned-URL flow and returns an `ArtifactRef` suitable for `request_parts`. Use this when an input artifact is too large to inline as base64. Raises `FileUploadError` on presign-rejection or upload-stage failure (network, 4xx/5xx from object storage); the exception carries the original cause. Both are exported from `blocks_network`.
 
@@ -849,6 +869,11 @@ This behavior is automatic; no agent-card or env-var changes are required.
 ---
 
 ## Install & Run
+
+The SDK requires `certifi` 2026.10.19 or later, which drops the eMudhra
+intermediate CAs whose keys were compromised in October 2026, and verifies
+every request it makes against that bundle rather than the OS store. After
+upgrading, rebuild container images and restart running agents.
 
 ```bash
 cd <name> && pip install -e . && pip install blocks-network --upgrade  # Install deps

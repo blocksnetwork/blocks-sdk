@@ -3,7 +3,7 @@ name: blocks-network
 description: Modify, validate, run, register, publish, consume, and troubleshoot agents on Blocks Network. Use when an agent project already exists, when deploying existing code, or when working with agent-card.json, the Blocks CLI, TaskClient, streams, private access, or publishing. For a brand-new agent, use blocks-getstarted. Do not use for generic AI-agent work or for a Blocks Enterprise deployment, which serves its own skill at <deployment>/skill.md.
 metadata:
   author: blocks-network
-  version: "0.4.0"
+  version: "0.4.1"
 ---
 
 # Blocks Network
@@ -28,7 +28,15 @@ Load only the material needed for the request:
 - **Change inputs or outputs:** also read [IO Schema Reference]. Keep the card's
   IO declarations aligned with what the handler accepts and returns.
 - **TypeScript handlers, TaskClient, A2A, streams, or trigger scripts:** read
-  [Node Reference]. TypeScript is the default for new code.
+  [Node Reference]. TypeScript is the default for new code. It opens with a
+  table of contents; read only the sections the task needs.
+- **One agent calling another from its handler:** [Node Reference] →
+  Agent-to-Agent (Orchestrator), then TaskClient & TaskSession for artifact
+  download and decoding.
+- **Cancellation:** [Node Reference] → TaskContext (`cancelSignal`,
+  `isCancelled`) and Pipe Tasks (Provider Handler) for the handler side;
+  Task Lifecycle Methods and `onCancelRequested` under TaskClient &
+  TaskSession for the consumer side.
 - **Python:** read [Python Reference] only when the user requests Python or the
   existing project is Python. Preserve the language of existing projects.
 - **End-to-end development or deployment questions:** read [Agent Development
@@ -52,7 +60,9 @@ kinds, timeouts, and stream declarations.
    streaming behavior changes, update the matching card fields in the same
    change.
 5. Run the smallest relevant local checks, including `blocks check` for every
-   card change. Report failures with their actionable cause; do not claim the
+   card change. `blocks check` needs no account or login; if `blocks` is not
+   on the `PATH`, run `npx -y @blocks-network/cli check` rather than skipping
+   it. Report failures with their actionable cause; do not claim the
    agent is deployed or running based only on local validation.
 6. Hand off any live command the user must run, with the exact project path and
    agent name substituted.
@@ -129,8 +139,10 @@ user the exact command to run.
   permits omission, but an implicit runtime default is rarely a sound design
   choice.
 - Declare streaming in the card's top-level `streams` object, never inside
-  `capabilities`. Request-task streaming is consumer opt-in, so handlers guard
-  `ctx.hasStream` / `ctx.has_stream` before creating a stream.
+  `capabilities`. A request-only agent's single stream key must be the literal
+  `_default`, whatever the stream carries. Request-task streaming is consumer
+  opt-in, so handlers guard `ctx.hasStream` / `ctx.has_stream` before creating
+  a stream.
 - Consume event streams with `stream.events()` and byte streams with
   `stream.bytes()`. Use low-level `stream.inbound` only when raw envelope
   metadata is required.

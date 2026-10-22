@@ -9,11 +9,18 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
+from .tls import https_context
+
 DEFAULT_CDM_URL = "https://config.blocks.ai/config.json"
+
+# urllib also opens file: and ftp: URLs; Node's fetch does not, so a CDM URL
+# from the environment is held to the schemes both SDKs accept.
+_CDM_URL_SCHEMES = frozenset({"https", "http"})
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,10 @@ def fetch_cdm_config(url: Optional[str] = None) -> CdmConfig:
 
 
 def _load_cdm_data(cdm_url: str) -> dict:
+    if urllib.parse.urlsplit(cdm_url).scheme.lower() not in _CDM_URL_SCHEMES:
+        raise ValueError(f"CDM URL must use http or https: {cdm_url!r}")
     req = urllib.request.Request(cdm_url)
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(  # nosec B310
+        req, context=https_context(), timeout=10
+    ) as resp:
         return json.loads(resp.read().decode("utf-8"))

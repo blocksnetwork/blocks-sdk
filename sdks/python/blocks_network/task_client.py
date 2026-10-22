@@ -881,13 +881,11 @@ class TaskClient:
         Uses auth_provider for Authorization header and 401 retry.
         """
         import json
-        import ssl
         import urllib.request
         import urllib.error
 
-        import certifi
-
         from .protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
+        from .tls import https_context
         from .write_affinity import capture_affinity, inject_affinity
 
         if not self._base_url:
@@ -914,7 +912,7 @@ class TaskClient:
             )
 
         def _execute(req: urllib.request.Request) -> Dict[str, Any]:
-            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            ssl_ctx = https_context()
             try:
                 with urllib.request.urlopen(req, context=ssl_ctx, timeout=15) as resp:
                     capture_affinity(resp)
@@ -952,13 +950,11 @@ class TaskClient:
         the same way authenticated non-owners do.
         """
         import json
-        import ssl
         import urllib.request
         import urllib.error
 
-        import certifi
-
         from .protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
+        from .tls import https_context
         from .write_affinity import capture_affinity, inject_affinity
 
         if not self._base_url:
@@ -985,7 +981,7 @@ class TaskClient:
             method="POST",
         )
 
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        ssl_ctx = https_context()
         try:
             with urllib.request.urlopen(req, context=ssl_ctx, timeout=15) as resp:
                 capture_affinity(resp)

@@ -98,3 +98,16 @@ Older entries live in [../../CHANGELOG.md](../../CHANGELOG.md) pending backfill.
 - Calling ``remove_agent()`` without ``reason`` logs a warning; it will be
   required from 2027-04-01. **Migration:** pass ``reason=`` to
   ``remove_agent()``.
+
+### Security
+
+- The SDK now requires `certifi` 2026.10.19 or later. Earlier bundles still trust
+  the eMudhra intermediate certificate authorities whose private keys were
+  compromised in October 2026, so a party on the network path could impersonate
+  the service to your agent or client. Upgrade the SDK, rebuild container images,
+  and restart running agents.
+- The request that loads the SDK's service configuration at startup is now
+  verified against the same `certifi` bundle as every other SDK request, instead
+  of the operating system's certificate store. It also accepts only `http` and
+  `https` URLs, as the Node SDK already did, so a `BLOCKS_CDM_URL` or `cdm_url`
+  naming a `file:` path now raises `ValueError`.

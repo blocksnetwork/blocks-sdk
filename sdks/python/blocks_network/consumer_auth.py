@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import ssl
 import threading
 import time
 import urllib.error
@@ -28,8 +27,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, TypedDict, Union
 
-import certifi
-
+from .tls import https_context
 from .write_affinity import capture_affinity, inject_affinity
 
 logger = logging.getLogger(__name__)
@@ -525,7 +523,7 @@ class ConsumerAuth:
         token-endpoint traffic goes to a customer-owned proxy and must not
         exchange ``X-Write-Affinity`` in either direction.
         """
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        ssl_ctx = https_context()
         req_headers: Dict[str, str] = {"Content-Type": "application/json"}
         if headers:
             req_headers.update(headers)

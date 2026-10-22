@@ -9,7 +9,7 @@
  */
 
 import PubNub from 'pubnub';
-import { buildPubNubLogConfig } from '../runtime/pubnub-client.js';
+import { buildPubNubClientDefaults } from '../runtime/pubnub-client.js';
 import { StreamBundle } from './stream-bundle.js';
 import { validateStreamId } from './validate.js';
 import { getEnv } from '../env.js';
@@ -249,7 +249,7 @@ export class StreamClient {
       publishKey: options.publishKey,
       userId: this._uuid,
       enableEventEngine: true,
-      ...buildPubNubLogConfig(),
+      ...buildPubNubClientDefaults(),
     });
     this.pubnub.setToken(options.token);
 
