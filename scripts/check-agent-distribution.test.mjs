@@ -73,6 +73,13 @@ test('rejects plugin metadata that violates the Agent Plugins contract', async (
   await assert.rejects(checkAgentDistribution(root), /plugin\.json contains an unsupported field/);
 });
 
+test('rejects a non-skill directory under skills/', async (t) => {
+  const root = await createDistributionFixture(t);
+  await mkdir(path.join(root, 'skills', 'evals'));
+
+  await assert.rejects(checkAgentDistribution(root), /skills\/evals has no SKILL\.md/);
+});
+
 test('rejects a stale packaged schema', async (t) => {
   const root = await createDistributionFixture(t);
   await writeFile(

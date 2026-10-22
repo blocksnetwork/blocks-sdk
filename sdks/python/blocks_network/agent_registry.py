@@ -322,13 +322,12 @@ def _registry_fetch(
 
     Returns parsed JSON on success, None on 404, raises on other errors.
     """
-    import ssl
     import urllib.request
     import urllib.error
 
-    import certifi
+    from .tls import https_context
 
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    ssl_ctx = https_context()
     default_headers = {PROTOCOL_VERSION_HEADER: CURRENT_PROTOCOL_VERSION}
     if headers:
         default_headers.update(headers)

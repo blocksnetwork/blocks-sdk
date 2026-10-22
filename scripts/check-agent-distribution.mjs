@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +23,14 @@ export async function checkAgentDistribution(sdkRoot = defaultSdkRoot) {
   const skillDirectories = (await readdir(skillsRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
+  for (const directory of skillDirectories) {
+    const skillFile = path.join(skillsRoot, directory, 'SKILL.md');
+    const isSkill = await access(skillFile).then(
+      () => true,
+      () => false,
+    );
+    assert(isSkill, `skills/${directory} has no SKILL.md; only skill directories belong under skills/`);
+  }
 
   const canonicalLicense = await readFile(path.join(sdkRoot, 'LICENSE'));
   for (const skillName of ['blocks-getstarted', 'blocks-network']) {

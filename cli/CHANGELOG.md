@@ -627,3 +627,15 @@ Older entries live in [../CHANGELOG.md](../CHANGELOG.md) pending backfill.
   builder that has the layer cached, pass `--build-arg SECURITY_REFRESH=$(date +%F)` to
   re-run it. A project scaffolded earlier keeps its existing `Dockerfile` until you copy
   the new `ARG` and `RUN` block into it.
+- The CLI is now built with Go 1.27.3, which no longer trusts the eMudhra
+  intermediate certificate authorities whose private keys were compromised in
+  October 2026. Earlier builds could accept a forged certificate for the service
+  from a party on the network path. Reinstall with
+  `npm install -g @blocks-network/cli` to pick up the fix; building from source
+  now needs Go 1.27.3 or later. Go 1.26.10 also has the fix, but 1.27.0 to
+  1.27.2 do not, and a minimum version cannot exclude them.
+- A Node agent scaffolded by `blocks init` now starts from `node:24.22.1-alpine`
+  instead of `node:24-alpine`, so a builder holding an older cached `node:24-alpine`
+  can no longer produce an agent whose Node.js trusts the compromised eMudhra
+  intermediates. A project scaffolded earlier keeps its `Dockerfile`: change its
+  `FROM` line to `node:24.22.1-alpine` or newer, or rebuild with `docker build --pull`.

@@ -30,6 +30,11 @@ export interface PubNubClientConfig {
    * is preferable to a stuck loop.
    */
   subscribeRetryUnbounded?: boolean;
+  /**
+   * Reuse HTTPS connections across requests. Default: true. Pass `false` to call
+   * `setProxy()` on the client: the PubNub Node SDK refuses a proxy on a keep-alive client.
+   */
+  keepAlive?: boolean;
 }
 
 // 30 days at the 60s exponential-backoff cap = 43_200 retries. PubNub's
@@ -164,6 +169,19 @@ export function buildPubNubLogConfig(): {
   };
 }
 
+// Pinned rather than inherited from the transport's default: idle pooled sockets
+// must close well before the PubNub edge drops them, or a reused socket fails a publish.
+const KEEP_ALIVE_IDLE_TIMEOUT_MS = 30_000;
+
+/** Spread into every SDK `new PubNub(...)`; the Node transport leaves keep-alive off by default. */
+export function buildPubNubClientDefaults() {
+  return {
+    keepAlive: true,
+    keepAliveSettings: { timeout: KEEP_ALIVE_IDLE_TIMEOUT_MS },
+    ...buildPubNubLogConfig(),
+  };
+}
+
 export const createPubNubClient = (config: PubNubClientConfig) => {
   if (!config.subscribeKey || !config.publishKey) {
     throw new Error('PUBNUB keys not configured');
@@ -171,12 +189,14 @@ export const createPubNubClient = (config: PubNubClientConfig) => {
   // Default true; see JSDoc on `subscribeRetryUnbounded` for the contract.
   const unbounded = config.subscribeRetryUnbounded ?? true;
   const retryPolicy = unbounded ? buildUnboundedRetryPolicy() : null;
-  const { logLevel, loggers } = buildPubNubLogConfig();
+  const { logLevel, loggers, ...transportDefaults } = buildPubNubClientDefaults();
   return new PubNub({
     publishKey: config.publishKey,
     subscribeKey: config.subscribeKey,
     userId: config.userId ?? 'blocks-agent',
     enableEventEngine: true,
+    ...transportDefaults,
+    ...(config.keepAlive === false ? { keepAlive: false } : {}),
     ...(config.presenceTimeout !== undefined ? { presenceTimeout: config.presenceTimeout } : {}),
     ...(config.announceSuccessfulHeartbeats === true
       ? { announceSuccessfulHeartbeats: true }

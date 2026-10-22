@@ -10,7 +10,7 @@
  */
 
 import PubNub from 'pubnub';
-import { buildPubNubLogConfig } from './pubnub-client.js';
+import { buildPubNubClientDefaults } from './pubnub-client.js';
 import { callRpc, type RpcClientConfig } from './rpc-client.js';
 import { taskChannel } from './channel-manager.js';
 import { TaskSession, type CallbackErrorContext } from './task-session.js';
@@ -595,7 +595,7 @@ export class TaskClient {
         publishKey: publishKey || undefined,
         userId: sessionId,
         enableEventEngine: true,
-        ...buildPubNubLogConfig(),
+        ...buildPubNubClientDefaults(),
       });
     };
 
@@ -831,7 +831,7 @@ export class TaskClient {
         publishKey: effectivePublishKey || undefined,
         userId: sessionId,
         enableEventEngine: true,
-        ...buildPubNubLogConfig(),
+        ...buildPubNubClientDefaults(),
       });
     }
 

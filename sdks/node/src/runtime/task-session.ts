@@ -7,7 +7,7 @@
  */
 
 import PubNub from 'pubnub';
-import { buildPubNubLogConfig } from './pubnub-client.js';
+import { buildPubNubClientDefaults } from './pubnub-client.js';
 import {
   StreamClient,
   invertDirection,
@@ -762,7 +762,7 @@ export class TaskSession {
       subscribeKey: this.subscribeKey,
       publishKey: this.publishKey || undefined,
       userId: sessionId,
-      ...buildPubNubLogConfig(),
+      ...buildPubNubClientDefaults(),
     });
     if (this.readToken) {
       tempPubnub.setToken(this.readToken);

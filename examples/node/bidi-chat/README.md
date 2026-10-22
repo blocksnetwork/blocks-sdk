@@ -29,7 +29,7 @@ messages received), distinct from `1` for setup failure.
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22.x from 22.23.4, 24.x from 24.22.1, or 26.12.1 and later
 - `BLOCKS_API_KEY` (run `blocks login --write-env` in the project dir)
 
 ## Run

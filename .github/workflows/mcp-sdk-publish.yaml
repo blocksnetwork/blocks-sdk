@@ -21,6 +21,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          check-latest: true
 
       - name: Strip tag prefix
         id: tag

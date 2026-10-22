@@ -16,7 +16,6 @@ skills/
 │   └── references/
 │       ├── agent-card.schema.json
 │       └── …
-├── evals/
 └── tile.json
 ```
 
@@ -33,8 +32,10 @@ skills/
   installations made by `npx skills` do not depend on files outside `skills/`.
 - Each skill includes a distributable copy of the repository `LICENSE` because
   `npx skills` installs skill directories independently.
-- `evals/` contains development-time evaluation fixtures and is not discovered
-  as a skill because it has no `SKILL.md`.
+- Every child directory of `skills/` must be an installable skill with a
+  `SKILL.md`; `npm run check:agent-distribution` enforces this. Skill loaders
+  such as Harbor reject a skills root containing any other directory, so
+  development-time evaluation fixtures live in [`../evals/`](../evals/).
 - `tile.json` indexes the same canonical skill files for the existing tile
   distribution.
 

@@ -4,6 +4,15 @@ MCP (Model Context Protocol) server that exposes Blocks Network consumer operati
 
 Get API Key: https://app.blocks.ai/manage/api-keys
 
+## Requirements
+
+Node.js 22.x from 22.23.4, 24.x from 24.22.1, or 26.12.1 and later. Any other
+release, including a 24.x before 24.22.1, trusts the eMudhra intermediate
+certificate authorities whose keys were compromised in October 2026, so a party
+on the network path could impersonate Blocks Network to the server. Node.js checks
+certificates against roots built into the runtime, so upgrade Node.js itself;
+updating this package does not change them.
+
 ## Environment Variables
 
 | Variable | Required | Description |

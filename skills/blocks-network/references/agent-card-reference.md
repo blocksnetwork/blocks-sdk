@@ -89,7 +89,9 @@ NOT inside `capabilities`. The `capabilities` object only accepts `taskKinds`
 `capabilities` will fail `blocks check`.
 
 For agents with only `request` in `taskKinds`, streams must contain only
-`_default` (at most one entry, schema-enforced). Agents with both `request`
+`_default` (at most one entry, schema-enforced). The key is the literal
+`_default`, not a name describing the content: `"words"` fails
+`blocks check` with `/streams/words — value must be "_default"`. Agents with both `request`
 and `pipe` can use other stream names. Both `direction` and `format` are
 required on each stream.
 
@@ -257,11 +259,10 @@ export default async function handler(
 
 Must be a **default async export**. Return `{ artifacts: [{ data, mimeType, fileName?, outputId? }] }`.
 
-**Accessing input** -- always check for undefined:
+**Accessing input** -- each part is a `RequestPart` object (`{ partId?, text?, contentType?, artifactRef? }`), never a bare string, and both `requestParts` and `text` may be absent. Read file parts with `ctx.downloadInputArtifact(part)`:
 
 ```typescript
-const input = task.requestParts?.[0];
-const text = typeof input === 'string' ? input : (input as Record<string, unknown>)?.text as string ?? 'default';
+const text = task.requestParts?.[0]?.text ?? 'default';
 ```
 
 ### Example Handler
@@ -272,8 +273,7 @@ import type { StartTaskMessage, TaskContext, HandlerResult } from '@blocks-netwo
 export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
-  const input = task.requestParts?.[0];
-  const text = typeof input === 'string' ? input : JSON.stringify(input ?? '');
+  const text = task.requestParts?.[0]?.text ?? '';
   ctx?.reportStatus('Processing...');
   return { artifacts: [{ data: text.toUpperCase(), mimeType: 'text/plain' }] };
 }

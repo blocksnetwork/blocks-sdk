@@ -455,6 +455,11 @@ To declare streaming support, add a `streams` section:
 }
 ```
 
+An agent whose `taskKinds` is only `["request"]` may declare just one
+stream, and its key must be the literal `_default`: a descriptive name such
+as `"words"` fails `blocks check` with
+`/streams/words — value must be "_default"`.
+
 ---
 
 ## Handler Function
@@ -503,11 +508,10 @@ interface RequestPart {
 }
 ```
 
-**Accessing input** -- always check for undefined:
+**Accessing input** -- each part is a `RequestPart` object (`{ partId?, text?, contentType?, artifactRef? }`), never a bare string, and both `requestParts` and `text` may be absent. Read file parts with `ctx.downloadInputArtifact(part)`:
 
 ```typescript
-const input = task.requestParts?.[0];
-const text = typeof input === 'string' ? input : JSON.stringify(input ?? 'default');
+const text = task.requestParts?.[0]?.text ?? 'default';
 ```
 
 ### TaskContext
@@ -566,8 +570,7 @@ import type { StartTaskMessage, TaskContext, HandlerResult } from '@blocks-netwo
 export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
-  const input = task.requestParts?.[0];
-  const text = typeof input === 'string' ? input : JSON.stringify(input ?? '');
+  const text = task.requestParts?.[0]?.text ?? '';
   ctx?.reportStatus('Processing...');
   return { artifacts: [{ data: text.toUpperCase(), mimeType: 'text/plain' }] };
 }
@@ -579,8 +582,7 @@ export default async function handler(
 export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
-  const input = task.requestParts?.[0];
-  const text = typeof input === 'string' ? input : 'Hello from streaming agent!';
+  const text = task.requestParts?.[0]?.text ?? 'Hello from streaming agent!';
 
   // Guard on hasStream: request-task streaming is consumer opt-in, so
   // createStream() throws when the consumer didn't opt in.
@@ -588,7 +590,6 @@ export default async function handler(
   if (ctx?.hasStream) {
     ctx.reportStatus('Streaming...');
     const stream = await ctx.createStream({
-      declaredStream: 'main-stream',
       bundleSizeBytes: 2048,
       maxLatencyMs: 50,
     });
@@ -602,27 +603,58 @@ export default async function handler(
 
 ### Agent-to-Agent (Orchestrator)
 
+Call another agent through `ctx.taskClient`. It is per-task and torn down
+when the handler exits, so await the sub-task and close its session before
+returning. `downloadArtifact()` returns `data` as a plain `Uint8Array`, not
+a `Buffer` (unlike `ctx.downloadInputArtifact()`): decode it with
+`TextDecoder`, because `String(data)` yields `"123,34,..."`.
+
 ```typescript
+import { textPart } from '@blocks-network/sdk';
+import type { HandlerResult, StartTaskMessage, TaskContext } from '@blocks-network/sdk';
+
+const SUB_AGENT = 'summarizer';
+const SUB_AGENT_TIMEOUT_MS = 60_000;
+
 export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
-  const text = typeof task.requestParts?.[0] === 'string' ? task.requestParts[0] : '';
-  ctx?.reportStatus('Delegating to sub-agent...');
+  if (!ctx) throw new Error('TaskContext required for agent-to-agent calls');
+  const text = task.requestParts?.[0]?.text ?? '';
+  ctx.reportStatus(`Delegating to ${SUB_AGENT}...`);
 
-  const session = await ctx!.taskClient.sendMessage({
-    agentName: 'summarizer',
-    ownerId: task.ownerId,
-    requestParts: [{ partId: 'request', text }],
-  });
+  const summary = await callSubAgent(ctx, task.ownerId, text);
+  return { artifacts: [{ data: JSON.stringify({ summary }), mimeType: 'application/json' }] };
+}
 
-  return new Promise((resolve) => {
-    session.onArtifact((event) =>
-      resolve({ artifacts: [{ data: JSON.stringify(event, null, 2), mimeType: 'application/json' }] }),
-    );
-    session.onTerminal(() =>
-      resolve({ artifacts: [{ data: 'Sub-agent completed', mimeType: 'text/plain' }] }),
-    );
+// Resolves to the sub-agent's parsed JSON artifact, or null on timeout,
+// non-completed terminal state, missing artifact, or non-JSON output.
+async function callSubAgent(ctx: TaskContext, ownerId: string, text: string): Promise<unknown> {
+  const session = await ctx.taskClient.sendMessage({
+    agentName: SUB_AGENT,
+    ownerId,
+    requestParts: [textPart(text, 'request')], // partId = the sub-agent's io.inputs[].id
   });
+  try {
+    const terminal = await session.waitForTerminal(SUB_AGENT_TIMEOUT_MS).catch(() => null);
+    if (!terminal) {
+      await session.cancel().catch(() => {}); // timed out: stop the sub-task
+      return null;
+    }
+    if (terminal.state !== 'completed') return null;
+
+    const ref = session.listArtifacts().find((r) => r.mimeType === 'application/json');
+    if (!ref) return null;
+    try {
+      const downloaded = await session.downloadArtifact(ref);
+      // downloaded.data is a Uint8Array, not a Buffer: String(data) yields "123,34,...".
+      return JSON.parse(new TextDecoder().decode(downloaded.data));
+    } catch {
+      return null;
+    }
+  } finally {
+    await session.asyncClose();
+  }
 }
 ```
 
