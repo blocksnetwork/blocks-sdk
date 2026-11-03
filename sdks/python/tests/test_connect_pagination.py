@@ -78,7 +78,7 @@ class TestConnectPagination:
         )
 
         assert len(artifacts) == 1
-        assert [event["type"] for event in events] == ["progress", "progress", "artifact"]
+        assert [entry.event.type for entry in events] == ["progress", "progress", "artifact"]
         assert hwm == str(_TT_BASE + 300)
         # fetch_messages called once (no pagination)
         assert mock_pn.fetch_messages.call_count == 1
@@ -139,7 +139,7 @@ class TestConnectPagination:
         # Cursor for page 2 should be oldest timetoken from page 1
         assert captured_starts == [_TT_BASE + 10000]
         assert len(events) == 105
-        assert events[0]["type"] == "progress"
+        assert events[0].event.type == "progress"
         # High water mark is the highest timetoken across all pages
         assert hwm == str(_TT_BASE + 10000 + 99 * 100)
 
@@ -351,7 +351,7 @@ class TestConnectPagination:
         )
 
         assert "s1" in streams
-        assert events == [stream_msg.message]
+        assert [entry.event.raw for entry in events] == [stream_msg.message]
         assert streams["s1"].descriptor.declared_stream == "chat"
 
     def test_missing_declared_stream_defaults_to_none(self):
@@ -398,5 +398,5 @@ class TestConnectPagination:
         )
 
         assert "s1" in streams
-        assert events == [stream_msg.message]
+        assert [entry.event.raw for entry in events] == [stream_msg.message]
         assert streams["s1"].descriptor.declared_stream is None

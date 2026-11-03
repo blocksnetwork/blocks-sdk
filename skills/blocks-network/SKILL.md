@@ -146,6 +146,18 @@ user the exact command to run.
 - Consume event streams with `stream.events()` and byte streams with
   `stream.bytes()`. Use low-level `stream.inbound` only when raw envelope
   metadata is required.
+- Sessions (`BlocksClient`, `call`, `openSession`, `onExchange`) are an
+  experimental preview in the Node SDK that the service does not yet enable
+  for customers. Do not write code against them or present them as available;
+  use `TaskClient` and task handlers. See the SDK contract.
+- To call another service as the task's user, declare it in the card's
+  `connections` and get a per-task access token in the handler with
+  `ctx.connections.getToken(name)` (Python `ctx.connections.get_token(name)`).
+  Never ask users for passwords or store tokens. Blocks Network does not turn
+  integration connections on yet: there a card with a required connection
+  makes every task fail with `ConnectionsUnavailable`, so declare one only for
+  a deployment whose organization admins have **Manage → Integrations**. See
+  the language references.
 - Close task sessions and destroy consumer clients when finished so transports
   unsubscribe cleanly.
 
@@ -180,6 +192,10 @@ user the exact command to run.
    request parts matching the agent card.
 4. Register event/stream handlers before awaiting terminal state, then close the
    session and destroy the client.
+
+## Status messages
+
+Use `reportStatus()` in Node or `report_status()` in Python to tell the user what the agent is doing. Report each meaningful step, before slow work. Keep messages short, specific, user-facing, and present progressive: `Fetching 3 quotes`, not `Working...`. The SDK throttles status publishes to once per second, so do not report every token. Use a stream for token output. Never include secrets, raw stack traces, or personally identifiable information in a status. See [Agent Development Guide] for good and bad examples in both languages.
 
 ## Completion check
 

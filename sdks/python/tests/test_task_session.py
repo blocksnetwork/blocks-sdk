@@ -391,6 +391,9 @@ class TestTaskSession:
 
         assert [event.type for event in events] == ["progress", "artifact", "terminal"]
         assert events[0].raw is preloaded_events[0]
+        entries = session.list_event_entries()
+        assert [entry.event for entry in entries] == events
+        assert [entry.timetoken for entry in entries] == [None, None, None]
 
     def test_list_events_empty_without_preloaded_events(self) -> None:
         session = TaskSession(
@@ -403,6 +406,7 @@ class TestTaskSession:
         )
 
         assert session.list_events() == []
+        assert session.list_event_entries() == []
 
     def test_list_events_returns_shallow_list_copy(self) -> None:
         progress = {"type": "progress", "taskId": "task-1", "message": "Working"}
@@ -492,6 +496,9 @@ class TestTaskSession:
         assert len(events) == 2
         assert events[0].raw["message"] == "first"
         assert events[1].raw["message"] == "second"
+        assert [(entry.event.message, entry.timetoken) for entry in session.list_event_entries()] == [
+            ("first", "300"), ("second", "301"),
+        ]
 
     def test_append_history_event_extends_list_events(self) -> None:
         session = TaskSession(
@@ -508,6 +515,11 @@ class TestTaskSession:
         assert len(events) == 2
         assert events[0].raw["message"] == "from history"
         assert events[1].raw["message"] == "from buffer"
+        entries = session.list_event_entries()
+        assert [entry.event for entry in entries] == events
+        assert [entry.timetoken for entry in entries] == [None, None]
+        entries.pop()
+        assert len(session.list_event_entries()) == 2
 
     def test_append_history_event_list_events_returns_copy(self) -> None:
         session = TaskSession(

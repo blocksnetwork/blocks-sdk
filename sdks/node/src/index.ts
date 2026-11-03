@@ -14,6 +14,13 @@ export type {
   AgentInstanceHandle,
 } from './runtime/agent-instance.js';
 
+export type {
+  SessionContext,
+  ExchangeContext,
+  PublishArtifactOptions,
+  SessionProviderOptions,
+} from './runtime/sessions/provider-types.js';
+
 export type { StreamObject, OnActivateCallback } from './runtime/stream-context.js';
 export type { InboundMessage, StreamError } from './stream/index.js';
 
@@ -61,12 +68,21 @@ export type {
 } from './runtime/task-client.js';
 
 // RPC error types (typed errors surfaced from JSON-RPC error envelopes)
-export { RpcError, BillingModeMismatchError } from './runtime/rpc-client.js';
+export { RpcError, BillingModeMismatchError, AuthRequiredError } from './runtime/rpc-client.js';
+
+// Integration connections
+export {
+  createConnectionsClient,
+  ConnectionRequiredError,
+  ConnectionAccessError,
+} from './runtime/connections.js';
+export type { ConnectionsClient, ConnectionToken } from './runtime/connections.js';
 
 // Consumer session API
 export { TaskSession } from './runtime/task-session.js';
 export type {
   TaskEvent,
+  TaskEventEntry,
   ProgressEvent,
   ArtifactEvent,
   TerminalEvent,
@@ -83,6 +99,7 @@ export type { StreamDescriptor } from './runtime/stream-ref.js';
 // Agent auth (API key-based authentication)
 export { AgentAuth, AgentAuthFatalError } from './runtime/agent-auth.js';
 export type { RegistrationPayload, RegistrationResult } from './runtime/agent-auth.js';
+export { RateLimitedError } from './runtime/rate-limit.js';
 
 // Auth provider (consumer/transport auth abstraction)
 export type { AuthProvider } from './runtime/auth-provider.js';
@@ -101,3 +118,26 @@ export { CredentialCache } from './runtime/credential-cache.js';
 // CDM config (dynamic key management)
 export { fetchCdmConfig, DEFAULT_CDM_URL } from './runtime/cdm-config.js';
 export type { CdmConfig, CdmKeyset, CdmApiConfig } from './runtime/cdm-config.js';
+
+// Sessions (consumer, experimental)
+export { BlocksClient } from './runtime/sessions/client.js';
+export type { BlocksClientOptions, OpenSessionOptions, CallOptions } from './runtime/sessions/client.js';
+export type {
+  Session,
+  Exchange,
+  ExchangeOutcome,
+  ExchangeProgress,
+  SessionInput,
+  SessionState,
+} from './runtime/sessions/session.js';
+export {
+  SessionError,
+  SessionsDisabledError,
+  SessionPaidAgentError,
+  SessionNoRouteError,
+  SessionNotFoundError,
+  SessionBackpressureError,
+  SessionFailedError,
+  SessionStreamError,
+} from './runtime/sessions/session-errors.js';
+export type { Message } from './runtime/sessions/stream-types.js';

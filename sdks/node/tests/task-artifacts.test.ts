@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { startAgentInstance, type TaskContext, type HandlerResult, type StartTaskMessage } from '../src/runtime/agent-instance.js';
+import { AgentAuth } from '../src/runtime/agent-auth.js';
 import { makeTestCard } from './helpers/test-card.js';
 
 // Mock global fetch so connectAgent resolves quickly in tests
@@ -303,6 +304,85 @@ describe('task artifacts: mid-execution publishArtifact', () => {
     const terminalIdx = messages.findIndex((m) => m.type === 'terminal');
     const artifactIdx = messages.indexOf(artifacts[0]);
     expect(artifactIdx).toBeLessThan(terminalIdx);
+  });
+});
+
+describe('task context: connections', () => {
+  it('exposes ctx.connections and refuses it with a clear error when the instance has no agent auth', async () => {
+    const { pubnub, listeners } = createFakePubNub();
+    let caught: Error | undefined;
+
+    const handler = vi.fn(async (_task: StartTaskMessage, ctx?: TaskContext): Promise<HandlerResult> => {
+      try {
+        void ctx!.connections;
+      } catch (err) {
+        caught = err as Error;
+      }
+      return {};
+    });
+
+    await startAgentInstance({ pubnub, agentName: 'conn_no_auth', card: makeTestCard(), handler });
+    listeners[0].message({
+      message: { type: 'StartTask', taskId: 'conn-1', ownerId: 'user1' },
+    });
+
+    await vi.waitFor(() => expect(handler).toHaveBeenCalled());
+    expect(caught?.message).toMatch(/Integration connections require authentication/);
+  });
+
+  it("asks for the handler's own task with the agent runtime credential", async () => {
+    const BASE = 'https://api.blocks.test';
+    const fileLevelFetchMock = globalThis.fetch;
+    const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      const json =
+        path === '/api/v1/auth/agent/connect'
+          ? { accessToken: 'agent-runtime-jwt', refreshToken: 'refresh', expiresIn: 3600 }
+          : path === '/api/v1/connections/token'
+            ? {
+                accessToken: 'provider-token',
+                tokenType: 'Bearer',
+                expiresAt: '2030-01-01T00:00:00.000Z',
+                scopes: ['openid'],
+                extra: {},
+              }
+            : {};
+      return new Response(JSON.stringify(json), { status: 200 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const init = vi.spyOn(AgentAuth.prototype, 'init');
+
+    try {
+      const { pubnub, listeners } = createFakePubNub();
+      let token: string | undefined;
+      const handler = vi.fn(async (_task: StartTaskMessage, ctx?: TaskContext): Promise<HandlerResult> => {
+        token = (await ctx!.connections.getToken('google')).accessToken;
+        return {};
+      });
+
+      await startAgentInstance({
+        pubnub,
+        agentName: 'conn_with_auth',
+        card: makeTestCard(),
+        handler,
+        baseUrl: BASE,
+      });
+      // The runtime credential exists only once connect has answered.
+      await vi.waitFor(() => expect(init).toHaveBeenCalled());
+      await init.mock.results[0].value;
+      listeners[0].message({
+        message: { type: 'StartTask', taskId: 'conn-auth-1', ownerId: 'user1' },
+      });
+
+      await vi.waitFor(() => expect(token).toBe('provider-token'));
+      const tokenCall = fetchMock.mock.calls.find(([url]) => String(url) === `${BASE}/api/v1/connections/token`);
+      const request = tokenCall?.[1] as RequestInit;
+      expect(JSON.parse(String(request.body))).toEqual({ taskId: 'conn-auth-1', integration: 'google' });
+      expect(new Headers(request.headers).get('Authorization')).toBe('Bearer agent-runtime-jwt');
+    } finally {
+      init.mockRestore();
+      globalThis.fetch = fileLevelFetchMock;
+    }
   });
 });
 

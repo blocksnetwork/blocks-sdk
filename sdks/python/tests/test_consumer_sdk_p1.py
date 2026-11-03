@@ -760,6 +760,11 @@ class TestConnect:
         artifacts = session.list_artifacts()
         assert len(artifacts) == 1
         assert artifacts[0].kind == "inline"
+        assert [entry.timetoken for entry in session.list_event_entries()] == [
+            "16000000000000000", "16000000000000001", "16000000000000002",
+            "16000000000000003", "16000000000000004", "16000000000000005",
+        ]
+        assert [entry.event for entry in session.list_event_entries()] == session.list_events()
         assert [event.type for event in session.list_events()] == [
             "request",
             "progress",

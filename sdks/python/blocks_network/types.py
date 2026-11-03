@@ -10,7 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
+from .connections import ConnectionsClient, create_connections_client
+
 if TYPE_CHECKING:
+    from .agent_auth import AgentAuth
+    from ._session.provider_types import OnExchange, OnSessionClose, OnSessionOpen
     from .stream_context import StreamObject
     from .task_client import TaskClient
 
@@ -431,6 +435,9 @@ class TaskContext:
 
     ``publish_artifact(data, ...)`` publishes a mid-execution artifact.
     Small artifacts are inlined; large artifacts use the pre-signed URL flow.
+
+    ``connections.get_token(integration)`` returns a short-lived access token
+    for an integration the task's end user has connected.
     """
 
     task_id: str = ""
@@ -443,6 +450,17 @@ class TaskContext:
     cancel_event: Any = field(default_factory=lambda: __import__("threading").Event())
     task_client: Optional["TaskClient"] = None
     _expired_tasks: Optional[Set[str]] = field(default=None, repr=False)
+    _agent_auth: Optional["AgentAuth"] = field(default=None, repr=False)
+    _base_url: Optional[str] = field(default=None, repr=False)
+
+    @property
+    def connections(self) -> ConnectionsClient:
+        if self._agent_auth is None or not self._base_url:
+            raise RuntimeError(
+                "Integration connections require authentication. "
+                "Ensure BLOCKS_API_KEY and base_url are configured."
+            )
+        return create_connections_client(self._agent_auth, self._base_url, self.task_id)
 
     @property
     def is_cancelled(self) -> bool:
@@ -515,3 +533,14 @@ class AgentInstanceOptions:
     base_url: Optional[str] = None
     # CDM URL override
     cdm_url: Optional[str] = None
+
+    # Session handlers (experimental: sessions are a preview, refused with SESSIONS_DISABLED
+    # until enabled for your org). Setting on_exchange opens a session route.
+    # on_session_open(ctx) runs once before session_ready; raising fails the session.
+    # on_exchange(ctx, exchange) runs once per exchange, one at a time per session.
+    # on_session_close(ctx, reason) runs once when a session whose on_session_open returned ends.
+    on_session_open: Optional[OnSessionOpen] = None
+    on_exchange: Optional[OnExchange] = None
+    on_session_close: Optional[OnSessionClose] = None
+    # Sessions this instance serves at once. Defaults to ``concurrency``.
+    max_sessions: Optional[int] = None

@@ -10,6 +10,7 @@ import pytest
 
 from blocks_network.auth_provider import StaticAuthProvider
 from blocks_network.rpc_client import (
+    AuthRequiredError,
     BillingModeMismatchError,
     RpcError,
     call_rpc,
@@ -587,3 +588,80 @@ class TestBillingModeMismatchErrorClass:
         from blocks_network import BillingModeMismatchError as ImportedError
 
         assert ImportedError is BillingModeMismatchError
+
+
+# ============================================================================
+# AuthRequiredError mapping at the RPC layer
+# ============================================================================
+
+_CONNECT_URL = "http://localhost:3001/connect/org-1/github?agent=test_agent"
+
+
+def _auth_required_body(details: object) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "error": {
+            "code": -32000,
+            "message": "Integration connection required",
+            "data": {"code": "AuthRequired", "details": details},
+        },
+    }
+
+
+def _send_message():
+    return call_rpc("sub-c-test", "SendMessage", {}, base_url="http://localhost:3001")
+
+
+class TestAuthRequiredMapping:
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_maps_to_typed_subclass(self, mock_urlopen):
+        mock_urlopen.return_value = _make_urlopen_response(
+            _auth_required_body(
+                {"integration": "github", "reason": "not_connected", "connectUrl": _CONNECT_URL}
+            )
+        )
+
+        with pytest.raises(RpcError) as exc_info:
+            _send_message()
+
+        err = exc_info.value
+        assert isinstance(err, AuthRequiredError)
+        assert err.integration == "github"
+        assert err.reason == "not_connected"
+        assert err.connect_url == _CONNECT_URL
+        assert err.code == -32000
+        assert err.rpc_message == "Integration connection required"
+        assert err.data["code"] == "AuthRequired"
+
+    @pytest.mark.parametrize(
+        "details",
+        [
+            None,
+            "not-a-dict",
+            {"integration": "github", "reason": "not_connected"},
+            {"integration": "github", "reason": 3, "connectUrl": _CONNECT_URL},
+        ],
+    )
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_malformed_details_stay_plain_rpc_error(self, mock_urlopen, details):
+        mock_urlopen.return_value = _make_urlopen_response(_auth_required_body(details))
+
+        with pytest.raises(RpcError) as exc_info:
+            _send_message()
+
+        assert not isinstance(exc_info.value, AuthRequiredError)
+        assert exc_info.value.data["code"] == "AuthRequired"
+
+    @patch("blocks_network.rpc_client.urllib.request.urlopen")
+    def test_other_codes_stay_plain_rpc_error(self, mock_urlopen):
+        body = _auth_required_body(
+            {"integration": "github", "reason": "not_connected", "connectUrl": _CONNECT_URL}
+        )
+        body["error"]["data"]["code"] = "IntegrationUnavailable"
+        mock_urlopen.return_value = _make_urlopen_response(body)
+
+        with pytest.raises(RpcError) as exc_info:
+            _send_message()
+
+        assert not isinstance(exc_info.value, AuthRequiredError)

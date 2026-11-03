@@ -7,10 +7,12 @@ import threading
 import time
 from io import BytesIO
 import urllib.error
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+from blocks_network import RateLimitedError
 from blocks_network.auth_provider import AuthProvider
 from blocks_network.consumer_auth import (
     AuthRefreshFailedError,
@@ -57,13 +59,15 @@ def _make_urlopen_response(body: dict) -> MagicMock:
     return resp
 
 
-def _make_http_error(status: int, body: dict) -> urllib.error.HTTPError:
+def _make_http_error(
+    status: int, body: dict, headers: dict | None = None
+) -> urllib.error.HTTPError:
     payload = json.dumps(body).encode("utf-8")
     return urllib.error.HTTPError(
         url="http://api.test/error",
         code=status,
         msg="error",
-        hdrs={},
+        hdrs=headers or {},
         fp=BytesIO(payload),
     )
 
@@ -521,6 +525,56 @@ class TestProactiveRefresh:
         assert "permanent failure" in str(error_value[0])
 
         auth.destroy()
+
+
+class TestRateLimitedRefresh:
+    @patch("blocks_network.consumer_auth.urllib.request.urlopen")
+    def test_proactive_refresh_waits_out_retry_after_past_the_retry_budget(
+        self, mock_urlopen
+    ):
+        token = {"accessToken": "jwt-1", "refreshToken": "rt-1", "expiresIn": 3600}
+        rate_limited = 4  # one more than the retry budget
+        mock_urlopen.side_effect = (
+            [_make_urlopen_response(token)]
+            + [
+                _make_http_error(429, {"code": "RATE_LIMITED"}, {"Retry-After": "45"})
+                for _ in range(rate_limited)
+            ]
+            + [_make_urlopen_response({**token, "accessToken": "jwt-2", "refreshToken": "rt-2"})]
+        )
+        clock = [1000.0]
+        sleeps = []
+
+        def sleep(delay):
+            sleeps.append(delay)
+            clock[0] += delay
+
+        fake_time = SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep)
+        on_error = MagicMock()
+        auth = ConsumerAuth(api_key="bk_busy", base_url="http://api.test", on_auth_error=on_error)
+        with patch("blocks_network.consumer_auth.time", fake_time), patch(
+            "blocks_network._rate_limit.time", fake_time
+        ):
+            auth.init()
+            auth._cancel_timer()
+            auth._proactive_refresh()
+
+        assert sleeps == [45.0] * rate_limited
+        assert mock_urlopen.call_count == 2 + rate_limited
+        assert auth.get_auth_header() == "Bearer jwt-2"
+        assert auth.get_last_auth_error() is None
+        on_error.assert_not_called()
+        auth.destroy()
+
+    @patch("blocks_network.consumer_auth.urllib.request.urlopen")
+    def test_init_raises_rate_limited(self, mock_urlopen):
+        mock_urlopen.side_effect = _make_http_error(
+            429, {"code": "RATE_LIMITED"}, {"Retry-After": "12"}
+        )
+        auth = ConsumerAuth(api_key="bk_busy", base_url="http://api.test")
+        with pytest.raises(RateLimitedError) as exc_info:
+            auth.init()
+        assert exc_info.value.retry_after == 12.0
 
 
 # ============================================================================
@@ -1260,3 +1314,10 @@ def test_auth_refresh_failed_error_is_exported_from_package():
     assert isinstance(err, RuntimeError)
     assert "boom" in str(err)
     assert "AuthRefreshFailedError" in blocks_network.__all__
+
+
+@pytest.mark.parametrize("attempt,expected", [(0, 5.0), (2, 20.0), (3, 30.0), (2000, 30.0)])
+def test_proactive_backoff_caps_without_overflow(attempt, expected) -> None:
+    from blocks_network import consumer_auth
+
+    assert consumer_auth._backoff_s(attempt) == expected

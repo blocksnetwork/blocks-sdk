@@ -903,6 +903,61 @@ class TestFatalConnectShutsDown:
         result["stop"]()
 
 
+class TestRateLimitedConnectRetries:
+    def test_retries_after_retry_after_without_exiting(self, monkeypatch) -> None:
+        from blocks_network import RateLimitedError
+        from blocks_network import agent_instance
+
+        exits: list[int] = []
+        monkeypatch.setattr(agent_instance.os, "_exit", exits.append)
+        monkeypatch.setattr(agent_instance.random, "random", lambda: 0.0)
+        real_delay = agent_instance._rate_limited_connect_delay
+        delays: list[float] = []
+
+        def record_delay(err, attempt):
+            delays.append(real_delay(err, attempt))
+            return 0.01
+
+        monkeypatch.setattr(agent_instance, "_rate_limited_connect_delay", record_delay)
+        answers = [
+            RateLimitedError("rate limited", 7.0),
+            ConnectAgentResult(control_channel="agent.test-id.control"),
+        ]
+
+        def connect(*_args, **_kwargs):
+            answer = answers.pop(0)
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+
+        monkeypatch.setattr("blocks_network.agent_registry.connect_agent", connect)
+        pn = _make_mock_pubnub()
+        result = start_agent_instance(
+            AgentInstanceOptions(card=minimal_card(), pubnub=pn, agent_name="acme_echo")
+        )
+        _wait_for(lambda: pn.subscribe.called)
+        result["stop"]()
+
+        assert delays == [7.0]
+        assert answers == []
+        assert exits == []
+
+    @pytest.mark.parametrize(
+        "retry_after,attempt,expected",
+        [(7.0, 0, 7.0), (7.0, 5, 7.0), (0.0, 0, 1.0), (None, 0, 30.0), (None, 1, 60.0),
+         (None, 10, 600.0), (None, 2000, 600.0)],
+    )
+    def test_connect_delay_honors_retry_after_else_backs_off(
+        self, monkeypatch, retry_after, attempt, expected
+    ) -> None:
+        from blocks_network import RateLimitedError
+        from blocks_network import agent_instance
+
+        monkeypatch.setattr(agent_instance.random, "random", lambda: 0.0)
+        err = RateLimitedError("rate limited", retry_after)
+        assert agent_instance._rate_limited_connect_delay(err, attempt) == expected
+
+
 class TestFatalDuringTaskHandlingShutsDown:
     @patch("blocks_network.agent_instance.create_pubnub_client")
     def test_handler_fatal_auth_error_terminates_process(

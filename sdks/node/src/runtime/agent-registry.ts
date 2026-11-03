@@ -123,6 +123,12 @@ export interface AgentCard {
     maxPendingBacklog?: number;
     maxRunningTimeSec?: number;
   };
+  connections?: Array<{
+    integration: string;
+    scopes: string[];
+    /** Defaults to true: Blocks refuses a task until the user has connected and approved. */
+    required?: boolean;
+  }>;
 }
 
 /**
@@ -149,6 +155,7 @@ export interface OutputAgentCard {
   services?: AgentCard['services'];
   tags: AgentTag[];
   extensions?: Record<string, unknown>;
+  connections?: AgentCard['connections'];
 }
 
 /**

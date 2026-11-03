@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConsumerAuth, AuthRefreshFailedError, type TokenResult } from '../src/runtime/consumer-auth.js';
+import { RateLimitedError } from '../src/runtime/rate-limit.js';
 
 describe('ConsumerAuth', () => {
   const originalFetch = globalThis.fetch;
@@ -726,6 +727,71 @@ describe('ConsumerAuth', () => {
       expect(permanentFailureEntry?.error).toBe('fail 3');
 
       warnSpy.mockRestore();
+      auth.destroy();
+    });
+  });
+
+  // ==========================================================================
+  // Rate limiting (API key mode)
+  // ==========================================================================
+
+  describe('rate limiting', () => {
+    const tokens = (n: number) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: `jwt-${n}`, refreshToken: `rt-${n}`, expiresIn: 100, userId: 'u' }),
+    });
+    const rateLimited = {
+      ok: false,
+      status: 429,
+      headers: new Headers({ 'Retry-After': '120' }),
+      json: async () => ({ error: 'Too many requests', code: 'RATE_LIMITED' }),
+    };
+    const newAuth = (onAuthError?: (e: Error) => void) =>
+      new ConsumerAuth({ apiKey: 'bk_key', baseUrl: 'http://localhost:3001', onAuthError });
+
+    it('keeps retrying a rate-limited proactive refresh after each Retry-After, past the retry limit', async () => {
+      const onAuthError = vi.fn();
+      fetchSpy.mockResolvedValueOnce(tokens(1));
+      const auth = newAuth(onAuthError);
+      await auth.init();
+
+      fetchSpy
+        .mockResolvedValueOnce(rateLimited)
+        .mockResolvedValueOnce(rateLimited)
+        .mockResolvedValueOnce(rateLimited)
+        .mockResolvedValueOnce(rateLimited)
+        .mockResolvedValueOnce(tokens(2));
+
+      await vi.advanceTimersByTimeAsync(80_000);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      for (let call = 3; call <= 5; call++) {
+        await vi.advanceTimersByTimeAsync(119_999);
+        expect(fetchSpy).toHaveBeenCalledTimes(call - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(fetchSpy).toHaveBeenCalledTimes(call);
+      }
+      expect(onAuthError).not.toHaveBeenCalled();
+      expect(auth.getLastAuthError()).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetchSpy).toHaveBeenCalledTimes(6);
+      expect(auth.getAuthHeader()).toBe('Bearer jwt-2');
+      auth.destroy();
+    });
+
+    it('fails a reactive refresh fast, without a request, inside the Retry-After', async () => {
+      fetchSpy.mockResolvedValueOnce(tokens(1));
+      const auth = newAuth();
+      await auth.init();
+
+      fetchSpy.mockResolvedValueOnce(rateLimited);
+      expect(await auth.onAuthFailure()).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await auth.onAuthFailure()).toBe(false);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(auth.getLastAuthError()?.cause).toBeInstanceOf(RateLimitedError);
       auth.destroy();
     });
   });

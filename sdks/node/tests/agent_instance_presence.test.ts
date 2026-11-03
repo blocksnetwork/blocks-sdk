@@ -13,9 +13,16 @@ import { hasLiveEnv, hasBackendEnv, getBaseUrl, publishAgent } from './helpers/l
 // knows which channel to subscribe/setState on.
 const TEST_AGENT_ID = 'aaaaaaaa-1111-1111-1111-111111111111';
 const originalFetch = globalThis.fetch;
+// The live suite flips this on: the mock is file-wide, so a fixed channel would be shared by every
+// live test and by concurrent CI jobs on the same keyset, and each would receive the others' tasks.
+let perAgentControlChannel = false;
 beforeAll(() => {
-  globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
-    // Derive agentName from the connect payload for dynamic controlChannel
+  globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: { body?: unknown }) => {
+    let agentId = TEST_AGENT_ID;
+    if (perAgentControlChannel) {
+      const { agentName } = JSON.parse(String(init?.body ?? '{}')) as { agentName?: string };
+      if (agentName) agentId = `${TEST_AGENT_ID}-${agentName}`;
+    }
     return {
       ok: true,
       status: 200,
@@ -23,8 +30,8 @@ beforeAll(() => {
         accessToken: 'mock-jwt',
         refreshToken: 'mock-refresh',
         expiresIn: 3600,
-        agentId: TEST_AGENT_ID,
-        controlChannel: `agent.${TEST_AGENT_ID}.control`,
+        agentId,
+        controlChannel: `agent.${agentId}.control`,
       }),
     };
   }) as unknown as typeof fetch;
@@ -273,7 +280,12 @@ interface HereNowResult {
 describe.skipIf(process.env.PUBNUB_LIVE_TEST !== '1' || !hasLiveEnv() || !hasBackendEnv())('agent instance presence (live)', () => {
   const createdAgentNames: string[] = [];
 
+  beforeAll(() => {
+    perAgentControlChannel = true;
+  });
+
   afterAll(async () => {
+    perAgentControlChannel = false;
     const baseUrl = getBaseUrl();
     for (const agentName of createdAgentNames) {
       try {
@@ -441,25 +453,22 @@ describe.skipIf(process.env.PUBNUB_LIVE_TEST !== '1' || !hasLiveEnv() || !hasBac
       meta: { broadcast: 'true' }, // String "true" for subscribe filter
     });
 
-    // Wait for task to start and presence state to update
-    await new Promise((r) => setTimeout(r, 3000));
-
-    // Query presence - should show 1 active task
-    const presenceResult = (await client.hereNow({
-      channels: [agentInstance.controlChannel!],
-      includeState: true,
-      includeUUIDs: true,
-    })) as HereNowResult;
-
-    const channel = presenceResult.channels?.[agentInstance.controlChannel!];
-    const occupants = channel?.occupants ?? [];
-    const instanceOccupant = occupants.find((o) => o.uuid === instanceUuid);
-
-    const state = instanceOccupant?.state as AgentInstancePresenceState | undefined;
-    // Presence state update is async/eventual, check if available
-    if (state?.activeTasks !== undefined) {
-      expect(state.activeTasks).toBe(1);
+    // Poll for the task to start and its presence state to propagate (the handler holds it for 8s)
+    let state: AgentInstancePresenceState | undefined;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const presenceResult = (await client.hereNow({
+        channels: [agentInstance.controlChannel!],
+        includeState: true,
+        includeUUIDs: true,
+      })) as HereNowResult;
+      const occupants = presenceResult.channels?.[agentInstance.controlChannel!]?.occupants ?? [];
+      state = occupants.find((o) => o.uuid === instanceUuid)?.state as
+        | AgentInstancePresenceState
+        | undefined;
+      if (state?.activeTasks === 1) break;
     }
+    expect(state?.activeTasks).toBe(1);
 
     // Wait for task to complete (task takes 8s)
     await new Promise((r) => setTimeout(r, 8000));

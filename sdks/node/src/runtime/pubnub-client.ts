@@ -182,17 +182,20 @@ export function buildPubNubClientDefaults() {
   };
 }
 
-export const createPubNubClient = (config: PubNubClientConfig) => {
-  if (!config.subscribeKey || !config.publishKey) {
-    throw new Error('PUBNUB keys not configured');
-  }
+interface PubNubClientOptions extends Omit<PubNubClientConfig, 'publishKey'> {
+  publishKey?: string;
+  origin?: string;
+}
+
+const newPubNubClient = (config: PubNubClientOptions) => {
   // Default true; see JSDoc on `subscribeRetryUnbounded` for the contract.
   const unbounded = config.subscribeRetryUnbounded ?? true;
   const retryPolicy = unbounded ? buildUnboundedRetryPolicy() : null;
   const { logLevel, loggers, ...transportDefaults } = buildPubNubClientDefaults();
   return new PubNub({
-    publishKey: config.publishKey,
+    ...(config.publishKey !== undefined ? { publishKey: config.publishKey } : {}),
     subscribeKey: config.subscribeKey,
+    ...(config.origin !== undefined ? { origin: config.origin } : {}),
     userId: config.userId ?? 'blocks-agent',
     enableEventEngine: true,
     ...transportDefaults,
@@ -209,5 +212,29 @@ export const createPubNubClient = (config: PubNubClientConfig) => {
       : {}),
     logLevel: logLevel as unknown as ConstructorParameters<typeof PubNub>[0]['logLevel'],
     loggers: loggers as unknown as ConstructorParameters<typeof PubNub>[0]['loggers'],
+  });
+};
+
+export const createPubNubClient = (config: PubNubClientConfig) => {
+  if (!config.subscribeKey || !config.publishKey) {
+    throw new Error('PUBNUB keys not configured');
+  }
+  return newPubNubClient(config);
+};
+
+export interface SubscribeOnlyPubNubClientConfig {
+  subscribeKey: string;
+  userId: string;
+  /** Omitted when `null`: PubNub's default origin. */
+  origin?: string | null;
+}
+
+/** No publish key and no presence timeout: it never publishes or heartbeats. */
+export const createSubscribeOnlyPubNubClient = (config: SubscribeOnlyPubNubClientConfig) => {
+  if (!config.subscribeKey) throw new Error('PUBNUB subscribe key not configured');
+  return newPubNubClient({
+    subscribeKey: config.subscribeKey,
+    userId: config.userId,
+    ...(config.origin ? { origin: config.origin } : {}),
   });
 };

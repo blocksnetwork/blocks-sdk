@@ -1,0 +1,110 @@
+{
+  "cases": [
+    {
+      "id": "consumer.outcome.second_ignored",
+      "summary": "a second outcome for a settled exchangeId does not settle it again",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "completed"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 2,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "failed",
+            "error": "handler_error"
+          }
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "completed",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "consumer.outcome.terminal_skips_settled",
+      "summary": "a terminal notice settles only exchanges still unsettled",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1",
+          "ex-2"
+        ]
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "completed"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_closed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "reason": "idle_timeout"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "closed",
+        "stateChanges": [
+          "closed"
+        ],
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "completed",
+            "artifacts": []
+          },
+          {
+            "exchangeId": "ex-2",
+            "state": "canceled",
+            "artifacts": []
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -5,10 +5,12 @@
  * stream registry, credential cache, instance-level APIs, and removals.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { startAgentInstance } from '../src/runtime/agent-instance.js';
 import type { StartTaskMessage } from '../src/runtime/agent-instance.js';
 import { AgentAuthFatalError } from '../src/runtime/agent-auth.js';
+import { connectAgent } from '../src/runtime/agent-registry.js';
+import { RateLimitedError } from '../src/runtime/rate-limit.js';
 import { makeTestCard, makePipeTestCard } from './helpers/test-card.js';
 
 // Mock the PubNub client
@@ -338,6 +340,59 @@ describe('Phase 3 Agent Instance Runtime', () => {
 
       exitSpy.mockRestore();
       handle.stop();
+    });
+  });
+
+  describe('rate-limited connect', () => {
+    const startRateLimited = async () => {
+      vi.mocked(connectAgent).mockRejectedValueOnce(
+        new RateLimitedError('Agent connect rate limited (HTTP 429)', 30_000),
+      );
+      const mockPn = createMockPubNub();
+      const handle = await startAgentInstance({
+        agentName: 'echo',
+        card: makeTestCard(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pubnub: mockPn as any,
+        handler: async () => {},
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      return { handle, mockPn };
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('reconnects after the Retry-After instead of exiting', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const { handle, mockPn } = await startRateLimited();
+      expect(connectAgent).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(connectAgent).toHaveBeenCalledTimes(1);
+      // The Retry-After plus at most the 1 s jitter.
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(connectAgent).toHaveBeenCalledTimes(2);
+      expect(mockPn.subscribe).toHaveBeenCalledWith({
+        channels: ['agent.dddddddd-4444-4444-4444-444444444444.control'],
+      });
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      exitSpy.mockRestore();
+      handle.stop();
+    });
+
+    it('does not reconnect once stopped', async () => {
+      const { handle } = await startRateLimited();
+      handle.stop();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(connectAgent).toHaveBeenCalledTimes(1);
     });
   });
 

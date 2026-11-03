@@ -39,6 +39,12 @@ export interface TaskEvent {
   [key: string]: unknown;
 }
 
+export interface TaskEventEntry {
+  event: TaskEvent;
+  /** PubNub publish time in 100-nanosecond epoch units. */
+  timetoken?: string;
+}
+
 // -- Typed event interfaces (Fix 4: discriminated unions) --
 
 export interface ProgressEvent {
@@ -159,7 +165,7 @@ export class TaskSession {
   private artifacts: ArtifactRef[] = [];
 
   // History event tracking for connect(). Live events are delivered through callbacks.
-  private historyEvents: TaskEvent[] = [];
+  private historyEventEntries: TaskEventEntry[] = [];
   private historyTimetokens = new Set<string>();
 
   // Waiters for stream discovery
@@ -253,6 +259,7 @@ export class TaskSession {
     preloadedArtifacts?: ArtifactRef[];
     /** Pre-populated task events from connect() history. */
     preloadedEvents?: TaskEvent[];
+    preloadedEventEntries?: TaskEventEntry[];
     /** External subscription managed by connect() for active tasks. */
     externalSubscription?: {
       listener: unknown;
@@ -297,7 +304,10 @@ export class TaskSession {
       this.artifacts.push(...opts.preloadedArtifacts);
     }
     if (opts.preloadedEvents) {
-      this.historyEvents.push(...opts.preloadedEvents);
+      this.historyEventEntries.push(...opts.preloadedEvents.map((event) => ({ event })));
+    }
+    if (opts.preloadedEventEntries) {
+      this.historyEventEntries.push(...opts.preloadedEventEntries);
     }
 
     if (opts.preClosed) {
@@ -733,7 +743,12 @@ export class TaskSession {
 
   /** Return all history events from connect() in arrival order. */
   listEvents(): TaskEvent[] {
-    return [...this.historyEvents];
+    return this.historyEventEntries.map(({ event }) => event);
+  }
+
+  /** Return history events with their PubNub timetokens in arrival order. */
+  listEventEntries(): TaskEventEntry[] {
+    return [...this.historyEventEntries];
   }
 
   /** @internal Called by connect() to append buffer-drain events to the history snapshot. */
@@ -742,7 +757,7 @@ export class TaskSession {
       if (this.historyTimetokens.has(timetoken)) return;
       this.historyTimetokens.add(timetoken);
     }
-    this.historyEvents.push(event);
+    this.historyEventEntries.push({ event, timetoken });
   }
 
   /**

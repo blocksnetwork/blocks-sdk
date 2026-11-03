@@ -27,6 +27,12 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, TypedDict, Union
 
+from ._rate_limit import (
+    HTTP_TOO_MANY_REQUESTS,
+    RateLimitedError,
+    RateLimitGate,
+    retry_after_of,
+)
 from .tls import https_context
 from .write_affinity import capture_affinity, inject_affinity
 
@@ -38,6 +44,12 @@ _BACKOFF_MAX = 30.0
 _MAX_RETRIES = 3
 _ERROR_CODE_REFRESH_TOKEN_INVALID = "REFRESH_TOKEN_INVALID"
 _ERROR_CODE_API_KEY_INVALID = "API_KEY_INVALID"
+
+
+def _backoff_s(attempt: int) -> float:
+    # Rate-limited attempts are unbounded, so cap the exponent before a float overflows.
+    return min(_BACKOFF_BASE * (2 ** min(attempt, 16)), _BACKOFF_MAX)
+
 
 # Proactive refresh fires at this fraction of TTL
 _REFRESH_TTL_FRACTION = 0.80
@@ -164,6 +176,7 @@ class ConsumerAuth:
         self._expires_at: float = 0.0
         self._destroyed: bool = False
         self._last_auth_error: Optional[AuthRefreshFailedError] = None
+        self._rate_limit = RateLimitGate()
 
         # Proactive refresh timer (daemon thread)
         self._timer: Optional[threading.Timer] = None
@@ -331,16 +344,24 @@ class ConsumerAuth:
             ) from exc
 
     def _acquire_api_key(self) -> TokenResult:
-        """Mode 1: exchange API key for consumer JWT."""
+        """Mode 1: exchange API key for consumer JWT.
+
+        A 429 raises :class:`RateLimitedError`, and so does every call until its
+        ``Retry-After`` has passed, without reaching the network.
+        """
+        self._rate_limit.check("Consumer auth")
         # Check if we have a refresh token -- use refresh path
         with self._lock:
             refresh_tok = self._refresh_token_value
             has_existing = self._token is not None
 
-        if has_existing and refresh_tok:
-            return self._refresh_via_endpoint(refresh_tok)
-
-        return self._bootstrap_api_key()
+        try:
+            if has_existing and refresh_tok:
+                return self._refresh_via_endpoint(refresh_tok)
+            return self._bootstrap_api_key()
+        except RateLimitedError as err:
+            self._rate_limit.hold(err)
+            raise
 
     def _bootstrap_api_key(self) -> TokenResult:
         """Initial acquisition via the consumer-token endpoint."""
@@ -468,17 +489,30 @@ class ConsumerAuth:
         self._timer = timer
 
     def _proactive_refresh(self) -> None:
-        """Proactive refresh callback with exponential backoff retry."""
-        with self._lock:
-            if self._destroyed:
-                return
+        """Proactive refresh callback with exponential backoff retry.
 
-        for attempt in range(_MAX_RETRIES):
+        A rate-limited attempt does not count toward the retry budget: it waits at least the
+        backend's ``Retry-After`` and tries again.
+        """
+        attempt = 0
+        rate_limited_attempt = 0
+        while True:
+            with self._lock:
+                if self._destroyed:
+                    return
             try:
                 result = self._acquire_token()
                 self._store_result(result)
                 self._schedule_refresh(result.expires_in)
                 return
+            except RateLimitedError as err:
+                delay = max(_backoff_s(rate_limited_attempt), err.retry_after or 0.0)
+                rate_limited_attempt += 1
+                logger.warning(
+                    "[ConsumerAuth] proactive refresh rate limited; retrying in %.1fs: %s",
+                    delay, err,
+                )
+                time.sleep(delay)
             except Exception as err:
                 if attempt == _MAX_RETRIES - 1:
                     # Permanent failure
@@ -497,8 +531,8 @@ class ConsumerAuth:
                         except Exception:
                             pass
                     return
-                delay = min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_MAX)
-                time.sleep(delay)
+                time.sleep(_backoff_s(attempt))
+                attempt += 1
 
     def _cancel_timer(self) -> None:
         """Cancel the proactive refresh timer if one is scheduled."""
@@ -551,6 +585,11 @@ class ConsumerAuth:
                         error_body = raw
             except Exception:
                 pass
+            # Only the Blocks backend's 429 is the API-key rate limit, not a customer proxy's.
+            if use_affinity and exc.code == HTTP_TOO_MANY_REQUESTS:
+                raise RateLimitedError(
+                    "Consumer auth request rate limited (HTTP 429)", retry_after_of(exc.headers)
+                ) from exc
             raise _ConsumerAuthHttpError(exc.code, error_body) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(

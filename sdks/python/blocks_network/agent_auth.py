@@ -17,6 +17,12 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
+from ._rate_limit import (
+    HTTP_TOO_MANY_REQUESTS,
+    RateLimitedError,
+    RateLimitGate,
+    retry_after_of,
+)
 from .protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from .tls import https_context
 from .write_affinity import capture_affinity, inject_affinity
@@ -92,6 +98,15 @@ class AgentAuthFatalError(RuntimeError):
     """
 
 
+class AgentAuthHttpError(RuntimeError):
+    """A connect or refresh answered with an HTTP error that is not fatal; ``status`` is that
+    answer's."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 # ============================================================================
 # AgentAuth
 # ============================================================================
@@ -119,6 +134,7 @@ class AgentAuth:
         self._refresh_token: Optional[str] = None
         self._registration_payload: Optional[RegistrationPayload] = None
         self._lock = threading.Lock()
+        self._rate_limit = RateLimitGate()
 
     # -- Public API ---------------------------------------------------------
 
@@ -146,9 +162,12 @@ class AgentAuth:
         ------
         AgentAuthFatalError
             If the API key is invalid, expired, or revoked.
+        RateLimitedError
+            If the API key is rate limited; retry after ``retry_after``.
         """
         if registration_payload is not None:
             self._registration_payload = registration_payload
+        self._rate_limit.check("Agent connect")
 
         url = f"{self._base_url}/api/v1/auth/agent/connect"
         body_bytes = (
@@ -160,6 +179,7 @@ class AgentAuth:
         try:
             data = self._post(url, body=body_bytes, headers=self._api_key_headers())
         except _HttpError as exc:
+            self._raise_if_rate_limited(exc, "Agent connect")
             code = exc.body.get("code", "") if isinstance(exc.body, dict) else ""
             # Only two connect failures are fatal (agent can never obtain
             # runtime credentials -> caller terminates the process): an
@@ -180,8 +200,8 @@ class AgentAuth:
                 if isinstance(exc.body, dict)
                 else f"HTTP {exc.status}"
             )
-            raise RuntimeError(
-                f"Agent connect failed: {error_msg}"
+            raise AgentAuthHttpError(
+                exc.status, f"Agent connect failed: {error_msg}"
             ) from exc
 
         self._access_token = data["accessToken"]
@@ -213,7 +233,9 @@ class AgentAuth:
         On ``REFRESH_TOKEN_INVALID``, falls back to re-connection via
         ``init()`` with the stored connect payload.
         On ``API_KEY_INVALID``, raises ``AgentAuthFatalError``.
+        On a 429, and until its ``Retry-After`` has passed, raises ``RateLimitedError``.
         """
+        self._rate_limit.check("Token refresh")
         url = f"{self._base_url}/api/v1/auth/agent/refresh"
         body = json.dumps({"refreshToken": self._refresh_token}).encode("utf-8")
 
@@ -226,6 +248,7 @@ class AgentAuth:
             self._refresh_token = data["refreshToken"]
             return
         except _HttpError as exc:
+            self._raise_if_rate_limited(exc, "Token refresh")
             error_body = exc.body
             code = error_body.get("code", "") if isinstance(error_body, dict) else ""
 
@@ -246,7 +269,8 @@ class AgentAuth:
                 ) from exc
 
             # Unknown error
-            raise RuntimeError(
+            raise AgentAuthHttpError(
+                exc.status,
                 f"Token refresh failed: {error_body.get('error', f'HTTP {exc.status}') if isinstance(error_body, dict) else f'HTTP {exc.status}'}"
             ) from exc
 
@@ -304,6 +328,13 @@ class AgentAuth:
             body=body,
             headers=req_headers,
         )
+
+    def _raise_if_rate_limited(self, exc: "_HttpError", what: str) -> None:
+        if exc.status != HTTP_TOO_MANY_REQUESTS:
+            return
+        err = RateLimitedError(f"{what} rate limited (HTTP 429)", exc.retry_after)
+        self._rate_limit.hold(err)
+        raise err from exc
 
     # -- HTTP helpers -------------------------------------------------------
 
@@ -365,7 +396,7 @@ class AgentAuth:
             except (json.JSONDecodeError, ValueError):
                 pass
 
-            raise _HttpError(exc.code, error_body) from exc
+            raise _HttpError(exc.code, error_body, retry_after_of(exc.headers)) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Request failed: {exc.reason}") from exc
 
@@ -373,7 +404,8 @@ class AgentAuth:
 class _HttpError(Exception):
     """Internal exception carrying HTTP status and parsed body."""
 
-    def __init__(self, status: int, body: Any = None) -> None:
+    def __init__(self, status: int, body: Any = None, retry_after: Optional[float] = None) -> None:
         super().__init__(f"HTTP {status}")
         self.status = status
         self.body = body
+        self.retry_after = retry_after

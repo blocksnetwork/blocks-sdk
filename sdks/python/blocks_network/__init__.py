@@ -38,15 +38,40 @@ Public API exports:
     CallbackErrorContext    - Context for callback error routing.
     ArtifactRef             - Reference to a task output artifact.
     TokenEndpointConfig     - TypedDict for Mode 2 token-endpoint config object form.
+    RateLimitedError        - The API key is rate limited; retryable after ``retry_after`` seconds.
     BLOCKS_MAX_UPLOAD_BYTES - Platform upload ceiling in bytes; the service rejects larger files.
     BillingModeMismatchError - Raised when the backend rejects SendMessage with a BillingModeMismatch.
+    AuthRequiredError       - Raised when a task needs the caller to connect an integration (``connect_url``).
     RpcError                - Base structured error for JSON-RPC error responses.
     AnonTaskAccessDenied    - Raised when the anon-task-read-token endpoint returns 403.
     get_agent               - Look up an agent registry entry by name.
     AgentEntry              - Agent registry entry (carries billing_mode, listing, card, etc.).
+    ConnectionsClient       - Integration connections client (``ctx.connections``).
+    ConnectionToken         - Integration access token returned by ``get_token()``.
+    ConnectionRequiredError - Raised when the end user must connect or approve an integration.
+    ConnectionAccessError   - Raised when an integration token request fails otherwise.
+    create_connections_client - Factory for ConnectionsClient.
+    SessionContext          - Session passed to session handlers (experimental).
+    ExchangeContext         - Exchange passed to on_exchange (experimental).
+
+Sessions (experimental preview, refused with SESSIONS_DISABLED until enabled for your org):
+    BlocksClient            - Consumer client: open_session() and call().
+    Session                 - One session with an agent (returned by open_session).
+    Exchange                - One exchange inside a session (returned by Session.send).
+    ExchangeOutcome         - The one outcome an exchange ends in.
+    ExchangeProgress        - A progress update on an exchange.
+    SessionError            - Base of every session error; ``code`` is the error code.
+    SessionsDisabledError   - Sessions are not enabled for this deployment or org.
+    SessionPaidAgentError   - Sessions serve free agents only.
+    SessionNoRouteError     - The agent has no route available for a session; retry.
+    SessionNotFoundError    - Unknown session, or one the caller is not a party to.
+    SessionBackpressureError - send() would exceed the pending-exchange bound.
+    SessionFailedError      - The session failed; ``code`` is the reason.
+    SessionRecoveryError    - Session.recover() could read neither history nor the snapshot.
 """
 
 from .agent_auth import AgentAuth, AgentAuthFatalError
+from ._rate_limit import RateLimitedError
 from .agent_instance import start_agent_instance
 from .agent_registry import AgentEntry, get_agent
 from .auth_provider import AuthProvider
@@ -66,9 +91,16 @@ from .artifacts import (
 )
 from .cdm_config import fetch_cdm_config, CdmConfig, CdmKeyset, CdmApiConfig, DEFAULT_CDM_URL
 from .channel_manager import ChannelManager, create_channel_manager, task_channel
+from .connections import (
+    ConnectionAccessError,
+    ConnectionRequiredError,
+    ConnectionsClient,
+    ConnectionToken,
+    create_connections_client,
+)
 from .credential_cache import CredentialCache
 from .pubnub_client import create_pubnub_client
-from .rpc_client import BillingModeMismatchError, RpcError
+from .rpc_client import AuthRequiredError, BillingModeMismatchError, RpcError
 from .stream.stream_client import StreamError
 from .stream.types import InboundMessage
 from .stream_context import ExternalStreamObject, OnActivateCallback, StreamObject
@@ -89,8 +121,21 @@ from .task_client import (
     create_task_client,
     subscribe_to_task,
 )
-from .task_session import CallbackErrorContext, TaskEvent, TaskSession
+from .task_session import CallbackErrorContext, TaskEvent, TaskEventEntry, TaskSession
 from .types import ArtifactRef, ExpireTaskMessage, RequestPart, StartTaskMessage, TaskContext
+from ._session.provider_types import ExchangeContext, SessionContext
+from ._session.client import BlocksClient
+from ._session.consumer_receiver import ExchangeOutcome, ExchangeProgress
+from ._session.errors import (
+    SessionBackpressureError,
+    SessionError,
+    SessionFailedError,
+    SessionNoRouteError,
+    SessionNotFoundError,
+    SessionPaidAgentError,
+    SessionsDisabledError,
+)
+from ._session.session import Exchange, Session, SessionRecoveryError
 
 __all__ = [
     "start_agent_instance",
@@ -98,6 +143,8 @@ __all__ = [
     "RequestPart",
     "StartTaskMessage",
     "TaskContext",
+    "SessionContext",
+    "ExchangeContext",
     "build_artifact_ref",
     "decode_inline_artifact",
     "download_artifact",
@@ -130,10 +177,12 @@ __all__ = [
     "StreamUnavailableError",
     "TaskSession",
     "TaskEvent",
+    "TaskEventEntry",
     "CallbackErrorContext",
     "ArtifactRef",
     "AgentAuth",
     "AgentAuthFatalError",
+    "RateLimitedError",
     "AuthRefreshFailedError",
     "AuthProvider",
     "ConsumerAuth",
@@ -148,8 +197,27 @@ __all__ = [
     "file_part",
     "BLOCKS_MAX_UPLOAD_BYTES",
     "BillingModeMismatchError",
+    "AuthRequiredError",
     "RpcError",
     "AnonTaskAccessDenied",
     "get_agent",
     "AgentEntry",
+    "ConnectionsClient",
+    "ConnectionToken",
+    "ConnectionRequiredError",
+    "ConnectionAccessError",
+    "create_connections_client",
+    "BlocksClient",
+    "Session",
+    "Exchange",
+    "ExchangeOutcome",
+    "ExchangeProgress",
+    "SessionError",
+    "SessionsDisabledError",
+    "SessionPaidAgentError",
+    "SessionNoRouteError",
+    "SessionNotFoundError",
+    "SessionBackpressureError",
+    "SessionFailedError",
+    "SessionRecoveryError",
 ]

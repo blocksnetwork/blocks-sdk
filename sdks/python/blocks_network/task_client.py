@@ -25,6 +25,8 @@ from .terminal_delivery_tracker import TerminalDeliveryTracker
 from .task_session import (
     TERMINAL_STATES,
     CallbackErrorContext,
+    TaskEvent,
+    TaskEventEntry,
     TaskSession,
 )
 from .types import ArtifactRef
@@ -535,7 +537,7 @@ class TaskClient:
             Intended for the Playground's anonymous-viewer flow; non-browser
             SDK callers should not use this.
         """
-        from .cdm_config import fetch_cdm_config
+        from ._consumer_endpoints import resolve_consumer_endpoints
 
         if billing_mode not in ("free", "paid"):
             raise ValueError(
@@ -560,46 +562,16 @@ class TaskClient:
                 "billing_mode='free'"
             )
 
-        # Fetch CDM config
-        effective_cdm_url = cdm_url or os.environ.get("BLOCKS_CDM_URL") or None
-        cdm = fetch_cdm_config(effective_cdm_url)
-
-        # Select keyset based on billing_mode:
-        # 'free' -> playground keyset, 'paid' -> network keyset.
-        if billing_mode == "free":
-            keyset = cdm.playground
-        else:
-            keyset = cdm.network
-
-        # Resolve each value: explicit > env > CDM
-        resolved_subscribe_key = (
-            subscribe_key
-            or os.environ.get("BLOCKS_SUBSCRIBE_KEY")
-            or keyset.subscribe_key
+        endpoints = resolve_consumer_endpoints(
+            billing_mode,
+            cdm_url=cdm_url,
+            subscribe_key=subscribe_key,
+            publish_key=publish_key,
+            base_url=base_url,
         )
-        resolved_publish_key = (
-            publish_key
-            or os.environ.get("BLOCKS_PUBLISH_KEY")
-            or keyset.publish_key
-        )
-        resolved_base_url = (
-            base_url
-            or os.environ.get("BLOCKS_BACKEND_URL")
-            or cdm.api.base_url
-        )
-
-        if not resolved_subscribe_key:
-            raise ValueError(
-                "subscribe_key could not be resolved from explicit option, "
-                "BLOCKS_SUBSCRIBE_KEY env var, or CDM config"
-            )
-
-        if not resolved_base_url:
-            raise ValueError(
-                "base_url could not be resolved from explicit option, "
-                "BLOCKS_BACKEND_URL env var, or CDM config. "
-                "base_url is required for RPC calls."
-            )
+        resolved_subscribe_key = endpoints.subscribe_key
+        resolved_publish_key = endpoints.publish_key
+        resolved_base_url = endpoints.base_url
 
         # Build auth provider (skipped in anon mode -- connect() routes to
         # the fingerprint-gated public endpoint, not task-read-token).
@@ -1283,7 +1255,7 @@ class TaskClient:
                 "timetoken", "0",
             ))
 
-            preloaded_streams, preloaded_artifacts, _preloaded_events, high_water_mark, history_terminal_state = (
+            preloaded_streams, preloaded_artifacts, _preloaded_event_entries, high_water_mark, history_terminal_state = (
                 self._fetch_and_parse_history(
                     session_pubnub, resolved_channel, params.agent_name,
                     result["taskId"], sdk_options,
@@ -1534,7 +1506,7 @@ class TaskClient:
                 "timetoken", "0",
             ))
 
-            preloaded_streams, preloaded_artifacts, preloaded_events, high_water_mark, history_terminal_state = (
+            preloaded_streams, preloaded_artifacts, preloaded_event_entries, high_water_mark, history_terminal_state = (
                 self._fetch_and_parse_history(
                     session_pn, status_channel, agent_name, task_id, sdk_options,
                 )
@@ -1567,7 +1539,7 @@ class TaskClient:
                     skip_subscription=True,
                     preloaded_streams=preloaded_streams,
                     preloaded_artifacts=preloaded_artifacts,
-                    preloaded_events=preloaded_events,
+                    preloaded_event_entries=preloaded_event_entries,
                 )
 
             # Use the server timetoken as fallback when history is empty,
@@ -1635,7 +1607,7 @@ class TaskClient:
                 state=task_state,
                 preloaded_streams=preloaded_streams,
                 preloaded_artifacts=preloaded_artifacts,
-                preloaded_events=preloaded_events,
+                preloaded_event_entries=preloaded_event_entries,
                 external_subscription={
                     "listener": buf_listener,
                     "channel": status_channel,
@@ -1681,7 +1653,7 @@ class TaskClient:
     ) -> tuple:
         """Fetch task channel history and parse stream_started, artifact, and task events.
 
-        Returns (preloaded_streams, preloaded_artifacts, preloaded_events,
+        Returns (preloaded_streams, preloaded_artifacts, preloaded_event_entries,
         high_water_mark, terminal_state). ``terminal_state`` is the most
         recent terminal event's state if one is present in history,
         otherwise ``None``.
@@ -1696,7 +1668,7 @@ class TaskClient:
 
         preloaded_streams: Dict[str, StreamRef] = {}
         preloaded_artifacts: List[ArtifactRef] = []
-        preloaded_events: List[Dict[str, Any]] = []
+        preloaded_event_entries: List[TaskEventEntry] = []
         high_water_mark = "0"
         terminal_state: Optional[str] = None
         terminal_tt = "0"
@@ -1761,7 +1733,9 @@ class TaskClient:
 
             msg_type = msg.get("type")
             if msg_type:
-                preloaded_events.append(msg)
+                preloaded_event_entries.append(TaskEventEntry(
+                    TaskEvent(msg), str(tt) if tt is not None else None,
+                ))
 
             # Parse terminal events: take the latest one by timetoken
             # in case history contains retries or duplicates.
@@ -1827,7 +1801,7 @@ class TaskClient:
             elif msg_type == "artifact" and isinstance(msg.get("artifactRef"), dict):
                 preloaded_artifacts.append(ArtifactRef.from_dict(msg["artifactRef"]))
 
-        return preloaded_streams, preloaded_artifacts, preloaded_events, high_water_mark, terminal_state
+        return preloaded_streams, preloaded_artifacts, preloaded_event_entries, high_water_mark, terminal_state
 
     # -- Task lifecycle -----------------------------------------------------
 
