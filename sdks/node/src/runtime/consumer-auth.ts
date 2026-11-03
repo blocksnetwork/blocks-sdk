@@ -8,11 +8,19 @@
  *
  * Proactive refresh at 80% TTL with exponential backoff on failure.
  * Reactive refresh on 401 via onAuthFailure() with Promise dedup.
+ * In API-key mode a 429 is retryable: no API-key call is made until its
+ * Retry-After elapses, and it never counts toward the proactive retry limit.
  */
 
 import type { AuthProvider } from './auth-provider.js';
 import { log as baseLog } from './logger.js';
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from './protocol-version.js';
+import {
+  HTTP_TOO_MANY_REQUESTS,
+  RateLimitHold,
+  RateLimitedError,
+  rateLimitBackoffMs,
+} from './rate-limit.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
 
 const log = (
@@ -138,6 +146,7 @@ export class ConsumerAuth implements AuthProvider {
   private _initialized = false;
   private _initPromise: Promise<void> | null = null;
   private _lastAuthError: AuthRefreshFailedError | null = null;
+  private readonly _rateLimit = new RateLimitHold();
 
   constructor(options: ConsumerAuthOptions) {
     this._apiKey = options.apiKey;
@@ -225,6 +234,7 @@ export class ConsumerAuth implements AuthProvider {
 
   private async _initApiKey(): Promise<void> {
     const url = `${this._baseUrl}/api/v1/auth/agent/consumer-token`;
+    this._rateLimit.check('consumer-token');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       [PROTOCOL_VERSION_HEADER]: CURRENT_PROTOCOL_VERSION,
@@ -239,6 +249,9 @@ export class ConsumerAuth implements AuthProvider {
 
     captureAffinity(response.headers);
 
+    if (response.status === HTTP_TOO_MANY_REQUESTS) {
+      throw this._rateLimit.record('consumer-token', response);
+    }
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       throw new Error(`consumer-token failed: HTTP ${response.status}${text ? ` ${text}` : ''}`);
@@ -265,6 +278,7 @@ export class ConsumerAuth implements AuthProvider {
 
   private async _refreshApiKey(): Promise<void> {
     const url = `${this._baseUrl}/api/v1/auth/agent/refresh`;
+    this._rateLimit.check('token refresh');
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this._apiKey}`,
       'Content-Type': 'application/json',
@@ -279,6 +293,9 @@ export class ConsumerAuth implements AuthProvider {
 
     captureAffinity(response.headers);
 
+    if (response.status === HTTP_TOO_MANY_REQUESTS) {
+      throw this._rateLimit.record('token refresh', response);
+    }
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as ErrorResponse;
 
@@ -465,7 +482,8 @@ export class ConsumerAuth implements AuthProvider {
   /**
    * Schedule proactive refresh at 80% of expiresIn. On failure, retry
    * with exponential backoff (max 3 retries). On permanent failure,
-   * call onAuthError and stop scheduling.
+   * call onAuthError and stop scheduling. A rate-limited attempt is retried
+   * after its Retry-After without spending one of the 3 retries.
    */
   private _scheduleRefresh(): void {
     if (this._destroyed || this._expiresIn <= 0) return;
@@ -475,30 +493,37 @@ export class ConsumerAuth implements AuthProvider {
     }
 
     const delayMs = this._expiresIn * 1000 * PROACTIVE_REFRESH_FACTOR;
+    this._retryProactiveRefreshIn(delayMs, 0, 0);
+  }
+
+  private _retryProactiveRefreshIn(delayMs: number, attempt: number, rateLimited: number): void {
+    if (this._destroyed) return;
     this._refreshTimer = setTimeout(() => {
       this._refreshTimer = null;
-      this._proactiveRefreshWithRetry(0);
+      this._proactiveRefreshWithRetry(attempt, rateLimited);
     }, delayMs);
   }
 
-  private async _proactiveRefreshWithRetry(attempt: number): Promise<void> {
+  private async _proactiveRefreshWithRetry(attempt: number, rateLimited: number): Promise<void> {
     if (this._destroyed) return;
 
     try {
       await this._refreshOnce();
       this._scheduleRefresh();
     } catch (err) {
-      if (attempt < MAX_RETRIES - 1) {
+      if (err instanceof RateLimitedError) {
+        const delayMs = rateLimitBackoffMs(rateLimited, err.retryAfterMs);
+        log('warn', 'proactive refresh rate limited; retrying', {
+          event: 'consumer_auth_proactive_refresh_rate_limited',
+          retryInMs: delayMs,
+        });
+        this._retryProactiveRefreshIn(delayMs, attempt, rateLimited + 1);
+      } else if (attempt < MAX_RETRIES - 1) {
         const backoff = Math.min(
           BACKOFF_BASE_MS * Math.pow(2, attempt),
           BACKOFF_MAX_MS,
         );
-        if (!this._destroyed) {
-          this._refreshTimer = setTimeout(() => {
-            this._refreshTimer = null;
-            this._proactiveRefreshWithRetry(attempt + 1);
-          }, backoff);
-        }
+        this._retryProactiveRefreshIn(backoff, attempt + 1, 0);
       } else {
         // Permanent failure: always log a warning so consumers without an
         // onAuthError callback aren't silent (matches Python parity and

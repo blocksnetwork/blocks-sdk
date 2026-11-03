@@ -9,7 +9,7 @@ This file is long: jump to the section you need instead of reading it whole.
 | Section | Read this for |
 |---|---|
 | [Handler Interfaces](#handler-interfaces) | `StartTaskMessage`, `TaskContext` (progress via `reportStatus`, `cancelSignal` / `isCancelled`, input artifacts), `HandlerResult` |
-| [Handler Patterns](#handler-patterns) | Copyable handlers: text, streaming, [agent-to-agent](#agent-to-agent-orchestrator) |
+| [Handler Patterns](#handler-patterns) | Copyable handlers: text, streaming, [agent-to-agent](#agent-to-agent-orchestrator), [acting as the user](#acting-as-the-user-integration-connections) |
 | [Streaming Capabilities](#streaming-capabilities) | Card `streams` block (`_default` key), creating and consuming streams |
 | [Consumer Auth Patterns](#consumer-auth-patterns) | API key vs `tokenEndpoint` vs embedded auth for browsers |
 | [Trigger Scripts](#trigger-scripts-consumer-task-submission) | Submitting a task from a script and reading its artifacts |
@@ -43,7 +43,7 @@ const text = task.requestParts?.[0]?.text ?? 'default';
 
 ### TaskContext
 
-Provides `reportStatus(message)`, `createStream(options?)`, `taskClient`, `cancelSignal`, `isCancelled`, `isExpired`, `hasStream`, `taskId`, `requestParts` (readonly), `consumerPublicKey` (readonly). Also includes `downloadInputArtifact(part)` to fetch file-type input artifacts and `publishArtifact(data, options?)` to publish artifacts mid-handler. Always use optional chaining (`ctx?.reportStatus()`) since ctx may be undefined in testing.
+Provides `reportStatus(message)`, `createStream(options?)`, `taskClient`, `cancelSignal`, `isCancelled`, `isExpired`, `hasStream`, `taskId`, `requestParts` (readonly), `consumerPublicKey` (readonly). Also includes `downloadInputArtifact(part)` to fetch file-type input artifacts and `publishArtifact(data, options?)` to publish artifacts mid-handler, and `connections.getToken(integration, opts?)` for the task user's access token to another service ([Acting as the User](#acting-as-the-user-integration-connections)). Always use optional chaining (`ctx?.reportStatus()`) since ctx may be undefined in testing.
 
 ### CreateStreamOptions
 
@@ -94,7 +94,7 @@ export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
   const text = task.requestParts?.[0]?.text ?? '';
-  ctx?.reportStatus('Processing...');
+  ctx?.reportStatus('Converting input to uppercase');
   return { artifacts: [{ data: text.toUpperCase(), mimeType: 'text/plain' }] };
 }
 ```
@@ -113,7 +113,7 @@ export default async function handler(
   // Guard on hasStream — request-task streaming is consumer opt-in, so
   // createStream() throws when the consumer didn't opt in.
   if (ctx?.hasStream) {
-    ctx.reportStatus('Streaming...');
+    ctx.reportStatus('Streaming the response');
     const stream = await ctx.createStream({
       bundleSizeBytes: 2048,
       maxLatencyMs: 50,
@@ -146,7 +146,7 @@ export default async function handler(
 ): Promise<HandlerResult> {
   if (!ctx) throw new Error('TaskContext required for agent-to-agent calls');
   const text = task.requestParts?.[0]?.text ?? '';
-  ctx.reportStatus(`Delegating to ${SUB_AGENT}...`);
+  ctx.reportStatus(`Delegating work to ${SUB_AGENT}`);
 
   const summary = await callSubAgent(ctx, task.ownerId, text);
   return { artifacts: [{ data: JSON.stringify({ summary }), mimeType: 'application/json' }] };
@@ -182,6 +182,49 @@ async function callSubAgent(ctx: TaskContext, ownerId: string, text: string): Pr
   }
 }
 ```
+
+---
+
+### Acting as the User (Integration Connections)
+
+To call another service (Google, Salesforce, Microsoft 365, or any OAuth 2.0 provider) as the user who sent the task, declare it on the card and ask for a token during the task. Blocks holds the user's refresh token; the handler gets a short-lived access token for this task only. Never ask a user for a password or store a token yourself.
+
+The `integration` name must be an integration an org admin of the agent's own organization created under **Manage → Integrations**; its detail page shows the card snippet with its scopes.
+
+```json
+"connections": [{ "integration": "salesforce", "scopes": ["api", "refresh_token"], "required": true }]
+```
+
+```typescript
+import type { ConnectionToken, HandlerResult, StartTaskMessage, TaskContext } from '@blocks-network/sdk';
+
+const INTEGRATION = 'salesforce';
+
+export default async function handler(task: StartTaskMessage, ctx?: TaskContext): Promise<HandlerResult> {
+  if (!ctx) throw new Error('TaskContext required for integration connections');
+  ctx.reportStatus('Fetching your recent Salesforce accounts');
+  let token = await ctx.connections.getToken(INTEGRATION);
+  const get = async (path: string): Promise<Response> => {
+    const instanceUrl = token.extra.instance_url as string; // Salesforce: the user's org API host
+    return fetch(`${instanceUrl}${path}`, { headers: { Authorization: `Bearer ${token.accessToken}` } });
+  };
+  const path = `/services/data/v62.0/query?q=${encodeURIComponent('SELECT Name FROM Account LIMIT 5')}`;
+  let res = await get(path);
+  if (res.status === 401) {
+    token = await ctx.connections.getToken(INTEGRATION, { forceRefresh: true }); // once
+    res = await get(path);
+  }
+  if (!res.ok) throw new Error(`Salesforce query failed: ${res.status}`);
+  return { artifacts: [{ data: JSON.stringify(await res.json()), mimeType: 'application/json' }] };
+}
+```
+
+- `getToken(integration, { forceRefresh? })` resolves to `ConnectionToken { accessToken, tokenType, expiresAt, scopes, extra }`. `extra` carries provider fields such as Salesforce's `instance_url`; it is `{}` otherwise.
+- The token belongs to this task: Blocks issues one only while the task is queued or running. Call `getToken` when you need it, and do not log, store or reuse a token after the task. Repeated calls return the same token until it nears expiry.
+- On a `401` from the service, call `getToken(name, { forceRefresh: true })` once and retry.
+- `ConnectionRequiredError` (`integration`, `reason`, `connectUrl`) means the user must connect or approve at `connectUrl`; `reason` is `not_connected`, `not_approved` or `broken`. `ConnectionAccessError` (`status`, `code`) is any other failure, for example a task that already ended or an integration the card does not declare.
+- With `required: true` (the default), Blocks refuses the task until the user has connected and approved this agent, so callers see `AuthRequiredError` with a `connectUrl` instead of a running task. With `required: false`, the task runs and the handler must handle `ConnectionRequiredError`.
+- Integration connections work only where the deployment has them turned on. Elsewhere `getToken` fails with `ConnectionAccessError` status `404`, and a card with a required connection makes every task fail with `ConnectionsUnavailable`.
 
 ---
 
@@ -296,6 +339,10 @@ the full taxonomy):
    popup handshake against `/api/v1/auth/embed/popup`, gets short-lived
    per-agent JWTs back via `postMessage`, and returns ready-to-use
    `TaskClient` instances. No backend required on the partner side.
+   `sendMessage()`, `listTasks()` filtered by agent name and the file-upload
+   helpers fail, for an agent outside the session's agents, with 404
+   `NotFound` if it is private, the same as an unknown name, and with 403
+   `AGENT_OUT_OF_SCOPE` if it is public.
    Authoring flow: `blocks init my-ui --mode webapp --agent <name>` (writes
    `blocks.config.json` with a required `backendBaseUrl` — the runtime backend
    API origin, resolved from `--backend-url`/`BLOCKS_BACKEND_URL`/active profile
@@ -346,13 +393,19 @@ client.destroy();
 
 ---
 
+## Sessions (preview, not yet available)
+
+Sessions -- one durable interaction of many exchanges, replacing one task per turn -- are not yet available. The consumer surface (a new `BlocksClient` with `call`, `openSession`, `send`) and provider handlers (`onSessionOpen`, `onExchange`, `onSessionClose`) may ship in the Node SDK marked experimental, but the service refuses them with `SESSIONS_DISABLED` until sessions are enabled. Do not generate code that uses them; use `TaskClient` and task handlers. `TaskClient` will become a deprecated subclass of `BlocksClient`, so task code keeps working.
+
+---
+
 ## TaskClient & TaskSession
 
 **sendMessage(params)** -- required params: `agentName`, `requestParts`. Optional: `ownerId` (auto-populated from auth), `idempotencyKey`, `taskKind` (`'request'`|`'pipe'`), `duration`, `consumerPublicKey`, `stream` (request-task streaming opt-in — `true` requests streaming, `false` suppresses it; omitted uses the server default, now no-streaming, so pass `true` to stream; ignored for pipe; resolved `hasStream` still requires agent capability), `pushNotificationConfig`, `retryPolicy`, `autoDrain`, `drainWindowMs` (default 30_000; overrides the per-session auto-drain window for already-open streams).
 
 **TaskClient.connect({ taskId, autoDrain?, drainWindowMs?, role? })** -- returns a `TaskSession`. `drainWindowMs` mirrors the `sendMessage` option so reconnecting consumers can tune the drain window for streams they open via `openAllStreams()` / `onStream`. `role` defaults to `'consumer'` (task submitter — server checks `userId === task.ownerId` and that the caller still holds `agent:submit-task` in the task's billed org; embedded sessions, and a submitter with no membership in that org, are exempt from the permission check); set to `'provider'` when the caller is the agent owner viewing a received task. Embedded sessions and agent runtime credentials are refused the provider role, on their own agents too. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
 
-**TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`, `isClosed` (getter; `true` after `close()` / `asyncClose()` runs). Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onCancelRequested(cb: (e: CancelRequestedEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listArtifacts()`, `downloadArtifact(ref)` (returns `{ data: Uint8Array; mimeType; fileName? }`), `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `null` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
+**TaskSession** -- returned by `sendMessage()`. Properties: `taskId`, `ownerId`, `orgId`, `readToken`, `statusChannel`, `state`, `isClosed` (getter; `true` after `close()` / `asyncClose()` runs). Event listeners: `onProgress(cb: (e: ProgressEvent) => void)`, `onArtifact(cb: (e: ArtifactEvent) => void)`, `onTerminal(cb: (e: TerminalEvent) => void)`, `onCancelRequested(cb: (e: CancelRequestedEvent) => void)`, `onEvent(cb)`, `onError(cb)`, `onStream(cb)`. Blocking wait: `waitForTerminal(timeoutMs?)` -- returns `Promise<TerminalEvent>`, resolves immediately for already-terminal sessions. History helpers: `listEvents()` (all valid task events parsed by `connect()` history), `listEventEntries()` (the same events paired with publish timetokens), `listArtifacts()`, `downloadArtifact(ref)` (returns `{ data: Uint8Array; mimeType; fileName? }`), `saveArtifacts(dir)`. Stream helpers: `listStreams()`, `waitForStream(id?)`, `waitForStreamWhere(predicate)`, `openAllStreams(opts?)` (active-session eager-open — returns `StreamClient[]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.getAgentCard(agentName)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `null` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`, `asyncClose()`. Resource management: `Symbol.dispose` (TaskClient), `Symbol.asyncDispose` (TaskSession).
 
 **Reading a downloaded artifact.** `DownloadedArtifact.data` is a plain `Uint8Array`, not a `Buffer`, so `String(data)` and `Buffer.isBuffer(data) ? data.toString() : String(data)` both yield `"123,34,..."`. Decode text and JSON explicitly:
 
@@ -378,7 +431,7 @@ const value: unknown = downloaded.mimeType === 'application/json' ? JSON.parse(t
 
 **Stream consumer APIs:** `stream.bytes()` (decoded byte iterator, yields `Uint8Array`, browser-safe), `stream.events<T>()` (flattened event iterator, browser-safe), `stream.readable()` (Node Readable adapter, returns `Promise<Readable>` — **Node-only**, not for browser bundles). All iterators deliver messages in sequence order via the SDK's reorder buffer. `ref.open({ reorderTimeoutMs })` configures the gap timeout (default 750ms; 0 disables reordering).
 
-**Stream error surfaces:** `StreamClient.onError(cb: (err: StreamError) => void)` subscribes to per-stream PubNub status errors (PAM revocation, network failures, malformed payloads). `StreamError` is `{ category, error, channel, timestamp, fatal }`; `category` is one of the neutral values `"connected"`, `"reconnected"`, `"network_down"`, `"network_issues"`, `"timeout"`, `"malformed_response"`, `"access_denied"`, `"bad_request"`, `"other"`. Fatal categories that force-terminate the stream are `"access_denied"` and `"bad_request"`; on `fatal: true` the client auto-tears down and signals iterator completion, so handlers typically only react to non-fatal errors. Distinct from `TaskSession.onError` (which surfaces consumer-callback exceptions, not stream-level failures). `StreamUnavailableError` (exported from `@blocks-network/sdk`) is thrown synchronously by `StreamRef.open()` when the owning session is already terminal; it carries `.terminalState` and `.streamId` so callers can branch on `instanceof StreamUnavailableError`.
+**Stream error surfaces:** `StreamClient.onError(cb: (err: StreamError) => void)` subscribes to per-stream PubNub status errors (PAM access denials, network failures, malformed payloads). `StreamError` is `{ category, error, channel, timestamp, fatal }`; `category` is one of the neutral values `"connected"`, `"reconnected"`, `"network_down"`, `"network_issues"`, `"timeout"`, `"malformed_response"`, `"access_denied"`, `"bad_request"`, `"other"`. Fatal categories that force-terminate the stream are `"access_denied"` and `"bad_request"`; on `fatal: true` the client auto-tears down and signals iterator completion, so handlers typically only react to non-fatal errors. Distinct from `TaskSession.onError` (which surfaces consumer-callback exceptions, not stream-level failures). `StreamUnavailableError` (exported from `@blocks-network/sdk`) is thrown synchronously by `StreamRef.open()` when the owning session is already terminal; it carries `.terminalState` and `.streamId` so callers can branch on `instanceof StreamUnavailableError`.
 
 **Exported error types:** all are `instanceof Error` and exported from `@blocks-network/sdk`.
 
@@ -389,6 +442,10 @@ const value: unknown = downloaded.mimeType === 'application/json' ? JSON.parse(t
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminalState` and `.streamId`. |
 | `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`process.exit(1)`). Non-fatal connect failures (network, 5xx, `404 not-published`, and the `403 PermissionDenied` a public agent answers when the key owner may not run it) do not block startup: the process stays up without a control subscription until restarted with a credential that stands. |
+| `RateLimitedError` | `AgentAuth` connect/refresh, `ConsumerAuth` token calls | Retryable, never fatal — the API key is over its per-key rate limit (HTTP 429 `RATE_LIMITED`). `retryAfterMs` is the backend's `Retry-After`. The SDK makes no API-key call until it passes, and the runtime retries a rate-limited connect on its own. A busy key is never reported as `API_KEY_INVALID`. |
+| `AuthRequiredError` | `TaskClient.sendMessage` | The agent needs an integration connection the caller has not connected or approved; no task was created. Carries `integration`, `reason`, `connectUrl`; open `connectUrl` for the user, then retry. Extends `RpcError`. |
+| `ConnectionRequiredError` | `ctx.connections.getToken` | The task's user must connect or approve the integration. Carries `integration`, `reason`, `connectUrl`. |
+| `ConnectionAccessError` | `ctx.connections.getToken` | Any other token failure (task ended, integration not declared or disabled, feature off). Carries `status`, `code`. |
 
 ---
 
@@ -449,7 +506,7 @@ Additional env vars read by the SDK:
 - `STREAM_BUNDLE_SIZE` -- stream flush byte threshold (default 4096)
 - `STREAM_MAX_LATENCY_MS` -- stream flush time threshold in ms (default 250)
 - `STREAM_MAX_MESSAGE_SIZE` -- max message size before multipart splitting (default 16384)
-- `STREAM_GATING` -- presence gating for streams (default true)
+- `STREAM_GATING` -- presence gating for streams (default true). The gate is currently disabled in the SDK, so this setting has no effect.
 
 ---
 
@@ -480,7 +537,7 @@ export default async function handler(
 ): Promise<HandlerResult> {
   if (!ctx) throw new Error('TaskContext required for pipe tasks');
 
-  ctx.reportStatus('Starting stream...');
+  ctx.reportStatus('Starting the data stream');
   const stream = await ctx.createStream({
     declaredStream: 'data-stream',
     format: 'events',
@@ -502,7 +559,7 @@ export default async function handler(
 
   const reason = ctx.isExpired ? 'duration_expired'
     : ctx.isCancelled ? 'canceled' : 'stopped';
-  ctx.reportStatus(`Stream ended: ${reason}`);
+  ctx.reportStatus('Preparing the final result');
 
   return {
     artifacts: [{
@@ -622,6 +679,7 @@ const session = await client.connect({ taskId: 'task-abc-123' });
 
 // For terminal tasks: history is preloaded, no live events
 const events = session.listEvents();
+const entries = session.listEventEntries(); // TaskEventEntry[]
 const artifacts = session.listArtifacts();
 const streams = session.listStreams();
 
@@ -638,6 +696,15 @@ const providerSession = await client.connect({
   role: 'provider',
 });
 ```
+
+`listEventEntries()` returns a shallow history-only snapshot of exported
+`TaskEventEntry` objects: `{ event: TaskEvent; timetoken?: string }`. The timetoken
+is the original PubNub decimal string, or `undefined` for preloaded payloads
+without one. It includes subscribe-handshake buffer events, not later live events,
+and requires no extra history fetch. `listEvents()` keeps its payload-only shape.
+For timestamps, prefer payload `ts`, then the timetoken converted to milliseconds
+with `Number(timetoken.slice(0, -4) || '0')`, then a fallback. Do not convert the
+full timetoken to a floating-point number before dividing.
 
 - Requires JWT-based auth (`apiKey`, `tokenEndpoint`, or `tokenProvider`
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.

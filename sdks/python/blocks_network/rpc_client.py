@@ -8,6 +8,7 @@ Provides:
 - :func:`call_rpc` -- sends a JSON-RPC 2.0 request with retry and error handling
 - :class:`RpcError` -- structured error for JSON-RPC error responses
 - :class:`BillingModeMismatchError` -- typed subclass for ``BillingModeMismatch``
+- :class:`AuthRequiredError` -- typed subclass for ``AuthRequired``
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Literal, Optional, TypeVar
 
+from .connections import AUTH_REQUIRED_CODE, parse_auth_required_details
 from .protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from .tls import https_context
 from .write_affinity import capture_affinity, inject_affinity
@@ -99,6 +101,24 @@ class BillingModeMismatchError(RpcError):
         self.got: Literal["free", "paid"] = got
 
 
+class AuthRequiredError(RpcError):
+    """``reason``: not_connected, not_approved, broken or sign_in_required; ``connect_url`` is opaque."""
+
+    def __init__(
+        self,
+        rpc_message: str,
+        integration: str,
+        reason: str,
+        connect_url: str,
+        code: Optional[int] = None,
+        data: Any = None,
+    ) -> None:
+        super().__init__(rpc_message, code=code, data=data)
+        self.integration = integration
+        self.reason = reason
+        self.connect_url = connect_url
+
+
 def _maybe_billing_mode_mismatch(err: RpcError) -> RpcError:
     """Promote a generic ``RpcError`` to ``BillingModeMismatchError`` when
     the JSON-RPC ``error.data`` carries ``code: 'BillingModeMismatch'``.
@@ -132,6 +152,19 @@ def _maybe_billing_mode_mismatch(err: RpcError) -> RpcError:
         got=got,
         code=err.code,
         data=data,
+    )
+
+
+def _maybe_auth_required(err: RpcError) -> RpcError:
+    data = err.data
+    if not isinstance(data, dict) or data.get("code") != AUTH_REQUIRED_CODE:
+        return err
+    fields = parse_auth_required_details(data.get("details"))
+    if fields is None:
+        return err
+    integration, reason, connect_url = fields
+    return AuthRequiredError(
+        err.rpc_message, integration, reason, connect_url, code=err.code, data=data
     )
 
 
@@ -265,7 +298,7 @@ def call_rpc(
                 or "Unknown RPC error"
             )
             base_err = RpcError(message, err.get("code"), err.get("data"))
-            raise _maybe_billing_mode_mismatch(base_err)
+            raise _maybe_auth_required(_maybe_billing_mode_mismatch(base_err))
         return data.get("result") if isinstance(data, dict) else data
 
     # Pre-flight: when the auth provider has a recorded permanent-refresh

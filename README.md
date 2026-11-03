@@ -279,6 +279,8 @@ make publish-node VERSION=0.2.0-rc
 
 Maintainers should use [RELEASING.md](RELEASING.md). Contributors do not need to run release commands.
 
+Release notes are published at <https://blocks.ai/docs/release-notes>.
+
 ## License
 
 See [LICENSE](LICENSE).

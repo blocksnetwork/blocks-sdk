@@ -206,6 +206,28 @@ export class BillingModeMismatchError extends RpcError {
   }
 }
 
+/** `reason`: not_connected, not_approved, broken or sign_in_required; `connectUrl` is opaque. */
+export class AuthRequiredError extends RpcError {
+  integration: string;
+  reason: string;
+  connectUrl: string;
+
+  constructor(
+    rpcMessage: string,
+    integration: string,
+    reason: string,
+    connectUrl: string,
+    code?: number,
+    data?: unknown,
+  ) {
+    super(rpcMessage, code, data);
+    this.name = 'AuthRequiredError';
+    this.integration = integration;
+    this.reason = reason;
+    this.connectUrl = connectUrl;
+  }
+}
+
 /**
  * Inspect a JSON-RPC error envelope's `data` field and return a typed
  * `BillingModeMismatchError` when the structured wire shape matches.
@@ -228,6 +250,30 @@ function tryMapBillingModeMismatch(
     rpcMessage,
     det.expected,
     det.got,
+    code,
+    data,
+  );
+}
+
+function tryMapAuthRequired(
+  rpcMessage: string,
+  code: number | undefined,
+  data: unknown,
+): AuthRequiredError | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as { code?: unknown; details?: unknown };
+  if (d.code !== 'AuthRequired') return null;
+  const details = d.details;
+  if (!details || typeof details !== 'object') return null;
+  const det = details as { integration?: unknown; reason?: unknown; connectUrl?: unknown };
+  if (typeof det.integration !== 'string') return null;
+  if (typeof det.reason !== 'string') return null;
+  if (typeof det.connectUrl !== 'string') return null;
+  return new AuthRequiredError(
+    rpcMessage,
+    det.integration,
+    det.reason,
+    det.connectUrl,
     code,
     data,
   );
@@ -317,12 +363,18 @@ export async function callRpc<T>(
       // callers can `instanceof BillingModeMismatchError` and read
       // `expected`/`got` directly. No auto-retry; caller must fix their
       // billing mode.
-      const typed = tryMapBillingModeMismatch(
+      const typedBillingMode = tryMapBillingModeMismatch(
         message,
         json.error.code,
         json.error.data,
       );
-      if (typed) throw typed;
+      if (typedBillingMode) throw typedBillingMode;
+      const typedAuthRequired = tryMapAuthRequired(
+        message,
+        json.error.code,
+        json.error.data,
+      );
+      if (typedAuthRequired) throw typedAuthRequired;
       throw new RpcError(message, json.error.code, json.error.data);
     }
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import threading
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ from blocks_network.agent_auth import (
     ERROR_CODE_API_KEY_INVALID,
     ERROR_CODE_REFRESH_TOKEN_INVALID,
 )
+from blocks_network import RateLimitedError
 
 
 # ---------------------------------------------------------------------------
@@ -78,17 +80,20 @@ def _mock_token_response(
     return mock_urlopen
 
 
-def _mock_error_response(status: int, body: dict):
+def _mock_error_response(status: int, body: dict, headers: dict | None = None):
     """Create a mock urlopen that raises an HTTPError."""
     import urllib.error
 
     def mock_urlopen(req, **kwargs):
         body_bytes = json.dumps(body).encode("utf-8")
         raise urllib.error.HTTPError(
-            req.full_url, status, "Error", {}, BytesIO(body_bytes),
+            req.full_url, status, "Error", headers or {}, BytesIO(body_bytes),
         )
 
     return mock_urlopen
+
+
+_RATE_LIMITED_BODY = {"error": "Too many requests", "code": "RATE_LIMITED"}
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +204,19 @@ class TestAgentAuthExchange:
             with pytest.raises(RuntimeError, match="Agent connect failed") as exc_info:
                 auth.init(registration_payload={"agentName": "echo"})
             assert not isinstance(exc_info.value, AgentAuthFatalError)
+
+    def test_init_raises_rate_limited_not_fatal_on_429(self) -> None:
+        auth = AgentAuth(api_key="bk_busy", base_url="http://localhost:8080")
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_mock_error_response(
+                429, _RATE_LIMITED_BODY, {"Retry-After": "7"}
+            ),
+        ):
+            with pytest.raises(RateLimitedError) as exc_info:
+                auth.init(registration_payload={"agentName": "echo"})
+        assert exc_info.value.retry_after == 7.0
+        assert not isinstance(exc_info.value, AgentAuthFatalError)
 
     def test_get_api_key(self) -> None:
         auth = AgentAuth(api_key="bk_mykey", base_url="http://localhost:8080")
@@ -376,6 +394,41 @@ class TestAgentAuthRefresh:
                 ),
             ):
                 auth.init(registration_payload={"agentName": "echo"})
+
+    def test_refresh_holds_off_until_retry_after_then_requests_again(self) -> None:
+        auth = AgentAuth(api_key="bk_busy", base_url="http://localhost:8080")
+        auth._access_token = "old-jwt"
+        auth._refresh_token = "old-rt"
+        clock = [1000.0]
+        answers = [
+            _mock_error_response(429, _RATE_LIMITED_BODY, {"Retry-After": "20"}),
+            _mock_token_response("new-jwt", "new-rt"),
+        ]
+        calls = []
+
+        def mock_urlopen(req, **kwargs):
+            calls.append(req.full_url)
+            return answers[len(calls) - 1](req, **kwargs)
+
+        fake_time = SimpleNamespace(monotonic=lambda: clock[0])
+        with patch("urllib.request.urlopen", side_effect=mock_urlopen), patch(
+            "blocks_network._rate_limit.time", fake_time
+        ):
+            with pytest.raises(RateLimitedError) as first:
+                auth.refresh()
+            assert first.value.retry_after == 20.0
+
+            clock[0] += 15
+            with pytest.raises(RateLimitedError) as held:
+                auth.refresh()
+            assert held.value.retry_after == pytest.approx(5.0)
+            assert len(calls) == 1
+
+            clock[0] += 5
+            auth.refresh()
+
+        assert len(calls) == 2
+        assert auth.get_access_token() == "new-jwt"
 
     def test_refresh_is_thread_safe(self) -> None:
         """Multiple threads calling refresh() do not cause races."""

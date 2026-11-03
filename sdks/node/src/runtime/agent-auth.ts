@@ -12,6 +12,7 @@
  */
 
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from './protocol-version.js';
+import { HTTP_TOO_MANY_REQUESTS, RateLimitHold } from './rate-limit.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
 
 // ============================================================================
@@ -88,6 +89,17 @@ export class AgentAuthFatalError extends Error {
   }
 }
 
+/** A connect or refresh answered with an HTTP error that is not fatal; `status` is that answer's. */
+export class AgentAuthHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AgentAuthHttpError';
+  }
+}
+
 // ============================================================================
 // AgentAuth
 // ============================================================================
@@ -99,6 +111,7 @@ export class AgentAuth {
   private refreshTokenValue: string | null = null;
   private refreshLock: Promise<void> | null = null;
   private registrationPayload: RegistrationPayload | null = null;
+  private readonly rateLimit = new RateLimitHold();
 
   constructor(apiKey: string, baseUrl: string) {
     if (!apiKey) throw new Error('apiKey is required');
@@ -119,6 +132,7 @@ export class AgentAuth {
     const url = `${this.baseUrl}/api/v1/auth/agent/connect`;
 
     this.registrationPayload = registrationPayload;
+    this.rateLimit.check('Agent connect');
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
@@ -137,6 +151,9 @@ export class AgentAuth {
     // header on 2xx/3xx, so this is a no-op otherwise.
     captureAffinity(response.headers);
 
+    if (response.status === HTTP_TOO_MANY_REQUESTS) {
+      throw this.rateLimit.record('Agent connect', response);
+    }
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as ErrorResponse;
       // Only two connect failures are fatal (agent can never obtain runtime
@@ -153,7 +170,8 @@ export class AgentAuth {
           `API key invalid or revoked: ${body.error ?? 'API_KEY_INVALID'}`,
         );
       }
-      throw new Error(
+      throw new AgentAuthHttpError(
+        response.status,
         `Agent registration failed: ${body.error ?? `HTTP ${response.status}`}`,
       );
     }
@@ -199,10 +217,13 @@ export class AgentAuth {
 
   /**
    * Perform the actual refresh call. On REFRESH_TOKEN_INVALID, falls back
-   * to full re-init. On API_KEY_INVALID, throws a fatal error.
+   * to full re-init. On API_KEY_INVALID, throws a fatal error. On a 429, and
+   * then without a request until its Retry-After elapses, throws
+   * RateLimitedError.
    */
   private async _doRefresh(): Promise<void> {
     const url = `${this.baseUrl}/api/v1/auth/agent/refresh`;
+    this.rateLimit.check('Token refresh');
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
@@ -218,6 +239,9 @@ export class AgentAuth {
 
     captureAffinity(response.headers);
 
+    if (response.status === HTTP_TOO_MANY_REQUESTS) {
+      throw this.rateLimit.record('Token refresh', response);
+    }
     if (response.ok) {
       const data = (await response.json()) as { accessToken: string; refreshToken: string };
       this.accessToken = data.accessToken;
@@ -252,7 +276,8 @@ export class AgentAuth {
     }
 
     // Unknown error
-    throw new Error(
+    throw new AgentAuthHttpError(
+      response.status,
       `Token refresh failed: ${body.error ?? `HTTP ${response.status}`}`,
     );
   }

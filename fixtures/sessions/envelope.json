@@ -1,0 +1,177 @@
+{
+  "description": "Session envelope and type rules, and which counterparts each receiver accepts",
+  "protocolVersion": "2026-05-01",
+  "sessionId": "s-fixture-1",
+  "parties": {
+    "consumer": "uuid-consumer-fixture",
+    "provider": "uuid-provider-fixture",
+    "backend": "uuid-backend-fixture",
+    "stranger": "uuid-stranger-fixture"
+  },
+  "envelopeFields": [
+    "type",
+    "protocolVersion",
+    "sessionId",
+    "seq",
+    "ts"
+  ],
+  "maxExchangeIdLength": 64,
+  "types": {
+    "session_open": {
+      "required": [],
+      "optional": [
+        "exchange"
+      ]
+    },
+    "session_ready": {
+      "required": [],
+      "optional": []
+    },
+    "exchange": {
+      "required": [
+        "exchangeId",
+        "requestParts"
+      ],
+      "optional": []
+    },
+    "exchange_cancel": {
+      "required": [
+        "exchangeId"
+      ],
+      "optional": []
+    },
+    "exchange_progress": {
+      "required": [
+        "exchangeId"
+      ],
+      "optional": [
+        "message",
+        "progress"
+      ]
+    },
+    "exchange_artifact": {
+      "required": [
+        "exchangeId",
+        "artifactRef"
+      ],
+      "optional": [
+        "outputId"
+      ]
+    },
+    "exchange_outcome": {
+      "required": [
+        "exchangeId",
+        "state"
+      ],
+      "optional": [
+        "error",
+        "reason"
+      ],
+      "enums": {
+        "state": [
+          "completed",
+          "failed",
+          "canceled"
+        ]
+      }
+    },
+    "session_close": {
+      "required": [],
+      "optional": []
+    },
+    "session_closed": {
+      "required": [
+        "reason"
+      ],
+      "optional": [],
+      "enums": {
+        "reason": [
+          "consumer_closed",
+          "provider_closed",
+          "idle_timeout",
+          "max_lifetime"
+        ]
+      }
+    },
+    "session_failed": {
+      "required": [
+        "error"
+      ],
+      "optional": [],
+      "enums": {
+        "error": [
+          "route_lost",
+          "route_unhealthy",
+          "provider_error",
+          "provider_at_capacity"
+        ]
+      }
+    },
+    "route_probe": {
+      "required": [
+        "nonce"
+      ],
+      "optional": [],
+      "envelope": [
+        "type",
+        "protocolVersion"
+      ]
+    }
+  },
+  "accepts": {
+    "consumer": {
+      "provider": "*",
+      "backend": [
+        "session_closed",
+        "session_failed"
+      ]
+    },
+    "provider": {
+      "consumer": [
+        "session_open",
+        "exchange",
+        "exchange_cancel",
+        "session_close"
+      ],
+      "backend": [
+        "session_closed",
+        "session_failed",
+        "route_probe"
+      ]
+    }
+  },
+  "givenStates": {
+    "consumer": [
+      "open",
+      "ready",
+      "closing"
+    ],
+    "provider": [
+      "open",
+      "ready"
+    ]
+  },
+  "sessionStates": [
+    "open",
+    "ready",
+    "closing",
+    "closed",
+    "failed",
+    "canceled"
+  ],
+  "expectKeys": {
+    "consumer": [
+      "state",
+      "stateChanges",
+      "outcomes",
+      "progress",
+      "recoverCalls"
+    ],
+    "provider": [
+      "state",
+      "exchangesStarted",
+      "probeEchoes",
+      "gapDetected"
+    ]
+  }
+}

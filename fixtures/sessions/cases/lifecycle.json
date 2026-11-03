@@ -1,0 +1,517 @@
+{
+  "cases": [
+    {
+      "id": "consumer.open.ready",
+      "summary": "session_ready from the provider moves an open session to ready",
+      "receiver": "consumer",
+      "given": {
+        "state": "open",
+        "pendingExchanges": []
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "session_ready",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "stateChanges": [
+          "ready"
+        ]
+      }
+    },
+    {
+      "id": "consumer.exchange.completed",
+      "summary": "progress, artifact, then a completed outcome settle the exchange once, carrying its artifacts",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "working"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_artifact",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 2,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "artifactRef": {
+              "kind": "inline",
+              "mimeType": "text/plain",
+              "size": 5,
+              "data": "aGVsbG8="
+            }
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 3,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "completed"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "progress": [
+          {
+            "exchangeId": "ex-1",
+            "message": "working"
+          }
+        ],
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "completed",
+            "artifacts": [
+              {
+                "kind": "inline",
+                "mimeType": "text/plain",
+                "size": 5,
+                "data": "aGVsbG8="
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "consumer.exchange.failed",
+      "summary": "a failed outcome carries handler_error to the consumer",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "failed",
+            "error": "handler_error"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "failed",
+            "error": "handler_error",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "consumer.close.acknowledged",
+      "summary": "session_closed from the provider ends a closing session",
+      "receiver": "consumer",
+      "given": {
+        "state": "closing",
+        "pendingExchanges": []
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "session_closed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "reason": "consumer_closed"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "closed",
+        "stateChanges": [
+          "closed"
+        ]
+      }
+    },
+    {
+      "id": "consumer.failure.provider_error",
+      "summary": "session_failed from the provider fails an open session",
+      "receiver": "consumer",
+      "given": {
+        "state": "open",
+        "pendingExchanges": []
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "error": "provider_error"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "failed",
+        "stateChanges": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "id": "consumer.failure.backend_settles_pending",
+      "summary": "a backend session_failed settles every unsettled exchange failed with the session error",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1",
+          "ex-2"
+        ]
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "error": "route_lost"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "failed",
+        "stateChanges": [
+          "failed"
+        ],
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "failed",
+            "error": "route_lost",
+            "artifacts": []
+          },
+          {
+            "exchangeId": "ex-2",
+            "state": "failed",
+            "error": "route_lost",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "consumer.close.backend_cancels_pending",
+      "summary": "a backend session_closed settles unsettled exchanges canceled",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_closed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "reason": "idle_timeout"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "closed",
+        "stateChanges": [
+          "closed"
+        ],
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "canceled",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "consumer.terminal.delivered_once",
+      "summary": "a second terminal notice after failed changes nothing",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": []
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "error": "provider_at_capacity"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_closed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "reason": "max_lifetime"
+          }
+        }
+      ],
+      "expect": {
+        "state": "failed",
+        "stateChanges": [
+          "failed"
+        ]
+      }
+    },
+    {
+      "id": "consumer.terminal.ignores_later_traffic",
+      "summary": "counterpart traffic after a terminal state neither reopens the session nor reaches an exchange",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "error": "route_lost"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "late"
+          }
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 2,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "completed"
+          }
+        }
+      ],
+      "expect": {
+        "state": "failed",
+        "stateChanges": [
+          "failed"
+        ],
+        "progress": [],
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "failed",
+            "error": "route_lost",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "provider.open.inline_exchange",
+      "summary": "session_open with an inline exchange readies the session and starts that exchange",
+      "receiver": "provider",
+      "given": {
+        "state": "open"
+      },
+      "steps": [
+        {
+          "from": "consumer",
+          "message": {
+            "type": "session_open",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchange": {
+              "exchangeId": "ex-1",
+              "requestParts": [
+                {
+                  "type": "text",
+                  "text": "hello",
+                  "partId": "text"
+                }
+              ]
+            }
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "exchangesStarted": [
+          "ex-1"
+        ]
+      }
+    },
+    {
+      "id": "provider.exchange.started",
+      "summary": "an exchange from the consumer starts the handler for its exchangeId",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "consumer",
+          "message": {
+            "type": "exchange",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "requestParts": [
+              {
+                "type": "text",
+                "text": "hello",
+                "partId": "text"
+              }
+            ]
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "exchangesStarted": [
+          "ex-1"
+        ]
+      }
+    },
+    {
+      "id": "provider.close.consumer_close",
+      "summary": "session_close from the consumer closes an idle session",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "consumer",
+          "message": {
+            "type": "session_close",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "closed"
+      }
+    },
+    {
+      "id": "provider.probe.echoed",
+      "summary": "a backend route_probe is recognized by type and its nonce echoed",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "route_probe",
+            "protocolVersion": "2026-05-01",
+            "nonce": "n-1"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "probeEchoes": [
+          "n-1"
+        ]
+      }
+    }
+  ]
+}

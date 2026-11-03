@@ -63,6 +63,8 @@ Required in `tags`: at least one `{ id, name }`. Optional per tag: `description`
 
 Required in `runtime`: `handler`, `maxRunningTimeSec`. Optional: `handlerExport` (default `"default"`), `concurrency` (default 1), `expectedInstances` (default 1), `maxPendingBacklog`.
 
+Optional `connections`: up to 10 `{ integration, scopes, required }` entries naming the services the agent calls as the task's user. `integration` is the name of an integration in the agent's own organization (lowercase letters, digits, `-`, `_`; unique within the card), `scopes` lists at least one provider scope, all of them within the scopes the org admin allowed on that integration (Blocks refuses a task for a card that asks for more), and `required` defaults to `true`, which makes Blocks refuse a task until the user has connected and approved the agent. Registration checks the shape, not that the integration exists. The handler gets tokens with `ctx.connections.getToken()`; see the language references.
+
 Optional `io` section: `inputs`, `outputs` (each an array of typed I/O
 descriptors). On every `io.inputs[]` entry, **required**: `id`,
 `description`, `contentType`, `required`. **Optional**: `example`,
@@ -274,7 +276,7 @@ export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
   const text = task.requestParts?.[0]?.text ?? '';
-  ctx?.reportStatus('Processing...');
+  ctx?.reportStatus('Converting input to uppercase');
   return { artifacts: [{ data: text.toUpperCase(), mimeType: 'text/plain' }] };
 }
 ```

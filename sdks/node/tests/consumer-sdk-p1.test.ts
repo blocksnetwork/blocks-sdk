@@ -707,6 +707,10 @@ describe('P1-2: connect()', () => {
     expect(session.isClosed).toBe(false); // skipSubscription, not preClosed
     expect(session.listArtifacts()).toHaveLength(1);
     expect(session.listArtifacts()[0].kind).toBe('inline');
+    expect(session.listEventEntries().map(({ timetoken }) => timetoken)).toEqual([
+      '0000000090', '0000000095', '0000000100', '0000000110', '0000000115', '0000000120',
+    ]);
+    expect(session.listEventEntries().map(({ event }) => event)).toEqual(session.listEvents());
     expect(session.listEvents().map((event) => event.type)).toEqual([
       'request',
       'progress',
@@ -718,6 +722,32 @@ describe('P1-2: connect()', () => {
 
     session.close();
     expect(session.isClosed).toBe(true);
+  });
+
+  it.each([
+    [1700000000500000, '1700000000500000'],
+    [Number.MAX_SAFE_INTEGER, '9007199254740991'],
+    [Number.MAX_SAFE_INTEGER + 1, undefined],
+    [Number('17000000001239999'), undefined],
+    ['17000000001239999', '17000000001239999'],
+  ])('retains history timetoken %s only without numeric precision loss', async (timetoken, expected) => {
+    setupConnectMocks({ taskState: 'completed' });
+    const mock = createMockPubNub();
+    const event = { type: 'progress', taskId: 'task-1', message: 'Working' };
+    mock.pubnub.fetchMessages.mockResolvedValue({
+      channels: { 'u.org1.task-1': [{ message: event, timetoken }] },
+    });
+    const client = new TaskClient({
+      billingMode: 'free',
+      subscribeKey: 'sub-key',
+      authProvider: new StaticAuthProvider('jwt-token'),
+      baseUrl: 'https://api.test',
+      createSessionPubNub: () => mock.pubnub,
+    });
+
+    const session = await client.connect({ taskId: 'task-1' });
+    expect(session.listEventEntries()).toEqual([{ event, timetoken: expected }]);
+    session.close();
   });
 
   it('derives terminal state from history when backend RPC lags', async () => {

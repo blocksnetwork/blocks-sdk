@@ -157,6 +157,10 @@ class TestPresenceIncrementOnTaskStart:
             )
         )
 
+        # Presence updates are skipped until the connect thread has set the control
+        # channel; wait for its initial state so the task update is recorded.
+        _wait_for(lambda: len(records) >= 1)
+
         _simulate_start_task(mock_pubnub, {
             "type": "StartTask",
             "taskId": "task-1",
@@ -190,20 +194,22 @@ class TestPresenceDecrementOnTaskCompletion:
             )
         )
 
+        # Presence updates are skipped until the connect thread has set the control
+        # channel; wait for its initial state so the task update is recorded.
+        _wait_for(lambda: len(records) >= 1)
+
         _simulate_start_task(mock_pubnub, {
             "type": "StartTask",
             "taskId": "task-1",
             "callerClaims": {"sub": "user1"},
         })
 
-        # After task completes, activeTasks should go back to 0
-        _wait_for(
-            lambda: any(
-                r["state"]["activeTasks"] == 0
-                for r in records[1:]  # Skip initial state
-            ),
-            timeout_sec=2.0,
-        )
+        # After task completes, activeTasks should go back to 0 following the increment
+        def _decremented() -> bool:
+            counts = [r["state"]["activeTasks"] for r in records[1:]]
+            return 1 in counts and 0 in counts[counts.index(1):]
+
+        _wait_for(_decremented, timeout_sec=5.0)
 
         result["stop"]()
 
@@ -225,6 +231,10 @@ class TestConcurrentTaskTracking:
                 on_start_task=lambda task, pn: barrier.wait(timeout=5),
             )
         )
+
+        # Presence updates are skipped until the connect thread has set the control
+        # channel; wait for its initial state so the task update is recorded.
+        _wait_for(lambda: len(records) >= 1)
 
         # Start two tasks
         _simulate_start_task(mock_pubnub, {

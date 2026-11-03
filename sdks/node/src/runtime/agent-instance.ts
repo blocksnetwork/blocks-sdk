@@ -25,6 +25,7 @@ import { connectAgent, getAgent, type AgentCard } from './agent-registry.js';
 import { parseStreamSetupResponse, parseStreamSetupError } from './stream-setup-helper.js';
 import { DEFAULTS } from '../defaults.js';
 import { getEnv } from '../env.js';
+import { createConnectionsClient, type ConnectionsClient } from './connections.js';
 import {
   log as baseLog,
   isDebugSubsystemEnabled,
@@ -60,14 +61,20 @@ import {
   type PnEnvironment,
 } from './cdm-config.js';
 import { AgentAuth, AgentAuthFatalError } from './agent-auth.js';
+import { RateLimitedError, rateLimitBackoffMs } from './rate-limit.js';
 import {
   CURRENT_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
   isProtocolVersionSupported,
 } from './protocol-version.js';
 import { isProfilingEnabled, logDispatchTiming } from './profiling.js';
+import { ProviderSessionApi } from './sessions/provider-api.js';
+import { SessionProviderRuntime } from './sessions/provider-route.js';
+import type { SessionProviderOptions } from './sessions/provider-types.js';
 
 const profileReceivedAt = new Map<string, number>();
+
+const SESSION_MANIFEST_TYPE = 'SessionManifest';
 
 /**
  * A single artifact entry within HandlerResult.artifacts.
@@ -106,7 +113,7 @@ export interface AgentInstancePresenceState {
   protocolVersions: string[];
 }
 
-export interface AgentInstanceOptions {
+export interface AgentInstanceOptions extends SessionProviderOptions {
   pubnub?: PubNub;
   token?: string;
   userId?: string;
@@ -218,6 +225,7 @@ export interface TaskContext {
     data: Buffer | string,
     options?: { mimeType?: string; fileName?: string; outputId?: string },
   ) => Promise<void>;
+  connections: ConnectionsClient;
 }
 
 export interface CancelTaskMessage {
@@ -311,6 +319,9 @@ const log = (
   message: string,
   meta?: Record<string, unknown>,
 ): void => baseLog('[AgentInstance]', level, message, meta);
+
+/** Spread on a rate-limited connect retry, so instances sharing a key do not retry in step. */
+const CONNECT_RETRY_JITTER_MS = 1_000;
 
 /**
  * If `err` is a fatal auth error (forced offline / revoked API key), log it and
@@ -1208,6 +1219,19 @@ export const startAgentInstance = async (
       cancelSignal: controller.signal,
       taskClient: consumerTaskClient,
       consumerPublicKey: task.consumerPublicKey,
+      get connections(): ConnectionsClient {
+        if (!agentAuth || !baseUrl) {
+          throw new Error(
+            'Integration connections require authentication. ' +
+              'Ensure BLOCKS_API_KEY and baseUrl are configured.',
+          );
+        }
+        return createConnectionsClient({
+          agentAuth,
+          baseUrl,
+          taskId: task.taskId,
+        });
+      },
 
       // Download file data from a request part's artifactRef
       downloadInputArtifact: async (part: RequestPart): Promise<Buffer> => {
@@ -2262,6 +2286,11 @@ export const startAgentInstance = async (
       const raw = event.message as Record<string, unknown> | undefined;
       if (!raw) return;
 
+      if (raw.type === SESSION_MANIFEST_TYPE) {
+        sessionProvider?.acceptManifest(raw);
+        return;
+      }
+
       // Handle SwitchEnvironment before standard parsing
       if (raw.type === 'SwitchEnvironment') {
         const switchMsg = raw as unknown as SwitchEnvironmentMessage;
@@ -2303,13 +2332,57 @@ export const startAgentInstance = async (
     });
   }
 
+  let sessionProvider: SessionProviderRuntime | undefined;
+  let stopped = false;
+  const startSessionProvider = (): void => {
+    const onExchange = opts.onExchange;
+    if (!onExchange || stopped) return;
+    if (!agentAuth || !baseUrl) {
+      log('warn', 'onExchange is set but agent auth is unavailable (no baseUrl); serving tasks only', {
+        event: 'session_provider_unavailable',
+      });
+      return;
+    }
+    const auth = agentAuth;
+    sessionProvider = new SessionProviderRuntime({
+      api: new ProviderSessionApi(baseUrl, (url, init) =>
+        auth.authenticatedFetch(url, init).catch((err: unknown) => {
+          exitIfFatalAuthError(err, 'session-route');
+          throw err;
+        }),
+      ),
+      instanceId,
+      maxSessions: opts.maxSessions ?? concurrency,
+      handlers: {
+        onSessionOpen: opts.onSessionOpen,
+        onExchange,
+        onSessionClose: opts.onSessionClose,
+      },
+      createClient: (userId) => {
+        const ks = envKeysets[activeEnv];
+        return createPubNubClient({
+          publishKey: ks.publishKey,
+          subscribeKey: ks.subscribeKey,
+          userId,
+          subscribeRetryUnbounded: true,
+        });
+      },
+    });
+    void sessionProvider.start();
+  };
+
   // Register and subscribe — use registryListing (from DB) so the backend mints
   // the PAM token for the correct keyset; fall back to opts.listing or SDK default.
   //
   // `billingMode` is forwarded UNCONDITIONALLY from the registry-resolved
   // value above (effectiveBillingMode). There is no caller-supplied override.
   // Provider must update the registry and restart to change billing mode.
-  connectAgent(agentName, {
+  //
+  // A rate-limited connect is retried until it succeeds or the instance stops;
+  // any other non-fatal failure is not retried.
+  let connectRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let rateLimitedConnects = 0;
+  const connect = (): Promise<void> => connectAgent(agentName, {
     instanceId,
     billingMode: effectiveBillingMode,
     description: opts.description,
@@ -2348,9 +2421,27 @@ export const startAgentInstance = async (
       }
       controlClient.subscribe({ channels: [controlChannel!] });
       updatePresenceState().catch(() => {});
+      startSessionProvider();
     })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof RateLimitedError) {
+        if (stopped) return;
+        const retryInMs =
+          rateLimitBackoffMs(rateLimitedConnects++, err.retryAfterMs) +
+          Math.random() * CONNECT_RETRY_JITTER_MS;
+        log('warn', `agent connect rate limited: ${agentName}; retrying`, {
+          event: 'agent_connect_rate_limited',
+          agentName,
+          instanceId,
+          retryInMs: Math.round(retryInMs),
+        });
+        connectRetryTimer = setTimeout(() => {
+          connectRetryTimer = undefined;
+          if (!stopped) void connect();
+        }, retryInMs);
+        return;
+      }
       log('error', `failed to register agent: ${agentName} — ${message}`, {
         event: 'agent_registration_failed',
         agentName,
@@ -2359,6 +2450,7 @@ export const startAgentInstance = async (
       });
       exitIfFatalAuthError(err, 'connect');
     });
+  void connect();
 
   log('info', `Agent instance ${instanceId} started (agent name: ${agentName})`, {
     agentName,
@@ -2367,6 +2459,8 @@ export const startAgentInstance = async (
   });
 
   const stop = (): void => {
+    stopped = true;
+    clearTimeout(connectRetryTimer);
     try {
       if (diagAliveTimer !== null) {
         clearInterval(diagAliveTimer);
@@ -2390,6 +2484,7 @@ export const startAgentInstance = async (
           instanceId,
         });
       }
+      sessionProvider?.stop();
       consumerAuth?.destroy();
       consumerTaskClient.destroy();
       controlClient.removeListener(listener);

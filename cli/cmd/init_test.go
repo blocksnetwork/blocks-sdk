@@ -858,7 +858,7 @@ func TestInitWebappRejectsNonLoopbackHTTPBackendURL(t *testing.T) {
 }
 
 // TestInitWebappRejectsNonLoopbackHTTPAssetURL locks in the intentional
-// (documented in CHANGELOG) tightening: --blocks-base-url is validated with the
+// tightening: --blocks-base-url is validated with the
 // same https/loopback rule as the backend, so a cleartext non-loopback asset
 // host is rejected at init instead of serving the widget bundle over http.
 func TestInitWebappRejectsNonLoopbackHTTPAssetURL(t *testing.T) {

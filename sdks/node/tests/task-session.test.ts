@@ -379,6 +379,11 @@ describe('TaskSession', () => {
       const listSession = createSession([progressEvent, artifactEvent, terminalEvent]);
 
       expect(listSession.listEvents()).toEqual([progressEvent, artifactEvent, terminalEvent]);
+      expect(listSession.listEventEntries()).toEqual([
+        { event: progressEvent },
+        { event: artifactEvent },
+        { event: terminalEvent },
+      ]);
 
       listSession.close();
     });
@@ -387,6 +392,7 @@ describe('TaskSession', () => {
       const listSession = createSession();
 
       expect(listSession.listEvents()).toEqual([]);
+      expect(listSession.listEventEntries()).toEqual([]);
 
       listSession.close();
     });
@@ -443,6 +449,13 @@ describe('TaskSession', () => {
       expect(events).toHaveLength(2);
       expect(events[0].message).toBe('from history');
       expect(events[1].message).toBe('from buffer');
+      const entries = s.listEventEntries();
+      expect(entries).toEqual([
+        { event: events[0] },
+        { event: events[1], timetoken: '200' },
+      ]);
+      entries.pop();
+      expect(s.listEventEntries()).toHaveLength(2);
       s.close();
     });
 
@@ -458,6 +471,10 @@ describe('TaskSession', () => {
       expect(s.listEvents()).toHaveLength(2);
       expect(s.listEvents()[0].message).toBe('first');
       expect(s.listEvents()[1].message).toBe('second');
+      expect(s.listEventEntries().map(({ event, timetoken }) => [event.message, timetoken])).toEqual([
+        ['first', '300'],
+        ['second', '301'],
+      ]);
       s.close();
     });
 

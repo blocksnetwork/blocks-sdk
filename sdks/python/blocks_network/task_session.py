@@ -83,6 +83,14 @@ class TaskEvent:
         return self._data
 
 
+@dataclass(frozen=True)
+class TaskEventEntry:
+    """History event with a PubNub timetoken in 100-nanosecond epoch units."""
+
+    event: TaskEvent
+    timetoken: Optional[str] = None
+
+
 # Unsubscribe callback type
 Unsubscribe = Callable[[], None]
 
@@ -142,6 +150,7 @@ class TaskSession:
         preloaded_streams: Optional[Dict[str, StreamRef]] = None,
         preloaded_artifacts: Optional[List[ArtifactRef]] = None,
         preloaded_events: Optional[List[Dict[str, Any]]] = None,
+        preloaded_event_entries: Optional[List[TaskEventEntry]] = None,
         external_subscription: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._task_id = task_id
@@ -222,7 +231,7 @@ class TaskSession:
         self._artifacts: List[ArtifactRef] = []
 
         # History event tracking for connect(). Live events arrive through callbacks.
-        self._history_events: List[TaskEvent] = []
+        self._history_event_entries: List[TaskEventEntry] = []
         self._history_timetokens: set = set()
 
         # Waiters for stream discovery
@@ -248,7 +257,9 @@ class TaskSession:
             self._artifacts.extend(preloaded_artifacts)
         if preloaded_events:
             for raw in preloaded_events:
-                self._history_events.append(TaskEvent(raw))
+                self._history_event_entries.append(TaskEventEntry(TaskEvent(raw)))
+        if preloaded_event_entries:
+            self._history_event_entries.extend(preloaded_event_entries)
 
         if pre_closed_state is not None:
             # Pre-closed session: no subscription, already terminal
@@ -828,7 +839,11 @@ class TaskSession:
 
     def list_events(self) -> List[TaskEvent]:
         """Return all history events from connect() in arrival order."""
-        return list(self._history_events)
+        return [entry.event for entry in self._history_event_entries]
+
+    def list_event_entries(self) -> List[TaskEventEntry]:
+        """Return history events with their publish timetokens in arrival order."""
+        return list(self._history_event_entries)
 
     def _append_history_event(self, raw: Dict[str, Any], timetoken: Optional[str] = None) -> None:
         """Called by connect() to append buffer-drain events to the history snapshot."""
@@ -836,7 +851,7 @@ class TaskSession:
             if timetoken in self._history_timetokens:
                 return
             self._history_timetokens.add(timetoken)
-        self._history_events.append(TaskEvent(raw))
+        self._history_event_entries.append(TaskEventEntry(TaskEvent(raw), timetoken))
 
     def wait_for_stream(
         self,

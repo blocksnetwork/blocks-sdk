@@ -21,19 +21,25 @@ from __future__ import annotations
 import logging
 import math
 import os
+import random
 import re
 import sys
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Literal, Optional, Set
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, TypeVar
 
 import os as _os_top
 
 logger = logging.getLogger(__name__)
 
 from .agent_auth import AgentAuth, AgentAuthFatalError
+from ._rate_limit import RateLimitedError
+from ._session.provider_api import ProviderSessionApi, agent_auth_request
+from ._session.provider_route import SessionProviderRuntime
+from ._session.provider_transport import PubNubRouteClient
+from ._session.provider_types import SessionHandlers
 from .auth_provider import StaticAuthProvider
 from .artifacts import build_artifact_ref, should_inline_artifact
 from .protocol_version import (
@@ -104,6 +110,46 @@ def _exit_if_fatal_auth_error(err: BaseException, context: str) -> bool:
     )
     sys.stderr.flush()
     os._exit(1)
+
+
+_T = TypeVar("_T")
+
+_CONNECT_RATE_LIMITED_MIN_S = 30.0
+_CONNECT_RATE_LIMITED_MAX_S = 600.0
+# A zero or past Retry-After must not turn the connect retry into a busy loop.
+_CONNECT_RATE_LIMITED_FLOOR_S = 1.0
+_CONNECT_RETRY_JITTER = 0.1
+
+
+def _rate_limited_connect_delay(err: RateLimitedError, attempt: int) -> float:
+    """Wait before connect attempt ``attempt + 1``: the backend's Retry-After when it gave
+    one, else 30 s doubling to 10 min, plus up to 10% jitter."""
+    if err.retry_after is not None:
+        base = max(err.retry_after, _CONNECT_RATE_LIMITED_FLOOR_S)
+    else:
+        base = min(_CONNECT_RATE_LIMITED_MIN_S * (2 ** min(attempt, 16)), _CONNECT_RATE_LIMITED_MAX_S)
+    return base * (1 + random.random() * _CONNECT_RETRY_JITTER)
+
+
+def _connect_while_rate_limited(
+    connect: Callable[[], _T], stop_event: threading.Event
+) -> Optional[_T]:
+    """Call ``connect`` until it is not rate limited; ``None`` if the instance stops first."""
+    attempt = 0
+    while True:
+        try:
+            return connect()
+        except RateLimitedError as err:
+            delay = _rate_limited_connect_delay(err, attempt)
+            attempt += 1
+            log_agent_instance_event(
+                "warn",
+                f"Agent connect rate limited; retrying in {delay:.1f}s: {err}",
+                event="agent_connect_rate_limited",
+                retryInS=round(delay, 1),
+            )
+            if stop_event.wait(delay):
+                return None
 
 
 def _extract_owner_id(
@@ -373,6 +419,80 @@ def _make_pubnub_retry_logger(instance_id: str):
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
+
+
+_SESSION_MANIFEST_TYPE = "SessionManifest"
+
+
+def _keyset_of(pubnub: Any) -> CdmKeyset:
+    """The keys an injected PubNub client was configured with, empty when it exposes none."""
+    config = getattr(pubnub, "config", None)
+    publish_key = getattr(config, "publish_key", None)
+    subscribe_key = getattr(config, "subscribe_key", None)
+    return CdmKeyset(
+        publish_key=publish_key if isinstance(publish_key, str) else "",
+        subscribe_key=subscribe_key if isinstance(subscribe_key, str) else "",
+    )
+
+
+def _build_session_provider(
+    options: AgentInstanceOptions,
+    *,
+    agent_auth: Optional[AgentAuth],
+    base_url: str,
+    instance_id: str,
+    concurrency: int,
+    keyset: Callable[[], CdmKeyset],
+) -> Optional[SessionProviderRuntime]:
+    """The session provider for an instance with ``on_exchange`` set, else ``None``."""
+    if options.on_exchange is None:
+        return None
+    if agent_auth is None or not base_url:
+        log_agent_instance_event(
+            "warn",
+            "on_exchange is set but agent auth is unavailable (no base_url); serving tasks only",
+            event="session_provider_unavailable",
+        )
+        return None
+    keys = keyset()
+    if not keys.subscribe_key or not keys.publish_key:
+        log_agent_instance_event(
+            "warn",
+            "on_exchange is set but no PubNub keys are known for the route; serving tasks only",
+            event="session_provider_unavailable",
+        )
+        return None
+    authenticated = agent_auth_request(agent_auth)
+
+    def request(method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
+        try:
+            return authenticated(method, url, body)
+        except Exception as exc:
+            _exit_if_fatal_auth_error(exc, "session-route")
+            raise
+
+    def create_client(user_id: str) -> PubNubRouteClient:
+        ks = keyset()
+        return PubNubRouteClient(
+            create_pubnub_client(
+                user_id=user_id,
+                publish_key=ks.publish_key,
+                subscribe_key=ks.subscribe_key,
+                subscribe_retry_unbounded=True,
+            )
+        )
+
+    return SessionProviderRuntime(
+        api=ProviderSessionApi(base_url, request),
+        instance_id=instance_id,
+        max_sessions=options.max_sessions if options.max_sessions is not None else concurrency,
+        handlers=SessionHandlers(
+            on_exchange=options.on_exchange,
+            on_session_open=options.on_session_open,
+            on_session_close=options.on_session_close,
+        ),
+        create_client=create_client,
+    )
 
 
 def start_agent_instance(
@@ -1600,6 +1720,8 @@ def start_agent_instance(
             cancel_event=cancel_evt,
             task_client=task_client,
             _expired_tasks=expired_tasks,
+            _agent_auth=_task_agent_auth,
+            _base_url=_task_base_url,
         )
 
         # Execute the user-supplied handler
@@ -1851,6 +1973,11 @@ def start_agent_instance(
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         nonlocal active_thread_count
+
+        if msg_dict.get("type") == _SESSION_MANIFEST_TYPE:
+            if session_provider is not None:
+                session_provider.accept_manifest(msg_dict)
+            return
 
         # Handle environment switch (not a standard control message)
         if msg_dict.get("type") == "SwitchEnvironment":
@@ -2246,6 +2373,33 @@ def start_agent_instance(
                     taskId=msg.task_id,
                 )
 
+    # -- Session provider ---------------------------------------------------
+    session_provider: Optional[SessionProviderRuntime] = None
+    session_provider_lock = threading.Lock()
+    stopped = False
+
+    def _start_session_provider() -> None:
+        nonlocal session_provider
+        runtime = _build_session_provider(
+            options,
+            agent_auth=agent_auth,
+            base_url=base_url_for_auth,
+            instance_id=instance_id,
+            concurrency=concurrency,
+            keyset=lambda: (
+                _keyset_of(options.pubnub)
+                if options.pubnub is not None
+                else env_keysets[active_env]
+            ),
+        )
+        if runtime is None:
+            return
+        with session_provider_lock:
+            if stopped:
+                return
+            session_provider = runtime
+        runtime.start()
+
     # -- PubNub listener ----------------------------------------------------
 
     listener: Any = None
@@ -2372,7 +2526,11 @@ def start_agent_instance(
                 base_url=options.base_url or (cdm_config.api.base_url if cdm_config else None),
                 agent_auth=agent_auth,
             )
-            result = _connect_fn(agent_name, connect_options)
+            result = _connect_while_rate_limited(
+                lambda: _connect_fn(agent_name, connect_options), connect_stop
+            )
+            if result is None:
+                return
             if not result.control_channel:
                 raise RuntimeError("Connect response missing controlChannel — server may be outdated")
             control_channel = result.control_channel
@@ -2421,7 +2579,10 @@ def start_agent_instance(
             if control_channel:
                 control_client.subscribe().channels([control_channel]).execute()
             update_presence_state()
+        if control_channel:
+            _start_session_provider()
 
+    connect_stop = threading.Event()
     reg_thread = threading.Thread(target=_connect_then_subscribe, daemon=True)
     reg_thread.start()
 
@@ -2438,6 +2599,13 @@ def start_agent_instance(
 
     def stop() -> None:
         """Shut down the agent instance."""
+        nonlocal stopped
+        connect_stop.set()
+        with session_provider_lock:
+            stopped = True
+            provider = session_provider
+        if provider is not None:
+            provider.stop()
         try:
             if consumer_auth:
                 consumer_auth.destroy()

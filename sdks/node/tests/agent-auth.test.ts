@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AgentAuth, AgentAuthFatalError } from '../src/runtime/agent-auth.js';
+import { RateLimitedError } from '../src/runtime/rate-limit.js';
 import type { RegistrationPayload } from '../src/runtime/agent-auth.js';
 
 const TEST_BASE_URL = 'http://localhost:3001';
@@ -11,6 +12,15 @@ const TEST_REGISTRATION_PAYLOAD: RegistrationPayload = {
   deviceOs: 'linux',
   sdkLanguage: 'Node',
 };
+
+function rateLimitedResponse(retryAfterSeconds: number) {
+  return {
+    ok: false,
+    status: 429,
+    headers: new Headers({ 'Retry-After': String(retryAfterSeconds) }),
+    json: async () => ({ error: 'Too many requests', code: 'RATE_LIMITED' }),
+  };
+}
 
 /** Helper to build a registration response with agent data + tokens */
 function registrationResponse(overrides?: Record<string, unknown>) {
@@ -126,6 +136,17 @@ describe('AgentAuth', () => {
         expect(e).not.toBeInstanceOf(AgentAuthFatalError);
         expect((e as Error).message).toContain('Agent registration failed');
       }
+    });
+
+    it('throws a retryable RateLimitedError carrying the Retry-After on a 429', async () => {
+      fetchSpy.mockResolvedValueOnce(rateLimitedResponse(30));
+
+      const auth = new AgentAuth(TEST_API_KEY, TEST_BASE_URL);
+      const err = await auth.init(TEST_REGISTRATION_PAYLOAD).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(RateLimitedError);
+      expect(err).not.toBeInstanceOf(AgentAuthFatalError);
+      expect((err as RateLimitedError).retryAfterMs).toBe(30_000);
     });
 
     it('throws AgentAuthFatalError with a forced-offline message on AGENT_FORCED_OFFLINE', async () => {
@@ -337,6 +358,39 @@ describe('AgentAuth', () => {
       });
 
       await expect(auth.refresh()).rejects.toThrow(AgentAuthFatalError);
+    });
+
+    it('on a 429, makes no request until the Retry-After has elapsed', async () => {
+      vi.useFakeTimers();
+      try {
+        fetchSpy.mockResolvedValueOnce({ ok: true, json: async () => registrationResponse() });
+        const auth = new AgentAuth(TEST_API_KEY, TEST_BASE_URL);
+        await auth.init(TEST_REGISTRATION_PAYLOAD);
+
+        fetchSpy.mockResolvedValueOnce(rateLimitedResponse(60));
+        await expect(auth.refresh()).rejects.toBeInstanceOf(RateLimitedError);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+        // A 401 retry inside the window fails fast with the remaining wait.
+        vi.advanceTimersByTime(59_000);
+        fetchSpy.mockResolvedValueOnce({ ok: false, status: 401 });
+        const held = await auth.authenticatedFetch('http://localhost:3001/api/x').catch((e) => e);
+        expect(held).toBeInstanceOf(RateLimitedError);
+        expect((held as RateLimitedError).retryAfterMs).toBe(1_000);
+        expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+        vi.advanceTimersByTime(1_000);
+        fetchSpy.mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ accessToken: 'jwt-token-2', refreshToken: 'rt-token-2' }),
+        });
+        await auth.refresh();
+        expect(fetchSpy).toHaveBeenCalledTimes(4);
+        expect(fetchSpy.mock.calls[3][0]).toBe(`${TEST_BASE_URL}/api/v1/auth/agent/refresh`);
+        expect(auth.getAccessToken()).toBe('jwt-token-2');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('concurrent refresh calls share the same promise (mutex)', async () => {

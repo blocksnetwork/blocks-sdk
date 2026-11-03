@@ -1,0 +1,398 @@
+{
+  "cases": [
+    {
+      "id": "consumer.seq.duplicate",
+      "summary": "a repeated (publisher, seq) is dropped, so progress fires once",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "working"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "working"
+          },
+          "expect": "drop"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 2,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "completed"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "progress": [
+          {
+            "exchangeId": "ex-1",
+            "message": "working"
+          }
+        ],
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "completed",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "provider.seq.duplicate",
+      "summary": "a repeated exchange publish starts the handler once",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "consumer",
+          "message": {
+            "type": "exchange",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "requestParts": [
+              {
+                "type": "text",
+                "text": "hello",
+                "partId": "text"
+              }
+            ]
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "consumer",
+          "message": {
+            "type": "exchange",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "requestParts": [
+              {
+                "type": "text",
+                "text": "hello",
+                "partId": "text"
+              }
+            ]
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "exchangesStarted": [
+          "ex-1"
+        ]
+      }
+    },
+    {
+      "id": "consumer.seq.gap_persists",
+      "summary": "a seq gap still open after 750 ms triggers recover() once; a seq history cannot supply is skipped and the held message is delivered",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "one"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 3,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "three"
+          }
+        },
+        {
+          "advanceMs": 751
+        }
+      ],
+      "expect": {
+        "recoverCalls": 1,
+        "progress": [
+          {
+            "exchangeId": "ex-1",
+            "message": "one"
+          },
+          {
+            "exchangeId": "ex-1",
+            "message": "three"
+          }
+        ]
+      }
+    },
+    {
+      "id": "consumer.seq.gap_filled",
+      "summary": "a gap filled inside the 750 ms window triggers no recovery, and the held message is delivered after the one that filled it",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "one"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 3,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "three"
+          }
+        },
+        {
+          "advanceMs": 500
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_progress",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 2,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "message": "two"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "advanceMs": 500
+        }
+      ],
+      "expect": {
+        "recoverCalls": 0,
+        "progress": [
+          {
+            "exchangeId": "ex-1",
+            "message": "one"
+          },
+          {
+            "exchangeId": "ex-1",
+            "message": "two"
+          },
+          {
+            "exchangeId": "ex-1",
+            "message": "three"
+          }
+        ]
+      }
+    },
+    {
+      "id": "provider.seq.gap_continues",
+      "summary": "the provider logs a seq gap and keeps processing",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "consumer",
+          "message": {
+            "type": "exchange",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "requestParts": [
+              {
+                "type": "text",
+                "text": "hello",
+                "partId": "text"
+              }
+            ]
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "consumer",
+          "message": {
+            "type": "exchange",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 3,
+            "ts": 1760000000000,
+            "exchangeId": "ex-2",
+            "requestParts": [
+              {
+                "type": "text",
+                "text": "hello",
+                "partId": "text"
+              }
+            ]
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "exchangesStarted": [
+          "ex-1",
+          "ex-2"
+        ],
+        "gapDetected": true
+      }
+    },
+    {
+      "id": "consumer.seq.backend_notice_not_deduped",
+      "summary": "backend notices all carry seq 0, so a second one passes dedup and the terminal rule absorbs it",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "error": "route_lost"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "error": "route_lost"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "failed",
+        "stateChanges": [
+          "failed"
+        ],
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "failed",
+            "error": "route_lost",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "provider.seq.backend_notice_not_deduped",
+      "summary": "backend notices all carry seq 0, so a second one reaches the provider and the terminal rule absorbs it",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "error": "route_lost"
+          },
+          "expect": "dispatch"
+        },
+        {
+          "from": "backend",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "error": "route_lost"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "failed"
+      }
+    }
+  ]
+}

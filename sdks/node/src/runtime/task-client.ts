@@ -14,7 +14,7 @@ import { buildPubNubClientDefaults } from './pubnub-client.js';
 import { callRpc, type RpcClientConfig } from './rpc-client.js';
 import { taskChannel } from './channel-manager.js';
 import { TaskSession, type CallbackErrorContext } from './task-session.js';
-import type { TaskEvent as SessionTaskEvent } from './task-session.js';
+import type { TaskEvent as SessionTaskEvent, TaskEventEntry } from './task-session.js';
 import { TerminalDeliveryTracker } from './terminal-delivery-tracker.js';
 import type { AgentAuth } from './agent-auth.js';
 import type { AuthProvider } from './auth-provider.js';
@@ -23,9 +23,8 @@ import { ConsumerAuth, type TokenResult, type TokenEndpointConfig } from './cons
 import { shouldInlineArtifact, buildArtifactRef, type ArtifactRef } from './artifacts.js';
 import { uploadFile, type FileUploadAuth, type ConsumerUploadParams } from './file-upload.js';
 import { normalizeFileInput } from './file-input.js';
-import { fetchCdmConfig } from './cdm-config.js';
+import { assertBillingMode, resolveConsumerEndpoints } from './consumer-endpoints.js';
 import { captureAffinity, injectAffinity } from './write-affinity.js';
-import { getEnv } from '../env.js';
 import { log as baseLog } from './logger.js';
 import { StreamRef } from './stream-ref.js';
 import {
@@ -283,7 +282,7 @@ function parseHistoryMessages(
 ): {
   streams: Map<string, StreamRef>;
   artifacts: ArtifactRef[];
-  events: SessionTaskEvent[];
+  events: TaskEventEntry[];
   highWaterMark: string;
   /**
    * Terminal state extracted from the most recent `terminal` event in
@@ -298,7 +297,7 @@ function parseHistoryMessages(
 } {
   const streams = new Map<string, StreamRef>();
   const artifacts: ArtifactRef[] = [];
-  const events: SessionTaskEvent[] = [];
+  const events: TaskEventEntry[] = [];
   let highWaterMark = '0';
   let terminalState: 'completed' | 'failed' | 'canceled' | undefined;
   let terminalTimetoken = '0';
@@ -311,7 +310,13 @@ function parseHistoryMessages(
     const event = msg.message as Record<string, unknown> | undefined;
     if (!event || typeof event !== 'object' || !event.type) continue;
 
-    events.push(event as SessionTaskEvent);
+    const rawTimetoken: unknown = msg.timetoken;
+    events.push({
+      event: event as SessionTaskEvent,
+      timetoken: typeof rawTimetoken === 'number' && !Number.isSafeInteger(rawTimetoken)
+        ? undefined
+        : String(rawTimetoken),
+    });
 
     // Extract terminal state from terminal events. Take the latest one by
     // timetoken in case history contains retries or duplicates.
@@ -529,17 +534,7 @@ export class TaskClient {
   }): Promise<TaskClient> {
     const opts = options ?? {};
     const billingMode = opts.billingMode;
-    // Strict equality, not truthiness. The keyset selection at line 454 uses
-    // `billingMode === 'paid' ? cdm.network : cdm.playground`, so any
-    // non-'paid' truthy value (typo, wrong case, whitespace) silently routes
-    // to the playground keyset. JS callers and stale TS callers can pass
-    // anything truthy; reject early to match the constructor's check at
-    // `:382` and the Python SDK's validator.
-    if (billingMode !== 'free' && billingMode !== 'paid') {
-      throw new Error(
-        "TaskClient.create() requires a billingMode option ('free' or 'paid')",
-      );
-    }
+    assertBillingMode(billingMode, 'TaskClient.create()');
 
     // Mutual exclusion validation. `anonFingerprint` is a fourth mode
     // alongside `apiKey` / `tokenEndpoint` / `tokenProvider` -- all four
@@ -565,28 +560,10 @@ export class TaskClient {
       );
     }
 
-    // Fetch CDM config
-    const cdmUrl = opts.cdmUrl ?? getEnv('BLOCKS_CDM_URL');
-    const cdm = await fetchCdmConfig(cdmUrl);
-
-    // Map billingMode to keyset
-    const keyset = billingMode === 'paid' ? cdm.network : cdm.playground;
-
-    // Resolve config: explicit > BLOCKS_* env > CDM
-    const subscribeKey = opts.subscribeKey ?? getEnv('BLOCKS_SUBSCRIBE_KEY') ?? keyset.subscribeKey;
-    const publishKey = opts.publishKey ?? getEnv('BLOCKS_PUBLISH_KEY') ?? keyset.publishKey;
-    const baseUrl = opts.baseUrl ?? getEnv('BLOCKS_BACKEND_URL') ?? cdm.api.baseUrl;
-
-    if (!subscribeKey) {
-      throw new Error('TaskClient.create() could not resolve subscribeKey from options, env, or CDM');
-    }
-
-    if (!baseUrl) {
-      throw new Error(
-        'TaskClient.create() could not resolve baseUrl. Set baseUrl option, ' +
-        'BLOCKS_BACKEND_URL env var, or ensure CDM config has api.baseUrl.',
-      );
-    }
+    const { subscribeKey, publishKey, baseUrl } = await resolveConsumerEndpoints(
+      opts,
+      'TaskClient.create()',
+    );
 
     const sessionPubNubFactory = () => {
       const sessionId = `blocks-task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1442,7 +1419,7 @@ export class TaskClient {
       const fetcher = asPubNubFetcher(sessionPubnub);
       let preloadedStreams = new Map<string, StreamRef>();
       let preloadedArtifacts: ArtifactRef[] = [];
-      let preloadedEvents: SessionTaskEvent[] = [];
+      let preloadedEventEntries: TaskEventEntry[] = [];
       let highWaterMark = '0';
       let historyTerminalState: string | undefined;
 
@@ -1451,7 +1428,7 @@ export class TaskClient {
         const parsed = parseHistoryMessages(messages, taskId, agentName, sdkOptions);
         preloadedStreams = parsed.streams;
         preloadedArtifacts = parsed.artifacts;
-        preloadedEvents = parsed.events;
+        preloadedEventEntries = parsed.events;
         highWaterMark = parsed.highWaterMark;
         historyTerminalState = parsed.terminalState;
       }
@@ -1484,7 +1461,7 @@ export class TaskClient {
           skipSubscription: true,
           preloadedStreams,
           preloadedArtifacts,
-          preloadedEvents,
+          preloadedEventEntries,
         });
       }
 
@@ -1537,7 +1514,7 @@ export class TaskClient {
         state: taskState,
         preloadedStreams,
         preloadedArtifacts,
-        preloadedEvents,
+        preloadedEventEntries,
         externalSubscription: {
           listener,
           channel,

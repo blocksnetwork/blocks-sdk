@@ -489,13 +489,14 @@ def connect_agent(
     payload = {k: v for k, v in payload.items() if v is not None}
 
     def _do_auth_register() -> None:
+        from ._rate_limit import RateLimitedError
         from .agent_auth import AgentAuthFatalError
 
         try:
             resp_data = agent_auth.init(registration_payload=payload)
             if isinstance(resp_data, dict):
                 result_holder.update(resp_data)
-        except AgentAuthFatalError:
+        except (AgentAuthFatalError, RateLimitedError):
             raise
         except Exception as exc:
             raise RuntimeError(f"[AgentRegistry] Registration failed: {exc}") from exc

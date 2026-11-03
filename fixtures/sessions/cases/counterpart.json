@@ -1,0 +1,288 @@
+{
+  "cases": [
+    {
+      "id": "consumer.counterpart.stranger_ready",
+      "summary": "session_ready from a non-counterpart publisher changes no state",
+      "receiver": "consumer",
+      "given": {
+        "state": "open",
+        "pendingExchanges": []
+      },
+      "steps": [
+        {
+          "from": "stranger",
+          "message": {
+            "type": "session_ready",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "open",
+        "stateChanges": []
+      }
+    },
+    {
+      "id": "consumer.counterpart.stranger_outcome",
+      "summary": "a non-counterpart outcome neither settles the exchange nor consumes the provider's seq",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "stranger",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "failed",
+            "error": "handler_error"
+          },
+          "expect": "drop"
+        },
+        {
+          "from": "provider",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "completed"
+          },
+          "expect": "dispatch"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "outcomes": [
+          {
+            "exchangeId": "ex-1",
+            "state": "completed",
+            "artifacts": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "consumer.counterpart.backend_outcome",
+      "summary": "the backend UUID is accepted for session_closed and session_failed only",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "exchange_outcome",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "state": "completed"
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "outcomes": []
+      }
+    },
+    {
+      "id": "consumer.counterpart.own_echo",
+      "summary": "the consumer's own UUID is not a counterpart, even for a terminal type",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": []
+      },
+      "steps": [
+        {
+          "from": "consumer",
+          "message": {
+            "type": "session_failed",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "error": "provider_error"
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "stateChanges": []
+      }
+    },
+    {
+      "id": "consumer.counterpart.backend_probe",
+      "summary": "a route_probe reaching a consumer is not a session message and is dropped",
+      "receiver": "consumer",
+      "given": {
+        "state": "ready",
+        "pendingExchanges": [
+          "ex-1"
+        ]
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "route_probe",
+            "protocolVersion": "2026-05-01",
+            "nonce": "n-1"
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "stateChanges": [],
+        "outcomes": []
+      }
+    },
+    {
+      "id": "provider.counterpart.stranger_open",
+      "summary": "session_open from a publisher other than the manifest consumer is dropped",
+      "receiver": "provider",
+      "given": {
+        "state": "open"
+      },
+      "steps": [
+        {
+          "from": "stranger",
+          "message": {
+            "type": "session_open",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchange": {
+              "exchangeId": "ex-1",
+              "requestParts": [
+                {
+                  "type": "text",
+                  "text": "hello",
+                  "partId": "text"
+                }
+              ]
+            }
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "open",
+        "exchangesStarted": []
+      }
+    },
+    {
+      "id": "provider.counterpart.stranger_exchange",
+      "summary": "an exchange from a non-counterpart publisher never reaches the handler",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "stranger",
+          "message": {
+            "type": "exchange",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 1,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "requestParts": [
+              {
+                "type": "text",
+                "text": "hello",
+                "partId": "text"
+              }
+            ]
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "exchangesStarted": []
+      }
+    },
+    {
+      "id": "provider.counterpart.backend_exchange",
+      "summary": "the backend UUID may not send an exchange",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "backend",
+          "message": {
+            "type": "exchange",
+            "protocolVersion": "2026-05-01",
+            "sessionId": "s-fixture-1",
+            "seq": 0,
+            "ts": 1760000000000,
+            "exchangeId": "ex-1",
+            "requestParts": [
+              {
+                "type": "text",
+                "text": "hello",
+                "partId": "text"
+              }
+            ]
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "exchangesStarted": []
+      }
+    },
+    {
+      "id": "provider.counterpart.consumer_probe",
+      "summary": "a route_probe from the consumer UUID is dropped and never echoed",
+      "receiver": "provider",
+      "given": {
+        "state": "ready"
+      },
+      "steps": [
+        {
+          "from": "consumer",
+          "message": {
+            "type": "route_probe",
+            "protocolVersion": "2026-05-01",
+            "nonce": "n-forged"
+          },
+          "expect": "drop"
+        }
+      ],
+      "expect": {
+        "state": "ready",
+        "probeEchoes": []
+      }
+    }
+  ]
+}

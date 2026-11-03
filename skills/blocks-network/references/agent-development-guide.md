@@ -287,8 +287,10 @@ replay events are minimal synthetic artifact events with `type`, `taskId`, and
 `artifactRef`; original history-only wire fields such as `outputId` and
 `protocolVersion` are not retained.
 For full timeline reconstruction after reconnecting, use
-`session.listEvents()` / `session.list_events()` to read all valid task events
-parsed from history.
+`session.listEventEntries()` / `session.list_event_entries()` to read all valid
+task events paired with their publish timetokens. The Node and Python references
+show timestamp conversion. `listEvents()` / `list_events()` remain available for
+payload-only history.
 
 ---
 
@@ -435,6 +437,7 @@ my-agent/
 | `runtime.handlerExport` | string | No | Named export (default: `"default"`) |
 | `runtime.concurrency` | number | No | Max concurrent tasks (default: 1, 0 = unlimited) |
 | `runtime.expectedInstances` | number | No | Instance count (default: 1, 0 = broadcast) |
+| `connections` | array | No | `{ integration, scopes, required }` services the agent calls as the task's user (see the language references) |
 
 ### Streaming Capabilities
 
@@ -533,11 +536,34 @@ interface TaskContext {
     data: Buffer | string,
     options?: { mimeType?: string; fileName?: string; outputId?: string },
   ) => Promise<void>;
+  connections: ConnectionsClient; // getToken(integration, { forceRefresh? })
 }
 ```
 
 Always use optional chaining (`ctx?.reportStatus()`) since ctx may be
 undefined in testing.
+
+### Status messages
+
+Report progress at meaningful steps and before work that may take a while. Write a short, user-facing message in the present progressive, with the specific work underway. For example, `Fetching 3 quotes` tells the user more than `Working...`. The SDK throttles status publishes to at most once per second, so do not call the status callback for each token. Use a stream for token-by-token output. Keep secrets, raw stack traces, and personally identifiable information out of status text.
+
+Good and bad examples:
+
+```typescript
+// Good: names the work underway.
+ctx?.reportStatus('Fetching 3 quotes');
+
+// Bad: vague, and not a useful progress update.
+ctx?.reportStatus('Working...');
+```
+
+```python
+# Good: names the work underway.
+ctx.report_status("Fetching 3 quotes")
+
+# Bad: vague, and not a useful progress update.
+ctx.report_status("Working...")
+```
 
 ### HandlerResult
 
@@ -571,7 +597,7 @@ export default async function handler(
   task: StartTaskMessage, ctx?: TaskContext,
 ): Promise<HandlerResult> {
   const text = task.requestParts?.[0]?.text ?? '';
-  ctx?.reportStatus('Processing...');
+  ctx?.reportStatus('Converting input to uppercase');
   return { artifacts: [{ data: text.toUpperCase(), mimeType: 'text/plain' }] };
 }
 ```
@@ -588,7 +614,7 @@ export default async function handler(
   // createStream() throws when the consumer didn't opt in.
   // Degrade to an artifact-only response in that case.
   if (ctx?.hasStream) {
-    ctx.reportStatus('Streaming...');
+    ctx.reportStatus('Streaming the response');
     const stream = await ctx.createStream({
       bundleSizeBytes: 2048,
       maxLatencyMs: 50,
@@ -621,7 +647,7 @@ export default async function handler(
 ): Promise<HandlerResult> {
   if (!ctx) throw new Error('TaskContext required for agent-to-agent calls');
   const text = task.requestParts?.[0]?.text ?? '';
-  ctx.reportStatus(`Delegating to ${SUB_AGENT}...`);
+  ctx.reportStatus(`Delegating work to ${SUB_AGENT}`);
 
   const summary = await callSubAgent(ctx, task.ownerId, text);
   return { artifacts: [{ data: JSON.stringify({ summary }), mimeType: 'application/json' }] };

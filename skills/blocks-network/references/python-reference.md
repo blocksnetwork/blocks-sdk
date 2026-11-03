@@ -35,7 +35,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     text = (parts[0].text or "") if parts else ""
 
     if ctx:
-        ctx.report_status("Processing...")
+        ctx.report_status("Processing the input text")
 
     return {"artifacts": [{"data": f"Processed: {text}", "mimeType": "text/plain"}]}
 ```
@@ -61,6 +61,7 @@ The `ctx` parameter provides handler APIs:
 - `ctx.cancel_event` -- `threading.Event`, set on cancellation
 - `ctx.is_cancelled` -- property: `True` if task was cancelled
 - `ctx.is_expired` -- property: `True` if task duration expired
+- `ctx.connections.get_token(integration, *, force_refresh=None)` -- the task user's access token for another service (see Acting as the User)
 
 ---
 
@@ -137,7 +138,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     # Guard on has_stream — request-task streaming is consumer opt-in, so
     # create_stream() raises when the consumer didn't opt in.
     if ctx and ctx.has_stream:
-        ctx.report_status("Streaming...")
+        ctx.report_status("Streaming the response")
         stream = ctx.create_stream(
             bundle_size_bytes=2048,
             max_latency_ms=50,
@@ -176,7 +177,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
         raise RuntimeError("TaskContext with task_client required for agent-to-agent calls")
     parts = task.request_parts or []
     text = (parts[0].text or "") if parts else ""
-    ctx.report_status(f"Delegating to {SUB_AGENT}...")
+    ctx.report_status(f"Delegating work to {SUB_AGENT}")
 
     summary = call_sub_agent(ctx, task.owner_id, text)
     return {"artifacts": [{"data": json.dumps({"summary": summary}), "mimeType": "application/json"}]}
@@ -218,13 +219,67 @@ def call_sub_agent(ctx: TaskContext, owner_id: str, text: str) -> Optional[Any]:
 
 ---
 
+## Acting as the User (Integration Connections)
+
+To call another service as the user who sent the task, declare it in the card's `connections` (see the Node reference for the card snippet) and ask for a token during the task. Blocks holds the user's refresh token; the handler gets a short-lived access token for this task only. The `integration` name must be one an org admin of the agent's own organization created under **Manage → Integrations**.
+
+```python
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, Optional
+
+from blocks_network.types import StartTaskMessage, TaskContext
+
+INTEGRATION = "salesforce"
+
+
+def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[str, Any]:
+    if ctx is None:
+        raise RuntimeError("TaskContext required for integration connections")
+    ctx.report_status("Fetching your recent Salesforce accounts")
+    token = ctx.connections.get_token(INTEGRATION)  # synchronous
+    query = urllib.parse.quote("SELECT Name FROM Account LIMIT 5")
+    path = f"/services/data/v62.0/query?q={query}"
+
+    def get(tok) -> Dict[str, Any]:
+        url = f"{tok.extra['instance_url']}{path}"  # Salesforce: the user's org API host
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok.access_token}"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.load(resp)
+
+    try:
+        data = get(token)
+    except urllib.error.HTTPError as err:
+        if err.code != 401:
+            raise
+        data = get(ctx.connections.get_token(INTEGRATION, force_refresh=True))  # once
+    return {"artifacts": [{"data": json.dumps(data), "mimeType": "application/json"}]}
+```
+
+- `get_token(integration, *, force_refresh=None)` returns `ConnectionToken(access_token, token_type, expires_at, scopes, extra)`. `extra` carries provider fields such as Salesforce's `instance_url`; it is `{}` otherwise.
+- The token belongs to this task: Blocks issues one only while the task is queued or running. Do not log, store or reuse a token after the task.
+- On a `401` from the service, call `get_token(name, force_refresh=True)` once and retry.
+- `ConnectionRequiredError` (`integration`, `reason`, `connect_url`) means the user must connect or approve at `connect_url`; `ConnectionAccessError` (`status`, `code`) is any other failure. Both are importable from `blocks_network`.
+- With `required: true` (the default), Blocks refuses the task until the user has connected and approved this agent; a Python caller sees `AuthRequiredError`, a subclass of `RpcError`, carrying `integration`, `reason` and `connect_url`, the link to open. With `required: false`, the handler must handle `ConnectionRequiredError`.
+- Integration connections work only where the deployment has them turned on. Elsewhere `get_token` raises `ConnectionAccessError` with status `404`, and a card with a required connection makes every task fail with `ConnectionsUnavailable`.
+
+---
+
+## Sessions (preview, not yet available)
+
+Sessions -- one durable interaction of many exchanges, replacing one task per turn -- are not yet available. The consumer surface (a new `BlocksClient` with `call`, `open_session`, `send`) and provider handlers (`on_session_open`, `on_exchange`, `on_session_close`) are defined in the SDK contract but not shipped. Do not generate code that uses them; use `TaskClient` and task handlers. `TaskClient` will become a deprecated subclass of `BlocksClient`, so task code keeps working.
+
+---
+
 ## TaskClient & TaskSession
 
 **send_message(\*, agent_name, request_parts, ...)** -- all keyword-only. `owner_id` is auto-populated from auth (optional override). Optional: `idempotency_key`, `task_kind` (`"request"`|`"pipe"`), `duration`, `consumer_public_key`, `stream` (request-task streaming opt-in — `True` requests streaming, `False` suppresses it; omitted uses the server default, now no-streaming, so pass `True` to stream; ignored for pipe; resolved `has_stream` still requires agent capability), `push_notification_config`, `retry_policy`, `auto_drain`, `drain_window_s` (default 30.0; overrides the per-session auto-drain window for already-open streams). Returns `TaskSession`.
 
 **TaskClient.connect(task_id, auto_drain=True, drain_window_s=None, role="consumer")** -- returns a `TaskSession`. `drain_window_s` mirrors `send_message` so reconnecting consumers can tune the drain window for streams they open via `open_all_streams()` / `on_stream`. `role` defaults to `"consumer"` (task submitter — server checks `user_id == task.owner_id` and that the caller still holds `agent:submit-task` in the task's billed org; embedded sessions, and a submitter with no membership in that org, are exempt from the permission check); set to `"provider"` when the caller is the agent owner viewing a received task. Embedded sessions and agent runtime credentials are refused the provider role, on their own agents too. Provider-role access follows the same rule as the Dashboard's received-tasks view: the agent's owner is always admitted. Otherwise the agent's org must match the active org resolved from the session `X-Active-Org` header or the credential's org claim, AND the caller must be a current member of that org; admins with an admin-typed active org get the cross-org bypass, and when no active org is resolved at all (legacy callers) the server falls back to admin-bypass / membership on the agent's org. For a private agent, membership alone is not enough: a non-admin must also hold an agent-management permission in the owning org and have been invited to the agent.
 
-**TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_cancel_requested(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_artifacts()`, `download_artifact(ref)` (returns `DownloadedArtifact` with `data: bytes`, `mime_type`, `file_name`; decode text with `downloaded.data.decode("utf-8")`, not `str(downloaded.data)`), `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `None` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
+**TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_cancel_requested(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_event_entries()` (the same events paired with publish timetokens), `list_artifacts()`, `download_artifact(ref)` (returns `DownloadedArtifact` with `data: bytes`, `mime_type`, `file_name`; decode text with `downloaded.data.decode("utf-8")`, not `str(downloaded.data)`), `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `None` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
 
 **At-most-once `on_terminal`.** `session.on_terminal`, `session.wait_for_terminal()`, `subscribe_to_task`'s `on_terminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner force-cancel + agent's delayed terminal).
 
@@ -244,18 +299,22 @@ def call_sub_agent(ctx: TaskContext, owner_id: str, text: str) -> Optional[Any]:
 
 **Stream consumer APIs:** `stream.bytes()` (decoded byte iterator), `stream.events()` (flattened event iterator), `stream.as_file()` (returns `BufferedReader`). Background helpers: `stream.consume_in_background(cb)`, `stream.write_periodic(interval, gen, stop?)`. All iterators deliver messages in sequence order via the SDK's reorder buffer. `ref.open(reorder_timeout_ms=)` configures the gap timeout (default 750ms; 0 disables reordering).
 
-**Stream error surfaces:** `StreamClient.on_error(cb)` subscribes to per-stream PubNub status errors (PAM revocation, network failures, malformed payloads). Callback receives a `StreamError` with `category`, `error`, `channel`, `timestamp`, `fatal`; `category` is one of the neutral values `"connected"`, `"reconnected"`, `"network_down"`, `"network_issues"`, `"timeout"`, `"malformed_response"`, `"access_denied"`, `"bad_request"`, `"other"`. Fatal categories that force-terminate the stream are `"access_denied"` and `"bad_request"`; on `fatal=True` the client auto-tears down and signals iterator completion, so handlers typically only react to non-fatal errors. Distinct from `TaskSession.on_error` (which surfaces consumer-callback exceptions, not stream-level failures). `StreamUnavailableError` (exported from `blocks_network`) is raised synchronously by `StreamRef.open()` when the owning session is already terminal; it carries `.terminal_state` and `.stream_id` so callers can branch on `isinstance(err, StreamUnavailableError)`.
+**Stream error surfaces:** `StreamClient.on_error(cb)` subscribes to per-stream PubNub status errors (PAM access denials, network failures, malformed payloads). Callback receives a `StreamError` with `category`, `error`, `channel`, `timestamp`, `fatal`; `category` is one of the neutral values `"connected"`, `"reconnected"`, `"network_down"`, `"network_issues"`, `"timeout"`, `"malformed_response"`, `"access_denied"`, `"bad_request"`, `"other"`. Fatal categories that force-terminate the stream are `"access_denied"` and `"bad_request"`; on `fatal=True` the client auto-tears down and signals iterator completion, so handlers typically only react to non-fatal errors. Distinct from `TaskSession.on_error` (which surfaces consumer-callback exceptions, not stream-level failures). `StreamUnavailableError` (exported from `blocks_network`) is raised synchronously by `StreamRef.open()` when the owning session is already terminal; it carries `.terminal_state` and `.stream_id` so callers can branch on `isinstance(err, StreamUnavailableError)`.
 
 **Exported exception types:** all subclass `Exception` and are importable from `blocks_network`.
 
 | Class | Raised by | Meaning |
 |---|---|---|
 | `RpcError` | any SDK call that contacts the backend | A non-2xx HTTP response from the Blocks REST API. Carries `status`, `code`, `details`. |
+| `AuthRequiredError` | `TaskClient.send_message` | The agent needs an integration connection the caller has not connected or approved; no task was created. Carries `integration`, `reason`, `connect_url`; open `connect_url` for the user, then retry. Subclasses `RpcError`. |
 | `BillingModeMismatchError` | `TaskClient.send_message`, `TaskClient.connect` | The `billing_mode` passed to `TaskClient.create()` does not match the target agent's registered mode. Carries `expected` / `got`. |
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminal_state` and `.stream_id`. |
 | `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`os._exit(1)` from the connect thread). Non-fatal connect failures (network, 5xx, `404 not-published`, and the `403 PermissionDenied` a public agent answers when the key owner may not run it) do not block startup: the process stays up without a control subscription until restarted with a credential that stands. |
+| `RateLimitedError` | `AgentAuth` connect/refresh, `ConsumerAuth` token calls | Retryable, never fatal — the API key is over its per-key rate limit (HTTP 429 `RATE_LIMITED`). `retry_after` is the backend's `Retry-After` in seconds. The SDK makes no API-key call until it passes, and the runtime retries a rate-limited connect on its own. A busy key is never reported as `API_KEY_INVALID`. |
 | `FileUploadError` | `presigned_upload_flow` | Presign rejection or object-storage upload failure. Carries the original cause. |
+| `ConnectionRequiredError` | `ctx.connections.get_token` | The task's user must connect or approve the integration. Carries `integration`, `reason`, `connect_url`. |
+| `ConnectionAccessError` | `ctx.connections.get_token` | Any other token failure (task ended, integration not declared or disabled, feature off). Carries `status`, `code`. |
 
 ---
 
@@ -330,7 +389,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     if ctx is None:
         raise ValueError("TaskContext required for pipe tasks")
 
-    ctx.report_status("Starting stream...")
+    ctx.report_status("Starting the data stream")
     stream = ctx.create_stream(
         declared_stream="data-stream",
         format="events",
@@ -350,7 +409,7 @@ def handler(task: StartTaskMessage, ctx: Optional[TaskContext] = None) -> Dict[s
     reason = ("duration_expired" if ctx.is_expired
               else "canceled" if ctx.is_cancelled
               else "stopped")
-    ctx.report_status(f"Stream ended: {reason}")
+    ctx.report_status("Preparing the final result")
 
     return {"artifacts": [{"data": json.dumps({"reason": reason}), "mimeType": "application/json"}]}
 ```
@@ -479,6 +538,7 @@ session = client.connect(task_id="task-abc-123")
 
 # For terminal tasks: history is preloaded, no live events
 events = session.list_events()
+entries = session.list_event_entries()  # List[TaskEventEntry]
 artifacts = session.list_artifacts()
 streams = session.list_streams()
 
@@ -489,6 +549,14 @@ session.on_stream(lambda ref: print("Stream:", ref))
 # Provider (agent owner) viewing a received task:
 provider_session = client.connect(task_id="task-abc-123", role="provider")
 ```
+
+`list_event_entries()` returns a shallow history-only snapshot of exported,
+frozen `TaskEventEntry` dataclasses with `event: TaskEvent` and
+`timetoken: Optional[str]`. The timetoken is the original PubNub decimal string,
+or `None` for preloaded payloads without one. It includes subscribe-handshake
+buffer events, not later live events, and requires no extra history fetch.
+`list_events()` keeps its payload-only shape. For timestamps, prefer payload
+`ts`, then `int(entry.timetoken) // 10_000` for epoch milliseconds, then a fallback.
 
 - Requires JWT-based auth (`api_key`, `token_endpoint`, or `token_provider`
   via `TaskClient.create()`). `AgentAuth` is not supported for `connect()`.

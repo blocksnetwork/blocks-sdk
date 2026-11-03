@@ -75,6 +75,13 @@ const createFakePubNub = () => {
   return { pubnub, listeners };
 };
 
+function terminalMessagesFor(pubnub: ReturnType<typeof createFakePubNub>['pubnub'], taskId: string) {
+  return pubnub.publish.mock.calls
+    .map(([params]: [{ message?: { taskId?: string; type?: string; state?: string } }]) => params.message)
+    .filter((message: { taskId?: string; type?: string } | undefined) => message?.taskId === taskId)
+    .filter((message: { type?: string }) => message.type === 'terminal');
+}
+
 describe('agent instance harness', () => {
   it('throws error when agentName is not provided', async () => {
     const { pubnub } = createFakePubNub();
@@ -116,6 +123,61 @@ describe('agent instance harness', () => {
     // Wait for fire-and-forget task to complete
     await vi.waitFor(() => expect(pubnub.publish).toHaveBeenCalled());
     stop();
+  });
+
+  it('runs an in-flight StartTask exactly once when its control message is redelivered', async () => {
+    const { pubnub, listeners } = createFakePubNub();
+    let releaseHandler: () => void = () => {};
+    const handlerHeld = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    const handler = vi.fn(async (task: { taskId: string }) => {
+      if (task.taskId === 'duplicate-task') await handlerHeld;
+      return {};
+    });
+    const { stop } = await startAgentInstance({
+      pubnub,
+      agentName: 'acme_echo',
+      card: makeTestCard(),
+      concurrency: 0,
+      handler,
+    });
+    const listener = listeners[0];
+    const startMessage = {
+      type: 'StartTask',
+      taskId: 'duplicate-task',
+      taskKind: 'request',
+      ownerId: 'user1',
+      callerClaims: { sub: 'user1' },
+    };
+    const duplicateCalls = () =>
+      handler.mock.calls.filter(([task]) => task.taskId === 'duplicate-task');
+
+    try {
+      listener.message({ message: startMessage });
+      await vi.waitFor(() => expect(duplicateCalls()).toHaveLength(1));
+
+      listener.message({ message: { ...startMessage } });
+      listener.message({ message: { ...startMessage, taskId: 'dispatch-barrier' } });
+      await vi.waitFor(() =>
+        expect(terminalMessagesFor(pubnub, 'dispatch-barrier')).toEqual([
+          expect.objectContaining({ state: 'completed' }),
+        ]),
+      );
+      expect(duplicateCalls()).toHaveLength(1);
+      expect(terminalMessagesFor(pubnub, 'duplicate-task')).toEqual([]);
+
+      releaseHandler();
+      await vi.waitFor(() =>
+        expect(terminalMessagesFor(pubnub, 'duplicate-task')).toEqual([
+          expect.objectContaining({ state: 'completed' }),
+        ]),
+      );
+      expect(duplicateCalls()).toHaveLength(1);
+    } finally {
+      releaseHandler();
+      stop();
+    }
   });
 
   it('publishes to user-scoped task channel with ownerId from callerClaims', async () => {
