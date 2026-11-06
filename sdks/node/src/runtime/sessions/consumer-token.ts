@@ -1,5 +1,5 @@
 import { createLogger } from '../logger.js';
-import { retryAfterOf } from '../rate-limit.js';
+import { isRateLimited, rateLimitBackoffMs, retryAfterOf } from '../rate-limit.js';
 import { isRefusal, type SessionToken } from './session-http.js';
 import { TOKEN_REFRESH_AT, TOKEN_RETRY_MAX_MS, TOKEN_RETRY_MIN_MS } from './token-schedule.js';
 
@@ -20,7 +20,10 @@ export class ConsumerTokenRotation {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private retryMs = TOKEN_RETRY_MIN_MS;
   private expiresAt = 0;
-  private denialRefresh?: Promise<void>;
+  /** A refresh after a denial is in flight or waiting out a rate limit. */
+  private denialRefreshing = false;
+  private denialTimer: ReturnType<typeof setTimeout> | undefined;
+  private denial = 0;
   /** A denial refresh succeeded and the subscription has not reconnected since. */
   private awaitingReconnect = false;
   private stopped = false;
@@ -34,6 +37,7 @@ export class ConsumerTokenRotation {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
+    clearTimeout(this.denialTimer);
   }
 
   onConnected(): void {
@@ -41,32 +45,60 @@ export class ConsumerTokenRotation {
   }
 
   onDenied(): void {
-    if (this.stopped || this.denialRefresh) return;
+    if (this.stopped || this.denialRefreshing) return;
     if (this.awaitingReconnect) {
       this.revoke();
       return;
     }
-    this.denialRefresh = this.options
-      .refresh()
-      .then(
-        (token) => {
-          if (this.stopped) return;
-          this.apply(token);
-          this.awaitingReconnect = true;
-          this.options.resume();
-        },
-        (err: unknown) => {
-          if (this.stopped) return;
-          logger('warn', 'session token refresh after a denial failed', {
-            sessionId: this.options.sessionId,
-            error: String(err),
-          });
-          this.revoke();
-        },
-      )
-      .finally(() => {
-        this.denialRefresh = undefined;
+    this.denialRefreshing = true;
+    void this.refreshAfterDenial(++this.denial, 0);
+  }
+
+  /** `denial` names the denial this refresh answers; a later recovery or denial supersedes it. */
+  private async refreshAfterDenial(denial: number, rateLimitedAttempts: number): Promise<void> {
+    let token: SessionToken;
+    try {
+      token = await this.options.refresh();
+    } catch (err) {
+      if (this.stopped || denial !== this.denial) return;
+      // A rate-limited refresh is a wait, not a refusal: the denial still gets its one real answer.
+      if (isRateLimited(err)) {
+        const delayMs = rateLimitBackoffMs(rateLimitedAttempts, retryAfterOf(err));
+        logger('warn', 'session token refresh after a denial was rate limited; retrying', {
+          sessionId: this.options.sessionId,
+          retryInMs: delayMs,
+        });
+        // Rotation would call the same endpoint inside the wait; a successful refresh reschedules it.
+        clearTimeout(this.timer);
+        clearTimeout(this.denialTimer);
+        this.denialTimer = setTimeout(
+          () => void this.refreshAfterDenial(denial, rateLimitedAttempts + 1),
+          delayMs,
+        );
+        this.denialTimer.unref?.();
+        return;
+      }
+      this.denialRefreshing = false;
+      logger('warn', 'session token refresh after a denial failed', {
+        sessionId: this.options.sessionId,
+        error: String(err),
       });
+      this.revoke();
+      return;
+    }
+    if (this.stopped) return;
+    // A rotation that landed meanwhile already resumed the subscription.
+    if (denial === this.denial && this.denialRefreshing) this.recoverFromDenial(token);
+    else this.apply(token);
+  }
+
+  private recoverFromDenial(token: SessionToken): void {
+    this.denial++;
+    clearTimeout(this.denialTimer);
+    this.denialRefreshing = false;
+    this.apply(token);
+    this.awaitingReconnect = true;
+    this.options.resume();
   }
 
   private revoke(): void {
@@ -95,9 +127,13 @@ export class ConsumerTokenRotation {
   private async rotate(): Promise<void> {
     try {
       const token = await this.options.refresh();
-      if (!this.stopped) this.apply(token);
-    } catch (err) {
       if (this.stopped) return;
+      // Any fresh token answers a pending denial, whichever request brought it.
+      if (this.denialRefreshing) this.recoverFromDenial(token);
+      else this.apply(token);
+    } catch (err) {
+      // While a denial refresh is pending it owns the retries, and their rate-limit wait.
+      if (this.stopped || this.denialRefreshing) return;
       // A refusal is final: the token lapses or is revoked, and the denial then ends the session.
       const delayMs = Math.max(this.retryMs, retryAfterOf(err) ?? 0);
       const retry = !isRefusal(err) && Date.now() + delayMs < this.expiresAt;

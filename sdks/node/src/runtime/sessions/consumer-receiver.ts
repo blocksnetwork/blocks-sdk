@@ -152,6 +152,7 @@ export class ConsumerSessionReceiver {
   /** Stops tracking an exchange settled outside the channel, such as one whose publish failed. */
   forgetExchange(exchangeId: string): void {
     this.unsettled.delete(exchangeId);
+    this.recordedLater.delete(exchangeId);
   }
 
   /**
@@ -263,15 +264,20 @@ export class ConsumerSessionReceiver {
     const ending =
       recovery.deferred.length > 0 ||
       TERMINAL_SESSION_STATES.has(snapshot?.state as SessionState);
+    // A requested local end applies even if a step throws, or the session would refuse sends
+    // without ever ending.
     try {
-      this.delivery.skipThrough(ending ? this.delivery.heldCutoffs() : recovery.cutoffs);
+      try {
+        this.delivery.skipThrough(ending ? this.delivery.heldCutoffs() : recovery.cutoffs);
+      } finally {
+        this.recovery = undefined;
+      }
+      if (snapshot) this.applyRecordedOutcomes(snapshot);
+      for (const message of recovery.deferred) this.dispatch(message);
+      if (snapshot) this.applyRecordedState(snapshot);
     } finally {
-      this.recovery = undefined;
+      if (recovery.localEnd) this.end(recovery.localEnd.state, recovery.localEnd.error);
     }
-    if (snapshot) this.applyRecordedOutcomes(snapshot);
-    for (const message of recovery.deferred) this.dispatch(message);
-    if (snapshot) this.applyRecordedState(snapshot);
-    if (recovery.localEnd) this.end(recovery.localEnd.state, recovery.localEnd.error);
   }
 
   /**

@@ -28,8 +28,6 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const ownerId = `file-consumer-${Date.now()}`;
-
 async function main() {
   const client = await TaskClient.create({
     billingMode: 'free',
@@ -64,11 +62,10 @@ async function main() {
     });
   }
 
-  console.log('Sending task with file attachment to echo agent...');
+  console.log('Sending task with file attachment to file_echo_node...');
 
   const session = await client.sendMessage({
-    agentName: 'echo',
-    ownerId,
+    agentName: 'file_echo_node',
     requestParts: parts,
   });
 

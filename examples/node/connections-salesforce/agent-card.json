@@ -1,0 +1,62 @@
+{
+  "identity": {
+    "agentName": "connections_salesforce_node",
+    "displayName": "connections Salesforce (Node)",
+    "description": "Acts as the task's user in Salesforce through an integration connection, and lists their org's newest Accounts.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": [
+      "request"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "No input needed.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {},
+        "schema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "The signed-in Salesforce user and up to five recent Account names.",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "main",
+      "name": "Main",
+      "description": "Reads the user's Salesforce identity and recent Accounts"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1
+  },
+  "connections": [
+    {
+      "integration": "salesforce",
+      "scopes": [
+        "api",
+        "refresh_token"
+      ],
+      "required": true
+    }
+  ]
+}

@@ -302,7 +302,7 @@ class Session:
             session_id=opened.session_id,
             refresh=lambda: transport.http.refresh_token(opened.session_id),
             set_token=transport.pubnub.set_token,
-            resume=transport.pubnub.reconnect,
+            resume=self._resubscribe,
             on_revoked=lambda: self._receiver.terminate(wire.STATE_FAILED, ACCESS_REVOKED),
             scheduler=transport.scheduler,
             clock=transport.clock,
@@ -757,6 +757,14 @@ class Session:
             self._token.start(self._opened.ttl_minutes)
             pubnub.add_listener(self._listener)
             pubnub.subscribe().channels([self._opened.session_channel]).execute()
+
+    def _resubscribe(self) -> None:
+        """pubnub-python drops every subscription on a denial, so reconnecting alone resumes
+        nothing; resubscribe the session channel instead."""
+        with self._lock:
+            if self._released:
+                return
+            self._transport.pubnub.subscribe().channels([self._opened.session_channel]).execute()
 
     def _publish(self, fields: Dict[str, Any]) -> "Future[None]":
         with self._lock:

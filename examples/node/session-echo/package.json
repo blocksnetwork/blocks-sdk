@@ -1,0 +1,19 @@
+{
+  "name": "session-echo",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "tsx agent.ts",
+    "check": "blocks check",
+    "consumer": "tsx session-consumer.ts"
+  },
+  "dependencies": {
+    "@blocks-network/sdk": "*",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.5"
+  }
+}

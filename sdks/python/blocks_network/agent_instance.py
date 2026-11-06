@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 import math
 import os
-import random
 import re
 import sys
 import threading
@@ -35,7 +34,7 @@ import os as _os_top
 logger = logging.getLogger(__name__)
 
 from .agent_auth import AgentAuth, AgentAuthFatalError
-from ._rate_limit import RateLimitedError
+from ._rate_limit import RateLimitedError, connect_retry_delay_s
 from ._session.provider_api import ProviderSessionApi, agent_auth_request
 from ._session.provider_route import SessionProviderRuntime
 from ._session.provider_transport import PubNubRouteClient
@@ -114,22 +113,6 @@ def _exit_if_fatal_auth_error(err: BaseException, context: str) -> bool:
 
 _T = TypeVar("_T")
 
-_CONNECT_RATE_LIMITED_MIN_S = 30.0
-_CONNECT_RATE_LIMITED_MAX_S = 600.0
-# A zero or past Retry-After must not turn the connect retry into a busy loop.
-_CONNECT_RATE_LIMITED_FLOOR_S = 1.0
-_CONNECT_RETRY_JITTER = 0.1
-
-
-def _rate_limited_connect_delay(err: RateLimitedError, attempt: int) -> float:
-    """Wait before connect attempt ``attempt + 1``: the backend's Retry-After when it gave
-    one, else 30 s doubling to 10 min, plus up to 10% jitter."""
-    if err.retry_after is not None:
-        base = max(err.retry_after, _CONNECT_RATE_LIMITED_FLOOR_S)
-    else:
-        base = min(_CONNECT_RATE_LIMITED_MIN_S * (2 ** min(attempt, 16)), _CONNECT_RATE_LIMITED_MAX_S)
-    return base * (1 + random.random() * _CONNECT_RETRY_JITTER)
-
 
 def _connect_while_rate_limited(
     connect: Callable[[], _T], stop_event: threading.Event
@@ -140,7 +123,7 @@ def _connect_while_rate_limited(
         try:
             return connect()
         except RateLimitedError as err:
-            delay = _rate_limited_connect_delay(err, attempt)
+            delay = connect_retry_delay_s(attempt, err.retry_after)
             attempt += 1
             log_agent_instance_event(
                 "warn",

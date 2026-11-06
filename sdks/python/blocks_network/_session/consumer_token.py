@@ -6,9 +6,15 @@ import logging
 import threading
 from typing import Callable, Optional
 
+from .._rate_limit import is_rate_limited, rate_limit_backoff_s, retry_after_of
 from .http import SessionToken, is_refusal
 from .scheduler import Cancellable, Scheduler
-from .token_schedule import TOKEN_REFRESH_AT, TOKEN_RETRY_MAX_S, TOKEN_RETRY_MIN_S
+from .token_schedule import (
+    TOKEN_REFRESH_AT,
+    TOKEN_RETRY_MAX_S,
+    TOKEN_RETRY_MIN_S,
+    rate_limited_wait_s,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,8 @@ class ConsumerTokenRotation:
         self._retry_s = TOKEN_RETRY_MIN_S
         self._expires_at = 0.0
         self._denial_refresh = False
+        self._denial_timer: Optional[Cancellable] = None
+        self._denial = 0
         # A denial refresh succeeded and the subscription has not reconnected since.
         self._awaiting_reconnect = False
         self._stopped = False
@@ -61,6 +69,9 @@ class ConsumerTokenRotation:
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            if self._denial_timer is not None:
+                self._denial_timer.cancel()
+                self._denial_timer = None
 
     def on_connected(self) -> None:
         with self._lock:
@@ -73,17 +84,43 @@ class ConsumerTokenRotation:
             revoke = self._awaiting_reconnect
             if not revoke:
                 self._denial_refresh = True
+                self._denial += 1
+                denial = self._denial
         if revoke:
             self._revoke()
         else:
             # Off the caller's thread: a denial is reported on PubNub's subscribe thread.
-            self._scheduler.call_later(0, self._refresh_after_denial)
+            self._scheduler.call_later(0, lambda: self._refresh_after_denial(denial))
 
-    def _refresh_after_denial(self) -> None:
+    def _refresh_after_denial(self, denial: int, rate_limited_attempts: int = 0) -> None:
+        """``denial`` names the denial this refresh answers; a later recovery supersedes it."""
         try:
             token = self._refresh()
         except Exception as err:
+            # A rate-limited refresh is a wait, not a refusal: the denial still gets its one real answer.
+            if is_rate_limited(err):
+                delay = rate_limit_backoff_s(rate_limited_attempts, retry_after_of(err))
+                with self._lock:
+                    if self._stopped or denial != self._denial:
+                        return
+                    # Rotation would call the same endpoint inside the wait; success reschedules it.
+                    if self._timer is not None:
+                        self._timer.cancel()
+                        self._timer = None
+                    self._denial_timer = self._scheduler.call_later(
+                        delay, lambda: self._refresh_after_denial(denial, rate_limited_attempts + 1)
+                    )
+                logger.warning(
+                    "session access refresh after a denial was rate limited (session %s); "
+                    "retrying in %.0fs",
+                    self._session_id,
+                    delay,
+                )
+                return
             with self._lock:
+                # Checked with the state change, so a recovery cannot slip in between.
+                if denial != self._denial:
+                    return
                 self._denial_refresh = False
                 stopped = self._stopped
             if not stopped:
@@ -94,13 +131,24 @@ class ConsumerTokenRotation:
                 )
                 self._revoke()
             return
+        self._recover_from_denial(token, denial)
+
+    def _recover_from_denial(self, token: SessionToken, denial: Optional[int] = None) -> None:
+        """Apply a fresh token. If a denial is still pending, resume the parked subscription."""
         with self._lock:
-            self._denial_refresh = False
             if self._stopped:
                 return
+            pending = self._denial_refresh and denial in (None, self._denial)
+            if pending:
+                self._denial += 1
+                self._denial_refresh = False
+                if self._denial_timer is not None:
+                    self._denial_timer.cancel()
+                    self._denial_timer = None
+                self._awaiting_reconnect = True
             self._apply(token)
-            self._awaiting_reconnect = True
-        self._resume()
+        if pending:
+            self._resume()
 
     def _revoke(self) -> None:
         self.stop()
@@ -126,11 +174,13 @@ class ConsumerTokenRotation:
             token = self._refresh()
         except Exception as err:
             with self._lock:
-                if self._stopped:
+                # While a denial refresh is pending it owns the retries, and their rate-limit wait.
+                if self._stopped or self._denial_refresh:
                     return
                 # A refusal is final: the token lapses or is revoked, and the denial then ends
                 # the session.
-                retry = not is_refusal(err) and self._clock() + self._retry_s < self._expires_at
+                delay_s = max(self._retry_s, rate_limited_wait_s(err))
+                retry = not is_refusal(err) and self._clock() + delay_s < self._expires_at
                 logger.warning(
                     "session access refresh failed; %s (session %s): %s",
                     "retrying" if retry else "giving up",
@@ -138,9 +188,8 @@ class ConsumerTokenRotation:
                     err,
                 )
                 if retry:
-                    self._set_timer(self._retry_s)
+                    self._set_timer(delay_s)
                     self._retry_s = min(self._retry_s * 2, TOKEN_RETRY_MAX_S)
             return
-        with self._lock:
-            if not self._stopped:
-                self._apply(token)
+        # Any fresh token answers a pending denial, whichever request brought it.
+        self._recover_from_denial(token)

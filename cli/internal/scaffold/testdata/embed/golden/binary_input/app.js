@@ -18,7 +18,8 @@
   // catch (where errors are typically BlocksAuthError from the popup
   // flow) and per-send catches (where InsufficientBalance comes from
   // the backend RPC for paid agents the caller can't afford). One source
-  // of truth so the two catches stay in sync.
+  // of truth so the two catches stay in sync; a send catch first offers
+  // showConnectLink, below.
   function blocksErrorMessage(err) {
     if (typeof BlocksAuth === 'undefined') {
       return 'The Blocks auth widget failed to load. Check your network connection and reload.';
@@ -30,6 +31,36 @@
       return 'This agent requires funds to use. Add a balance in your Blocks dashboard.';
     }
     return 'Unexpected error: ' + (err && err.message ? err.message : String(err));
+  }
+
+  // An agent that acts on the user's account at another service (Google, Microsoft, Salesforce)
+  // refuses a task until that user connects the service and approves the agent. The refusal
+  // carries the page that does both; only an http(s) URL is ever turned into a link.
+  function connectUrlOf(err) {
+    const details = err && err.data && err.data.code === 'AuthRequired' ? err.data.details : null;
+    const url = err && err.name === 'AuthRequiredError' ? err.connectUrl : details && details.connectUrl;
+    if (typeof url !== 'string') return null;
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Append a "Connect <service>" link for a connection refusal; false for any other error.
+  function showConnectLink(err, outputEl) {
+    const url = connectUrlOf(err);
+    if (!url) return false;
+    const details = (err.data && err.data.details) || {};
+    const service = err.integration || details.integration || 'the service';
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Connect ' + service;
+    outputEl.append('\nThis agent needs access to your ' + service + ' account. ', link, ', then send again.');
+    return true;
   }
 
   // Render an artifact's bytes into outputEl based on its own mimeType.
@@ -254,7 +285,9 @@
         }
       }
     } catch (err) {
-      outputEl.textContent += '\n[' + blocksErrorMessage(err) + ']';
+      if (!showConnectLink(err, outputEl)) {
+        outputEl.textContent += '\n[' + blocksErrorMessage(err) + ']';
+      }
     } finally {
       sendBtn.disabled = false;
     }

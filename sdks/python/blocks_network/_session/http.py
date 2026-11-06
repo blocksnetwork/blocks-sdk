@@ -10,6 +10,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
+from .._rate_limit import BlocksHttpError, is_rate_limited, retry_after_from
 from ..auth_provider import preflight_auth_or_raise
 from ..protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from ..rpc_client import _merge_rpc_headers
@@ -33,12 +34,8 @@ _KNOWN_STATES = frozenset(
 _URL_SCHEMES = frozenset({"http", "https"})
 
 
-class SessionHttpError(Exception):
+class SessionHttpError(BlocksHttpError):
     """A session endpoint answered with an HTTP error that carries no session code."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 def is_refusal(err: BaseException) -> bool:
@@ -131,7 +128,7 @@ def _parse_refusal(text: str) -> Dict[str, Any]:
 
 def _send(
     url: str, data: Optional[bytes], headers: Dict[str, str], method: str, timeout: float
-) -> Tuple[int, bytes]:
+) -> Tuple[int, bytes, Any]:
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         # session_request() admits http and https URLs only.
@@ -139,9 +136,9 @@ def _send(
             request, context=https_context(), timeout=timeout
         ) as response:
             capture_affinity(response)
-            return response.status, response.read()
+            return response.status, response.read(), None
     except urllib.error.HTTPError as err:
-        return err.code, err.read() or b""
+        return err.code, err.read() or b"", err.headers
 
 
 def session_request(
@@ -168,7 +165,7 @@ def session_request(
         raise ValueError(f"session backend URL must use http or https: {base_url!r}")
     data = json.dumps(body).encode("utf-8") if method == "POST" else None
 
-    def attempt() -> Tuple[int, bytes]:
+    def attempt() -> Tuple[int, bytes, Any]:
         base: Dict[str, str] = {PROTOCOL_VERSION_HEADER: CURRENT_PROTOCOL_VERSION}
         if method == "POST":
             base["Content-Type"] = "application/json"
@@ -179,9 +176,16 @@ def session_request(
         inject_affinity(merged)
         return _send(url, data, merged, method, timeout)
 
-    status, raw = attempt()
-    if status == 401 and auth_provider is not None and auth_provider.on_auth_failure():
-        status, raw = attempt()
+    status, raw, response_headers = attempt()
+    if status == 401 and auth_provider is not None:
+        if auth_provider.on_auth_failure():
+            status, raw, response_headers = attempt()
+        else:
+            # A credential refresh held back by a rate limit is a wait, not a refusal of this call.
+            if hasattr(auth_provider, "get_last_auth_error"):
+                auth_error = auth_provider.get_last_auth_error()
+                if auth_error is not None and is_rate_limited(auth_error):
+                    raise auth_error
     if 200 <= status < 300:
         if status == 204 or not raw:
             return None
@@ -192,7 +196,9 @@ def session_request(
     text = raw.decode("utf-8", errors="replace")
     refusal = _parse_refusal(text)
     raise session_error_from_response(refusal.get("code"), refusal.get("error")) or SessionHttpError(
-        status, f"{method} {path} failed: HTTP {status}{f' {text}' if text else ''}"
+        status,
+        f"{method} {path} failed: HTTP {status}{f' {text}' if text else ''}",
+        retry_after_from(response_headers),
     )
 
 

@@ -3,11 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   type BackendCall,
   createConsumer,
+  deleteAgent,
   isSessionEndpoint,
   liveGuard,
   openSessionWhenRouted,
   recordBackendCalls,
-  removeAgents,
   routeRequest,
   sessionsFlagOn,
   sleep,
@@ -105,7 +105,10 @@ async function runDrills(
     );
   });
   const failures = new Map<string, number>();
-  for (const call of failedAfter(calls, Math.min(...measured.map((m) => m.deniedAt)))) {
+  // With no refusal, every deniedAt is NaN; the trigger then starts the window.
+  const firstDenial = Math.min(...measured.map((m) => m.deniedAt).filter(Number.isFinite));
+  const windowStart = Number.isFinite(firstDenial) ? firstDenial : triggeredAt;
+  for (const call of failedAfter(calls, windowStart)) {
     const key = `${call.method} ${call.path.replace(/\/[A-Za-z0-9_-]{16,}(?=\/|$)/g, '/{id}')} ${call.status}`;
     failures.set(key, (failures.get(key) ?? 0) + 1);
   }
@@ -170,7 +173,10 @@ async function withOpenSession(
       tokens: credentials(recorder.calls),
       close: () => session.close(),
       stopProvider: async () => started.halt(),
-      deleteAgent: () => removeAgents([started.agentName]),
+      // Throws, unlike cleanup: a failed delete must not read as a token PAM never refused.
+      deleteAgent: async () => {
+        await deleteAgent(started.agentName);
+      },
     });
   } finally {
     recorder.restore();

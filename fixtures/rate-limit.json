@@ -1,0 +1,9 @@
+{
+  "about": "Rate-limit retry constants both SDKs must share. Each SDK's tests assert its own constants equal these.",
+  "retryAfterMaxSeconds": 3600,
+  "noHintHoldSeconds": 30,
+  "backoffBaseSeconds": 30,
+  "backoffMaxSeconds": 600,
+  "minWaitSeconds": 1,
+  "jitterFraction": 0.1
+}

@@ -1,0 +1,58 @@
+{
+  "identity": {
+    "agentName": "file_echo_node",
+    "displayName": "file-echo (Node)",
+    "description": "Receives a file and an optional note, and returns the same file plus a summary of its size and SHA-256.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "input_file",
+        "description": "Any file. It comes back unchanged.",
+        "contentType": "application/octet-stream",
+        "required": true,
+        "maxSizeBytes": 10485760
+      },
+      {
+        "id": "text",
+        "description": "Optional note, repeated in the summary.",
+        "contentType": "text/plain",
+        "required": false
+      }
+    ],
+    "outputs": [
+      {
+        "id": "file",
+        "description": "The uploaded file, byte for byte.",
+        "contentType": "application/octet-stream",
+        "guaranteed": true
+      },
+      {
+        "id": "summary",
+        "description": "File name, size, SHA-256 and the note.",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "main",
+      "name": "Main",
+      "description": "Echoes a file back"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1
+  }
+}

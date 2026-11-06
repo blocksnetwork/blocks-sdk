@@ -10,6 +10,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .._rate_limit import is_rate_limited, rate_limit_backoff_s, retry_after_of
 from . import wire
 from .counterpart import InboundKind, classify_inbound, provider_counterparts
 from .errors import ROUTE_LOST, SESSION_NOT_FOUND
@@ -27,6 +28,7 @@ from .provider_session import MAX_PENDING_EXCHANGES, ProviderSession, spawn_daem
 from .provider_transport import RouteClient
 from .provider_types import SessionHandlers
 from .scheduler import Cancellable, Scheduler, ThreadingScheduler
+from .session import MAX_SESSION_READY_TIMEOUT_S
 from .token_schedule import (
     TOKEN_REFRESH_AT,
     TOKEN_RETRY_MAX_S,
@@ -42,7 +44,7 @@ ROUTE_RETRY_MAX_S = 60.0
 # A route that cannot subscribe in this long is replaced rather than left unoffered.
 ROUTE_CONNECT_TIMEOUT_S = 10.0
 _MANIFEST_CACHE_LIMIT = 256
-_LOOKUP_RETRY_DELAYS_S = (0.0, 0.25, 1.0, 3.0)
+_LOOKUP_RETRY_DELAYS_S = (0.25, 1.0, 3.0)
 _ENDED_SESSION_LIMIT = 1024
 _MAX_SESSIONS_RANGE = (1, CHECKPOINT_MAX_OPEN_SESSIONS)
 _OPENING_BUFFER_LIMIT = MAX_PENDING_EXCHANGES * 2
@@ -302,25 +304,39 @@ class _SessionRoute:
         return manifest if matches else None
 
     def _look_up_session(self, session_id: str) -> Optional[SessionManifest]:
-        """Retry a failed lookup with backoff; only ``SESSION_NOT_FOUND`` is final at once."""
-        last = len(_LOOKUP_RETRY_DELAYS_S) - 1
-        for attempt, delay_s in enumerate(_LOOKUP_RETRY_DELAYS_S):
-            if delay_s > 0:
-                self._sleep(delay_s)
+        """Retry a failed lookup with backoff; only ``SESSION_NOT_FOUND`` is final at once. A
+        rate-limited attempt waits out its ``Retry-After`` and is not counted, unless the wait
+        would outlast the longest a consumer waits for session_ready."""
+        consumer_gives_up_at = self._deps.clock() + MAX_SESSION_READY_TIMEOUT_S
+        retries = 0
+        rate_limited_attempts = 0
+        while True:
             if self._closed:
                 return None
+            delay_s: Optional[float] = None
             try:
                 return self._deps.api.get_session(session_id)
             except Exception as exc:
                 if error_code_of(exc) == SESSION_NOT_FOUND:
                     return None
+                retry_after = retry_after_of(exc)
+                if is_rate_limited(exc):
+                    wait_s = rate_limit_backoff_s(rate_limited_attempts, retry_after)
+                    rate_limited_attempts += 1
+                    if self._deps.clock() + wait_s < consumer_gives_up_at:
+                        delay_s = wait_s
+                elif retries < len(_LOOKUP_RETRY_DELAYS_S):
+                    delay_s = _LOOKUP_RETRY_DELAYS_S[retries]
+                    retries += 1
                 logger.warning(
                     "session %s lookup failed; %s: %s",
                     session_id,
-                    "dropping session_open" if attempt == last else "retrying",
+                    "dropping session_open" if delay_s is None else f"retrying in {delay_s}s",
                     exc,
                 )
-        return None
+            if delay_s is None:
+                return None
+            self._sleep(delay_s)
 
     def _sleep(self, delay_s: float) -> None:
         woken = threading.Event()

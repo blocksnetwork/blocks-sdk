@@ -12,6 +12,7 @@ import {
   MAX_SETTLED_EXCHANGE_IDS,
   SESSION_OPEN_TIMEOUT_MS,
 } from '../src/runtime/sessions/provider-session.js';
+import { MAX_SESSION_READY_TIMEOUT_MS } from '../src/runtime/sessions/session.js';
 import type { SessionProviderOptions } from '../src/runtime/sessions/provider-types.js';
 import {
   BACKEND_UUID,
@@ -55,8 +56,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function startRuntime(handlers: Handlers, opts: { maxSessions?: number } = {}) {
-  const api = fakeApi();
+async function startRuntime(
+  handlers: Handlers,
+  opts: { maxSessions?: number; api?: ReturnType<typeof fakeApi> } = {},
+) {
+  const api = opts.api ?? fakeApi();
   const clients: FakeRouteClient[] = [];
   const runtime = new SessionProviderRuntime({
     api: api as unknown as ProviderSessionApi,
@@ -910,15 +914,7 @@ describe('session provider runtime', () => {
     const api = fakeApi();
     api.registerRoute.mockResolvedValueOnce({ ...routeGrant(), ttlMinutes: 1 });
     api.refreshRouteToken.mockRejectedValueOnce(new ProviderApiError(status, undefined, 'refused'));
-    const runtime = new SessionProviderRuntime({
-      api: api as unknown as ProviderSessionApi,
-      instanceId: 'AG-echo_agent-1',
-      maxSessions: 1,
-      handlers: { onExchange: () => ({}) },
-      createClient: (userId) => fakeRouteClient(userId) as unknown as PubNub,
-    });
-    runtimes.push(runtime);
-    await runtime.start();
+    await startRuntime({ onExchange: () => ({}) }, { api });
 
     // 80% of the 1-minute TTL, then the first retry backoff (5 s) for a transient answer.
     await vi.advanceTimersByTimeAsync(48_000 + 5_000);
@@ -932,20 +928,7 @@ describe('session provider runtime', () => {
     const api = fakeApi();
     api.registerRoute.mockResolvedValueOnce({ ...routeGrant(), ttlMinutes: 1 });
     api.refreshRouteToken.mockRejectedValueOnce(new ProviderApiError(409, 'ROUTE_LOST', 'lost'));
-    const clients: FakeRouteClient[] = [];
-    const runtime = new SessionProviderRuntime({
-      api: api as unknown as ProviderSessionApi,
-      instanceId: 'AG-echo_agent-1',
-      maxSessions: 1,
-      handlers: { onExchange: () => ({}) },
-      createClient: (userId) => {
-        const client = fakeRouteClient(userId);
-        clients.push(client);
-        return client as unknown as PubNub;
-      },
-    });
-    runtimes.push(runtime);
-    await runtime.start();
+    const { clients } = await startRuntime({ onExchange: () => ({}) }, { api });
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(api.refreshRouteToken).toHaveBeenCalledWith('route1');
@@ -1144,15 +1127,7 @@ describe('session provider runtime', () => {
     const api = fakeApi();
     api.registerRoute.mockResolvedValueOnce({ ...routeGrant(), ttlMinutes: 1 });
     api.refreshRouteToken.mockRejectedValue(new Error('503'));
-    const runtime = new SessionProviderRuntime({
-      api: api as unknown as ProviderSessionApi,
-      instanceId: 'AG-echo_agent-1',
-      maxSessions: 1,
-      handlers: { onExchange: () => ({}) },
-      createClient: (userId) => fakeRouteClient(userId) as unknown as PubNub,
-    });
-    runtimes.push(runtime);
-    await runtime.start();
+    await startRuntime({ onExchange: () => ({}) }, { api });
 
     await vi.advanceTimersByTimeAsync(48_000);
     expect(api.refreshRouteToken).toHaveBeenCalledTimes(1);
@@ -1162,6 +1137,109 @@ describe('session provider runtime', () => {
     expect(api.refreshRouteToken).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(api.refreshRouteToken).toHaveBeenCalledTimes(3);
+  });
+
+  it('waits out a rate-limited token refresh’s Retry-After', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const api = fakeApi();
+    api.registerRoute.mockResolvedValueOnce({ ...routeGrant(), ttlMinutes: 1 });
+    api.refreshRouteToken
+      .mockRejectedValueOnce(new ProviderApiError(429, undefined, 'rate limited', 30_000))
+      .mockResolvedValue({ pamToken: 'fresh', ttlMinutes: 60 });
+    await startRuntime({ onExchange: () => ({}) }, { api });
+
+    await vi.advanceTimersByTimeAsync(48_000);
+    expect(api.refreshRouteToken).toHaveBeenCalledTimes(1);
+    // The 5 s backoff alone would retry here.
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(api.refreshRouteToken).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(api.refreshRouteToken).toHaveBeenCalledTimes(2);
+    expect(api.registerRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits out a rate-limited route registration’s Retry-After', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const api = fakeApi();
+    api.registerRoute.mockRejectedValueOnce(
+      new ProviderApiError(429, undefined, 'rate limited', 20_000),
+    );
+    await startRuntime({ onExchange: () => ({}) }, { api });
+
+    expect(api.registerRoute).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(api.registerRoute).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(api.registerRoute).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a session lookup the backend rate-limits', () => {
+    const rateLimited = (retryAfterMs: number) =>
+      new ProviderApiError(429, undefined, 'rate limited', retryAfterMs);
+
+    it('waits out each Retry-After without spending the lookup’s retries', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const { api, client, open } = await startRuntime({ onExchange: () => ({}) });
+      // More rate-limited answers than the lookup has retries.
+      for (let i = 0; i < 5; i++) api.getSession.mockRejectedValueOnce(rateLimited(5_000));
+      open();
+      await vi.advanceTimersByTimeAsync(0);
+
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        expect(api.getSession).toHaveBeenCalledTimes(attempt);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(api.getSession).toHaveBeenCalledTimes(attempt);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(client().ofType('session_ready')).toHaveLength(1);
+    });
+
+    it('backs off a 429 without Retry-After without spending the lookup’s retries', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const { api, client, open } = await startRuntime({ onExchange: () => ({}) });
+      const transient = new ProviderApiError(503, undefined, 'unavailable');
+      for (const err of [transient, new ProviderApiError(429, undefined, 'rate limited'), transient, transient]) {
+        api.getSession.mockRejectedValueOnce(err);
+      }
+      open();
+      await vi.advanceTimersByTimeAsync(0);
+
+      for (const [attempt, delayMs] of [250, 30_000, 1_000, 3_000].entries()) {
+        expect(api.getSession).toHaveBeenCalledTimes(attempt + 1);
+        await vi.advanceTimersByTimeAsync(delayMs - 1);
+        expect(api.getSession).toHaveBeenCalledTimes(attempt + 1);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(api.getSession).toHaveBeenCalledTimes(5);
+      expect(client().ofType('session_ready')).toHaveLength(1);
+    });
+
+    it('leaves no lookup wait pending once the runtime stops', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const { api, runtime, open } = await startRuntime({ onExchange: () => ({}) });
+      api.getSession.mockRejectedValueOnce(rateLimited(60_000));
+      open();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(api.getSession).toHaveBeenCalledTimes(1);
+
+      await runtime.stop();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(api.getSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops session_open when the wait would outlast the consumer’s wait for session_ready', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const onSessionOpen = vi.fn();
+      const { api, client, open } = await startRuntime({ onSessionOpen, onExchange: () => ({}) });
+      api.getSession.mockRejectedValueOnce(rateLimited(MAX_SESSION_READY_TIMEOUT_MS));
+      open();
+
+      await vi.advanceTimersByTimeAsync(MAX_SESSION_READY_TIMEOUT_MS * 2);
+      expect(api.getSession).toHaveBeenCalledTimes(1);
+      expect(onSessionOpen).not.toHaveBeenCalled();
+      expect(client().published).toEqual([]);
+    });
   });
 
   it('retries a session lookup that fails transiently', async () => {

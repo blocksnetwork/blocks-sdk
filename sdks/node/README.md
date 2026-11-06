@@ -142,8 +142,8 @@ The SDK respects two log-related environment variables:
 
 For complete, runnable example agents, see the
 [Node examples](../../examples/node/README.md). Examples cover
-request/response, streaming, orchestration, pipe tasks, and advanced
-wrapper patterns.
+request/response, streaming, orchestration, pipe tasks, sessions, and
+advanced wrapper patterns.
 
 ## Consumer API
 
@@ -585,6 +585,104 @@ work on terminal-session refs without raising.
   // session.asyncClose() called automatically at scope exit
 }
 ```
+
+## Sessions (experimental)
+
+A session is one durable interaction with one agent process: open it
+once, send many exchanges over it, close it. Each exchange ends in
+exactly one outcome. Use sessions for chat and other multi-turn work.
+
+> **Experimental.** `BlocksClient` and the session handlers may change
+> before general availability. Sessions serve free agents only, and the
+> service refuses them with `SESSIONS_DISABLED` until sessions are
+> enabled for your organization. They do not carry streams yet, and
+> artifacts travel inline (16 KB at most). Task APIs are unchanged.
+
+### Consumer: `BlocksClient`
+
+`BlocksClient.create()` takes the same options as `TaskClient.create()`.
+
+```ts
+import { BlocksClient, decodeInlineArtifact } from '@blocks-network/sdk';
+
+const client = await BlocksClient.create({ billingMode: 'free', apiKey: process.env.BLOCKS_API_KEY! });
+try {
+  const session = await client.openSession('my_agent'); // resolves once the session is ready
+  try {
+    const exchange = session.send('Hello');
+    exchange.onProgress((p) => console.log(p.message));
+    const outcome = await exchange.waitForOutcome(30_000); // { state, error?, artifacts }
+    for (const ref of outcome.artifacts) console.log(new TextDecoder().decode(decodeInlineArtifact(ref)));
+  } finally {
+    await session.close();
+  }
+} finally {
+  client.destroy();
+}
+```
+
+- `client.call(agentName, input)` opens a session, sends one exchange,
+  and closes it, returning the outcome.
+- `openSession(agentName, { readyTimeoutMs?, idempotencyKey? })` waits
+  up to 30 s by default (2 minutes at most) for the agent to be ready.
+  An `idempotencyKey` makes a retry whose response was lost return the
+  same session. The client holds a key until its session is released and
+  any abandoned request has settled; reusing it meanwhile, or for a
+  session already past opening, throws `session_already_open`. Use a new
+  key per open.
+- `session.send(input)` takes a string or text request parts; file parts are not supported on
+  sessions yet and throw `TypeError`. Exchanges run
+  one at a time; at most 8 may be pending, and a ninth throws
+  `SessionBackpressureError`. Never re-send an exchange: if one fails
+  with `publish_failed`, call `send()` again for a new exchange. `send()` is refused with
+  `session_not_ready` once the session starts ending, so a callback
+  cannot start new work.
+- `exchange.cancel()` asks the agent to stop; the outcome still arrives.
+- `session.onStateChange(cb)` reports `open`, `ready`, `closing` and the
+  terminal `closed`, `failed` or `canceled`, the terminal one once.
+- The SDK recovers on its own after a reconnect or a message gap, so
+  each exchange settles exactly once. `session.recover()` forces it; it
+  rejects only if both the session's history (given up after 10 s) and
+  the service's record of it are unavailable. If the service stops
+  accepting the session's credentials and a refresh fails, the session
+  fails locally with `session_access_revoked`.
+  Losing the agent process ends the session (`route_lost`): open a new
+  one.
+
+### Provider: session handlers
+
+Pass `onExchange` to `startAgentInstance()` and the instance serves
+sessions as well as tasks. `blocks run` starts task handlers only, so
+start a session provider from your own script:
+
+```ts
+await startAgentInstance({
+  agentName: card.identity.agentName,
+  card,
+  maxSessions: 4, // defaults to concurrency
+  onSessionOpen: (ctx) => {},             // before the session is ready
+  onExchange: (ctx, exchange) => ({       // once per exchange; throw to fail it
+    artifacts: [{ data: `Echo: ${exchange.requestParts[0]?.text}`, mimeType: 'text/plain' }],
+  }),
+  onSessionClose: (ctx, reason) => {},    // once, when the session ends
+});
+```
+
+`ctx` carries `sessionId`, `ownerId`, `orgId`, `callerClaims` and
+`close()`. `exchange` carries `requestParts`, `reportStatus()`,
+`publishArtifact()`, `downloadInputArtifact()` and `cancelSignal`.
+
+### Session errors
+
+Every session error extends `SessionError` and carries a `code`:
+`SessionsDisabledError`, `SessionPaidAgentError`, `SessionNoRouteError`
+(no running instance serves sessions with capacity; there is no queue),
+`SessionNotFoundError`, `SessionBackpressureError` and
+`SessionFailedError` (`route_lost`, `route_unhealthy`, `provider_error`,
+`provider_at_capacity`, `session_access_revoked`).
+
+See [session-echo](../../examples/node/session-echo/) for a runnable
+agent and consumer.
 
 ## Browser Support
 

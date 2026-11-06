@@ -14,6 +14,10 @@ export const RATE_LIMIT_BACKOFF_BASE_MS = 30_000;
 export const RATE_LIMIT_BACKOFF_MAX_MS = 600_000;
 /** A zero or past `Retry-After` must not turn a retry into a busy loop. */
 export const RATE_LIMIT_MIN_WAIT_MS = 1_000;
+/** How long a `RateLimitHold` holds after a 429 that carries no usable `Retry-After`. */
+export const RATE_LIMIT_NO_HINT_HOLD_MS = 30_000;
+/** A connect retry waits up to this fraction longer, so instances sharing a key spread out. */
+export const RATE_LIMIT_JITTER_FRACTION = 0.1;
 
 /**
  * Parses a `Retry-After` value, delta-seconds or HTTP-date, into milliseconds
@@ -51,6 +55,15 @@ export function rateLimitBackoffMs(attempt: number, retryAfterMs: number | undef
   );
 }
 
+/** The wait before the `attempt`th consecutive rate-limited connect is retried, with jitter. */
+export function connectRetryDelayMs(
+  attempt: number,
+  retryAfterMs: number | undefined,
+  random: () => number = Math.random,
+): number {
+  return rateLimitBackoffMs(attempt, retryAfterMs) * (1 + random() * RATE_LIMIT_JITTER_FRACTION);
+}
+
 /**
  * The backend rate-limited the API key. Retryable: wait `retryAfterMs` (when the
  * backend said) before trying again.
@@ -74,9 +87,28 @@ function* errorChain(err: unknown): Generator<Error> {
   }
 }
 
-/** True when `err`, or an error it wraps as `cause`, is a `RateLimitedError`. */
+/**
+ * A Blocks endpoint's HTTP error. Only these, and `RateLimitedError`, can be the Blocks rate
+ * limit: a customer token endpoint's or token provider's error with a `status` of 429 is a failed
+ * refresh, not a wait.
+ */
+export class BlocksHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    /** The response's `Retry-After`, when it had one. */
+    readonly retryAfterMs?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** True when `err`, or an error it wraps as `cause`, is a `RateLimitedError` or a Blocks 429. */
 export function isRateLimited(err: unknown): boolean {
-  for (const e of errorChain(err)) if (e instanceof RateLimitedError) return true;
+  for (const e of errorChain(err)) {
+    if (e instanceof RateLimitedError) return true;
+    if (e instanceof BlocksHttpError && e.status === HTTP_TOO_MANY_REQUESTS) return true;
+  }
   return false;
 }
 
@@ -111,7 +143,7 @@ export class RateLimitHold {
   record(what: string, response: { headers?: Headers }): RateLimitedError {
     const retryAfterMs = retryAfterFrom(response.headers);
     // Concurrent 429s can land out of order; a later, shorter hint must not shorten the hold.
-    this.until = Math.max(this.until, Date.now() + (retryAfterMs ?? RATE_LIMIT_BACKOFF_BASE_MS));
+    this.until = Math.max(this.until, Date.now() + (retryAfterMs ?? RATE_LIMIT_NO_HINT_HOLD_MS));
     const hint = retryAfterMs === undefined ? '' : `; retry in ${Math.ceil(retryAfterMs / 1000)}s`;
     return new RateLimitedError(`${what} rate limited (HTTP 429)${hint}`, retryAfterMs);
   }

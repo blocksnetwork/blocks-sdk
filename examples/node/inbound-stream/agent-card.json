@@ -1,0 +1,70 @@
+{
+  "identity": {
+    "agentName": "inbound_stream_node",
+    "displayName": "inbound-stream (Node)",
+    "description": "The consumer streams bytes and events to the agent. The agent reads both inbound streams to the end and reports what arrived.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["pipe"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "No input needed.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {},
+        "schema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "report",
+        "description": "Byte count and SHA-256 of the bytes stream, and every event received.",
+        "contentType": "application/json",
+        "guaranteed": true
+      }
+    ]
+  },
+  "streams": {
+    "upload_bytes": {
+      "direction": "inbound",
+      "format": "bytes",
+      "description": "Raw bytes from the consumer, for example a file sent in chunks."
+    },
+    "upload_events": {
+      "direction": "inbound",
+      "format": "events",
+      "description": "Structured events from the consumer.",
+      "schema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string" }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "id": "main",
+      "name": "Main",
+      "description": "Receives inbound streams from the consumer"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 300
+  }
+}

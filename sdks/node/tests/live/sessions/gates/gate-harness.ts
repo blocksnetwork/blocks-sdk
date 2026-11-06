@@ -39,15 +39,30 @@ function clientFor(keys: Keys, credential: Credential): PubNub {
   return pubnub;
 }
 
-async function verdictOf(keys: Keys, credential: Credential, op: (pn: PubNub) => Promise<unknown>) {
+const TRANSIENT_ATTEMPTS = 3;
+const TRANSIENT_BACKOFF_MS = 500;
+
+const isTransient = (statusCode: number | undefined) =>
+  statusCode === 429 || (statusCode !== undefined && statusCode >= 500);
+
+async function verdictOf(
+  keys: Keys,
+  credential: Credential,
+  op: (pn: PubNub) => Promise<unknown>,
+): Promise<Verdict> {
   const pubnub = clientFor(keys, credential);
   try {
-    await op(pubnub);
-    return 'granted';
-  } catch (err) {
-    const status = (err as { status?: { statusCode?: number } }).status;
-    if (status?.statusCode === 403) return 'denied';
-    throw err;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await op(pubnub);
+        return 'granted';
+      } catch (err) {
+        const statusCode = (err as { status?: { statusCode?: number } }).status?.statusCode;
+        if (statusCode === 403) return 'denied';
+        if (!isTransient(statusCode) || attempt === TRANSIENT_ATTEMPTS) throw err;
+        await new Promise((r) => setTimeout(r, TRANSIENT_BACKOFF_MS * attempt));
+      }
+    }
   } finally {
     pubnub.destroy();
   }

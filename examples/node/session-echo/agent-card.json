@@ -1,0 +1,58 @@
+{
+  "identity": {
+    "agentName": "session_echo",
+    "displayName": "Session Echo",
+    "description": "Echoes each message sent in a session",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub",
+      "url": "http://www.pubnub.com"
+    },
+    "documentationUrl": "www.blocks.ai/docs",
+    "repositoryUrl": "https://github.com/blocksnetwork/blocks-sdk",
+    "iconUrl": "https://avatars.githubusercontent.com/u/272932456?s=200&v=4"
+  },
+  "capabilities": {
+    "taskKinds": [
+      "request"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "text",
+        "description": "Text to echo back",
+        "contentType": "text/plain",
+        "required": true,
+        "example": "Hello from a Blocks session!"
+      }
+    ],
+    "outputs": [
+      {
+        "id": "echoed",
+        "description": "Echoed text",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "echo",
+      "name": "Echo",
+      "description": "Echoes back the input text"
+    },
+    {
+      "id": "sessions",
+      "name": "Sessions",
+      "description": "Serves multi-exchange sessions"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1,
+    "maxRunningTimeSec": 30
+  }
+}

@@ -259,6 +259,41 @@ def test_retries_a_session_lookup_that_fails_transiently(start) -> None:
     assert h.api.looked_up == [SESSION, SESSION]
 
 
+@pytest.mark.parametrize(
+    "retry_after,wait_ms", [(20.0, 20_000), (None, 30_000)], ids=["retry-after", "no-hint"]
+)
+def test_waits_out_a_rate_limited_lookup_without_spending_a_retry(
+    start, retry_after: Optional[float], wait_ms: int
+) -> None:
+    h = start()
+    transient = ProviderApiError(503, None, "unavailable")
+    rate_limited = ProviderApiError(429, "RATE_LIMITED", "rate limited", retry_after)
+    h.api.lookup_answers.extend([transient, rate_limited, transient, transient])
+    timers = h.scheduler.pending()
+    h.open()
+    for looked_up, delay_ms in enumerate((250, wait_ms, 1_000, 3_000), start=1):
+        wait_for(lambda: len(h.api.looked_up) == looked_up and h.scheduler.pending() > timers)
+        h.scheduler.advance(delay_ms - 1)
+        assert len(h.api.looked_up) == looked_up
+        h.scheduler.advance(1)
+    h.ready()
+    assert len(h.api.looked_up) == 5
+
+
+def test_drops_session_open_when_a_lookup_retry_after_outlasts_the_consumer(start) -> None:
+    opened: List[Any] = []
+    h = start(on_session_open=opened.append)
+    h.api.lookup_answers.append(ProviderApiError(429, "RATE_LIMITED", "rate limited", 120.0))
+    h.open()
+    wait_for(lambda: h.api.looked_up)
+    quiesce()
+    h.scheduler.advance(200_000)
+    quiesce()
+    assert h.api.looked_up == [SESSION]
+    assert opened == []
+    assert h.client.published == []
+
+
 def test_admits_no_session_for_a_session_open_from_anyone_but_the_manifest_consumer(start) -> None:
     h = start(max_sessions=1)
     h.client.deliver(session_channel("s1"), "uuid-intruder", from_consumer("s1", 1, "session_open"))
@@ -779,9 +814,18 @@ def test_backs_off_between_failed_token_refreshes(short_ttl_start) -> None:
     assert len(h.api.refreshed) == 3
 
 
-def test_waits_out_a_rate_limited_token_refresh_retry_after(short_ttl_start) -> None:
+RATE_LIMITED_FAILURES = [
+    pytest.param(lambda wait: RateLimitedError("rate limited", wait), id="rate-limited-credential"),
+    pytest.param(
+        lambda wait: ProviderApiError(429, "RATE_LIMITED", "rate limited", wait), id="direct-429"
+    ),
+]
+
+
+@pytest.mark.parametrize("failure", RATE_LIMITED_FAILURES)
+def test_waits_out_a_rate_limited_token_refresh_retry_after(short_ttl_start, failure) -> None:
     h = short_ttl_start()
-    h.api.refresh_answers.append(RateLimitedError("rate limited", 30.0))
+    h.api.refresh_answers.append(failure(30.0))
     h.api.refresh_default = RouteToken("fresh", 60)
     h.scheduler.advance(48_000)
     assert len(h.api.refreshed) == 1
@@ -793,9 +837,10 @@ def test_waits_out_a_rate_limited_token_refresh_retry_after(short_ttl_start) -> 
     assert len(h.api.registered) == 1
 
 
-def test_waits_out_a_rate_limited_route_registration_retry_after() -> None:
+@pytest.mark.parametrize("failure", RATE_LIMITED_FAILURES)
+def test_waits_out_a_rate_limited_route_registration_retry_after(failure) -> None:
     h = Harness(SessionHandlers(on_exchange=_empty))
-    h.api.register_answers.append(RateLimitedError("rate limited", 20.0))
+    h.api.register_answers.append(failure(20.0))
     h.runtime.start()
     try:
         assert len(h.api.registered) == 1

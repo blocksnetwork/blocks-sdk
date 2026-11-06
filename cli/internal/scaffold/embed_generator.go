@@ -408,11 +408,14 @@ func renderAgentBlock(c *cardfetch.AgentCard, multi bool) string {
 	b.WriteString("      }\n")
 
 	b.WriteString("    } catch (err) {\n")
-	// Same blocksErrorMessage helper as the sign-in catch — keeps
-	// InsufficientBalance / BlocksAuthError handling consistent across
-	// the two error paths. Send-time InsufficientBalance is the common
+	// A connection refusal gets a Connect link. Anything else goes through
+	// the same blocksErrorMessage helper as the sign-in catch, which keeps
+	// InsufficientBalance / BlocksAuthError handling consistent across the
+	// two error paths. Send-time InsufficientBalance is the common
 	// real-world case for paid agents (sign-in itself doesn't charge).
-	b.WriteString("      outputEl.textContent += '\\n[' + blocksErrorMessage(err) + ']';\n")
+	b.WriteString("      if (!showConnectLink(err, outputEl)) {\n")
+	b.WriteString("        outputEl.textContent += '\\n[' + blocksErrorMessage(err) + ']';\n")
+	b.WriteString("      }\n")
 	b.WriteString("    } finally {\n")
 	b.WriteString("      sendBtn.disabled = false;\n")
 	b.WriteString("    }\n")
