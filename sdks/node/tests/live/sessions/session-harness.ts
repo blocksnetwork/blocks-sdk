@@ -110,10 +110,14 @@ export async function publishSessionAgent(prefix: string, created: string[]): Pr
   return agentName;
 }
 
+export function deleteAgent(name: string): Promise<unknown> {
+  return removeAgent(name, { baseUrl: getBaseUrl(), reason: 'session live test cleanup' });
+}
+
 export async function removeAgents(names: string[]): Promise<void> {
   for (const name of names) {
-    await removeAgent(name, { baseUrl: getBaseUrl(), reason: 'session live test cleanup' }).catch(
-      (err: unknown) => console.warn(`[cleanup] removeAgent(${name}) failed:`, err),
+    await deleteAgent(name).catch((err: unknown) =>
+      console.warn(`[cleanup] removeAgent(${name}) failed:`, err),
     );
   }
 }

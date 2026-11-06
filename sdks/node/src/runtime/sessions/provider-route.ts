@@ -1,6 +1,6 @@
 import type PubNub from 'pubnub';
 import { createLogger } from '../logger.js';
-import { retryAfterOf } from '../rate-limit.js';
+import { isRateLimited, rateLimitBackoffMs, retryAfterOf } from '../rate-limit.js';
 import { mapTransportCategory, type TransportStatusPayload } from '../transport-categories.js';
 import {
   ProviderApiError,
@@ -17,6 +17,7 @@ import { classifyInbound } from './counterpart.js';
 import { CHECKPOINT_MAX_OPEN_SESSIONS, CheckpointLoop } from './provider-checkpoints.js';
 import { isRefusalStatus } from './session-http.js';
 import { ProviderSession, type SessionHandlers, MAX_PENDING_EXCHANGES } from './provider-session.js';
+import { MAX_SESSION_READY_TIMEOUT_MS } from './session.js';
 import { TOKEN_REFRESH_AT, TOKEN_RETRY_MAX_MS, TOKEN_RETRY_MIN_MS } from './token-schedule.js';
 
 const logger = createLogger('SessionProvider');
@@ -24,7 +25,7 @@ const logger = createLogger('SessionProvider');
 const ROUTE_RETRY_MIN_MS = 1_000;
 const ROUTE_RETRY_MAX_MS = 60_000;
 const MANIFEST_CACHE_LIMIT = 256;
-const LOOKUP_RETRY_DELAYS_MS = [0, 250, 1_000, 3_000];
+const LOOKUP_RETRY_DELAYS_MS = [250, 1_000, 3_000];
 const ENDED_SESSION_LIMIT = 1_024;
 const MAX_SESSIONS_RANGE = { min: 1, max: CHECKPOINT_MAX_OPEN_SESSIONS };
 const OPENING_BUFFER_LIMIT = MAX_PENDING_EXCHANGES * 2;
@@ -84,6 +85,8 @@ class SessionRoute {
   /** A denial refresh succeeded and the subscription has not reconnected since. */
   private refreshedSinceConnect = false;
   private tokenTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Session lookups waiting out a retry; `close()` cuts them short. */
+  private readonly lookupWaits = new Set<() => void>();
   private tokenRetryMs = TOKEN_RETRY_MIN_MS;
   private closed = false;
 
@@ -146,6 +149,7 @@ class SessionRoute {
     this.checkpoints.stop();
     clearTimeout(this.tokenTimer);
     clearTimeout(this.connectTimer);
+    for (const wake of this.lookupWaits) wake();
     for (const session of this.sessions.values()) void session.endLocally(reason);
     this.sessions.clear();
     this.opening.clear();
@@ -247,23 +251,52 @@ class SessionRoute {
     return matches ? manifest : undefined;
   }
 
-  /** Retries a failed lookup with backoff; only SESSION_NOT_FOUND is final at once. */
+  /**
+   * Retries a failed lookup with backoff; only SESSION_NOT_FOUND is final at once. A rate-limited
+   * attempt waits out its `Retry-After` and is not counted, unless the wait would outlast the
+   * longest a consumer waits for session_ready.
+   */
   private async lookUpSession(sessionId: string): Promise<SessionManifest | undefined> {
-    for (const [attempt, delayMs] of LOOKUP_RETRY_DELAYS_MS.entries()) {
-      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const consumerGivesUpAt = Date.now() + MAX_SESSION_READY_TIMEOUT_MS;
+    let retries = 0;
+    let rateLimitedAttempts = 0;
+    for (;;) {
       if (this.closed) return undefined;
+      let delayMs: number | undefined;
       try {
         return await this.deps.api.getSession(sessionId);
       } catch (err) {
         if (errorCodeOf(err) === SESSION_NOT_FOUND) return undefined;
-        const final = attempt === LOOKUP_RETRY_DELAYS_MS.length - 1;
-        logger('warn', final ? 'session lookup failed; dropping session_open' : 'session lookup failed; retrying', {
+        const retryAfterMs = retryAfterOf(err);
+        if (isRateLimited(err)) {
+          const waitMs = rateLimitBackoffMs(rateLimitedAttempts++, retryAfterMs);
+          if (Date.now() + waitMs < consumerGivesUpAt) delayMs = waitMs;
+        } else {
+          delayMs = LOOKUP_RETRY_DELAYS_MS[retries++];
+        }
+        const next = delayMs === undefined ? 'dropping session_open' : 'retrying';
+        logger('warn', `session lookup failed; ${next}`, {
           sessionId,
+          retryInMs: delayMs,
           error: String(err),
         });
       }
+      if (delayMs === undefined) return undefined;
+      await this.lookupWait(delayMs);
     }
-    return undefined;
+  }
+
+  private lookupWait(delayMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const wake = (): void => {
+        clearTimeout(timer);
+        this.lookupWaits.delete(wake);
+        resolve();
+      };
+      const timer = setTimeout(wake, delayMs);
+      timer.unref?.();
+      this.lookupWaits.add(wake);
+    });
   }
 
   private scheduleTokenRefresh(ttlMinutes: number): void {

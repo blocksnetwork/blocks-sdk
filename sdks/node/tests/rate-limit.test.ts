@@ -1,11 +1,37 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  BlocksHttpError,
+  RATE_LIMIT_BACKOFF_BASE_MS,
+  RATE_LIMIT_BACKOFF_MAX_MS,
+  RATE_LIMIT_JITTER_FRACTION,
+  RATE_LIMIT_MIN_WAIT_MS,
+  RATE_LIMIT_NO_HINT_HOLD_MS,
   RETRY_AFTER_MAX_MS,
   RateLimitHold,
   RateLimitedError,
+  connectRetryDelayMs,
+  isRateLimited,
   parseRetryAfter,
-  rateLimitBackoffMs,
 } from '../src/runtime/rate-limit.js';
+
+// The Python SDK asserts its own constants against the same file.
+const SHARED_CONSTANTS = fileURLToPath(new URL('../../../fixtures/rate-limit.json', import.meta.url));
+
+describe('rate-limit constants', () => {
+  it('match the values both SDKs share', () => {
+    const { about: _about, ...shared } = JSON.parse(readFileSync(SHARED_CONSTANTS, 'utf8'));
+    expect({
+      retryAfterMaxSeconds: RETRY_AFTER_MAX_MS / 1000,
+      noHintHoldSeconds: RATE_LIMIT_NO_HINT_HOLD_MS / 1000,
+      backoffBaseSeconds: RATE_LIMIT_BACKOFF_BASE_MS / 1000,
+      backoffMaxSeconds: RATE_LIMIT_BACKOFF_MAX_MS / 1000,
+      minWaitSeconds: RATE_LIMIT_MIN_WAIT_MS / 1000,
+      jitterFraction: RATE_LIMIT_JITTER_FRACTION,
+    }).toEqual(shared);
+  });
+});
 
 describe('parseRetryAfter', () => {
   const now = Date.parse('2026-01-01T00:00:00Z');
@@ -32,14 +58,17 @@ describe('parseRetryAfter', () => {
   });
 });
 
-describe('rateLimitBackoffMs', () => {
+describe('connectRetryDelayMs', () => {
   it.each([
-    ['honors Retry-After', 0, 7_000, 7_000],
-    ['floors a zero Retry-After', 3, 0, 1_000],
-    ['doubles without one', 1, undefined, 60_000],
-    ['caps a long run of 429s', 2_000, undefined, 600_000],
-  ])('%s', (_name, attempt, retryAfterMs, expected) => {
-    expect(rateLimitBackoffMs(attempt, retryAfterMs)).toBe(expected);
+    ['honors Retry-After', 0, 7_000, 0, 7_000],
+    ['floors a zero Retry-After', 3, 0, 0, 1_000],
+    ['falls back to 30 s without one', 0, undefined, 0, 30_000],
+    ['doubles per consecutive 429', 1, undefined, 0, 60_000],
+    ['caps a long run of 429s', 2_000, undefined, 0, 600_000],
+    ['adds at most a tenth of the wait as jitter', 0, 3_400_000, 1, 3_740_000],
+    ['scales jitter with the wait', 0, undefined, 0.5, 31_500],
+  ])('%s', (_name, attempt, retryAfterMs, random, expected) => {
+    expect(connectRetryDelayMs(attempt, retryAfterMs, () => random)).toBeCloseTo(expected);
   });
 });
 
@@ -58,5 +87,20 @@ describe('RateLimitHold', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('isRateLimited', () => {
+  it.each([
+    ['a RateLimitedError', new RateLimitedError('held', 1_000), true],
+    ['an HTTP 429 from a Blocks endpoint', new BlocksHttpError(429, 'slow down'), true],
+    // A custom token provider's error is not a Blocks endpoint's, whatever its status.
+    ['a token provider error with status 429', Object.assign(new Error('429'), { status: 429 }), false],
+    ['a 429 wrapped as a cause', new Error('refresh failed', { cause: new RateLimitedError('held', 1) }), true],
+    // A customer token endpoint's failure carries no status: it is a failed refresh, not a wait.
+    ['a token endpoint 429', new Error('token endpoint failed: HTTP 429'), false],
+    ['an HTTP 503', new BlocksHttpError(503, 'unavailable'), false],
+  ])('%s → %s', (_name, err, expected) => {
+    expect(isRateLimited(err)).toBe(expected);
   });
 });

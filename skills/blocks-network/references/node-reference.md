@@ -13,6 +13,7 @@ This file is long: jump to the section you need instead of reading it whole.
 | [Streaming Capabilities](#streaming-capabilities) | Card `streams` block (`_default` key), creating and consuming streams |
 | [Consumer Auth Patterns](#consumer-auth-patterns) | API key vs `tokenEndpoint` vs embedded auth for browsers |
 | [Trigger Scripts](#trigger-scripts-consumer-task-submission) | Submitting a task from a script and reading its artifacts |
+| [Sessions (experimental)](#sessions-experimental) | `BlocksClient` consumer, session handlers, recovery, session errors |
 | [TaskClient & TaskSession](#taskclient--tasksession) | `sendMessage` options, session events, `onCancelRequested`, artifact download and decoding, errors |
 | [Environment Variables](#environment-variables-env) | `.env` contents and SDK env vars |
 | [Transport-Layer Resilience](#transport-layer-resilience) | Reconnect behavior and transport log events |
@@ -393,9 +394,136 @@ client.destroy();
 
 ---
 
-## Sessions (preview, not yet available)
+## Sessions (experimental)
 
-Sessions -- one durable interaction of many exchanges, replacing one task per turn -- are not yet available. The consumer surface (a new `BlocksClient` with `call`, `openSession`, `send`) and provider handlers (`onSessionOpen`, `onExchange`, `onSessionClose`) may ship in the Node SDK marked experimental, but the service refuses them with `SESSIONS_DISABLED` until sessions are enabled. Do not generate code that uses them; use `TaskClient` and task handlers. `TaskClient` will become a deprecated subclass of `BlocksClient`, so task code keeps working.
+A session is one durable interaction between one consumer and one provider process. The consumer opens it once and sends many **exchanges** over it; each exchange is one input that ends in exactly one outcome. Use a session for chat and other multi-turn work instead of one task per turn.
+
+- **Experimental.** `BlocksClient` and the session handlers are marked `@experimental` and may change before general availability. The service refuses them with `SESSIONS_DISABLED` until sessions are enabled for your organization.
+- **Free agents only.** Opening a session with a paid agent throws `SessionPaidAgentError`; a paid agent's instance logs it once and serves tasks only.
+- **No streams or large artifacts in sessions yet.** Artifacts travel inline, so an artifact over the 16 KB inline limit fails its exchange with `handler_error`. Use a task when you need `createStream()` or file-sized artifacts.
+- `TaskClient` and task handlers are unchanged and keep working alongside sessions.
+
+### Consumer (`BlocksClient`)
+
+```typescript
+import 'dotenv/config';
+import { BlocksClient, decodeInlineArtifact } from '@blocks-network/sdk';
+
+const client = await BlocksClient.create({
+  billingMode: 'free',
+  apiKey: process.env.BLOCKS_API_KEY!, // or tokenEndpoint / tokenProvider / authProvider, as for TaskClient
+});
+
+try {
+  const session = await client.openSession('my_agent'); // resolves once the session is ready
+  try {
+    for (const text of ['Hello', 'And again']) {
+      const exchange = session.send(text); // a string is sent as one text part
+      exchange.onProgress((p) => console.log('progress:', p.message));
+      const outcome = await exchange.waitForOutcome(30_000);
+      if (outcome.state === 'completed') {
+        for (const ref of outcome.artifacts) console.log(new TextDecoder().decode(decodeInlineArtifact(ref)));
+      } else {
+        console.error(outcome.state, outcome.error);
+      }
+    }
+  } finally {
+    await session.close();
+  }
+} finally {
+  client.destroy();
+}
+```
+
+**BlocksClient.create(options)** -- same options as `TaskClient.create()`: `billingMode` (required) and exactly one credential (`apiKey`, `tokenEndpoint`, `tokenProvider`, `authProvider`), plus `cdmUrl`, `baseUrl`, keys and `rpcHeaders`.
+
+**client.openSession(agentName, { idempotencyKey?, readyTimeoutMs? })** -- returns a `Session` once the agent reports it ready, or rejects with a typed error. `readyTimeoutMs` defaults to 30 s and may be at most 2 minutes (a larger value throws `RangeError`); on expiry the SDK closes the session and rejects. `idempotencyKey` (at most 256 characters) makes a retried open whose response was lost return the original session. A key names one open. The client holds it until that session is released and any abandoned open request under it has settled; reusing it meanwhile, or for a session already past opening that another client holds, throws `SessionError` with code `session_already_open` and leaves that session alone. A replay of an open that has not reached ready is not refused. A key whose session has ended throws `SessionNotFoundError`. Another client may reuse a key only once the earlier attempt's process is gone; a rejected call is not enough, as its session may still be tearing down. Use a new key per open.
+
+**client.call(agentName, input, { timeoutMs?, readyTimeoutMs?, idempotencyKey? })** -- one-shot: opens a session, sends one exchange, waits for its outcome, closes the session, and returns the `ExchangeOutcome`.
+
+**client.destroy()** -- closes every session the client holds; opens still in flight reject with `session_canceled`, and later opens are refused.
+
+**Session** -- `sessionId`, `state` (`open` | `ready` | `closing` | `closed` | `failed` | `canceled`), `onStateChange(cb)` (returns an unsubscribe; the terminal state is delivered at most once), `send(input)`, `recover()`, `close()`, `Symbol.asyncDispose` (so `await using session = ...` works). `close()` is idempotent and resolves once the session is terminal and its connection released.
+
+**session.send(input)** -- synchronous; returns an `Exchange`. `input` is a string or an array of text request parts built with `textPart()`. File parts are not supported on sessions yet: `filePart()` input throws `TypeError`. Exchanges run one at a time per session, in send order. At most 8 may be pending (in flight plus queued): a ninth throws `SessionBackpressureError`, so await outcomes rather than firing unbounded sends. Throws `SessionError` with code `session_not_ready` unless the session is `ready`; the refusal starts as soon as the session starts ending, so an `onStateChange` or outcome callback cannot start new work. Never re-send an exchange: one whose publish fails settles `failed` with `publish_failed` instead of retrying, and you send again with a new `send()`.
+
+**Exchange** -- `exchangeId`, `onProgress(cb)`, `onArtifact(cb)` (replays artifacts already received), `waitForOutcome(timeoutMs?)` (resolves with the one outcome, immediately when already settled; rejects only on its own timeout), `cancel()` (asks the provider to stop; the outcome, normally `canceled`, is still delivered).
+
+**ExchangeOutcome** -- `{ exchangeId, state: 'completed' | 'failed' | 'canceled', error?, reason?, artifacts: ArtifactRef[] }`. `artifacts` holds every artifact the exchange produced, in arrival order, so a `call()` caller needs no `onArtifact` listener. Decode inline refs with `decodeInlineArtifact(ref)`. When the session ends with exchanges still pending, the SDK settles them itself: `canceled` after a close, `failed` with the session's error after a failure. `error: 'publish_failed'` means the exchange never reached the agent; the session stays ready and you may send again.
+
+**Limits.** The service closes a session that settles no exchange for 10 minutes (`idle_timeout`; a single exchange running longer is canceled with it) and any session older than 12 hours (`max_lifetime`). Both arrive as the `closed` state.
+
+### Recovery
+
+The SDK recovers on its own: after a reconnect, and when a message gap lasts longer than 750 ms, it replays the session's history (newest page first, at most 10 pages of 100, giving up after 10 s for all pages together) and then applies the service's record of the session, so every exchange still settles exactly once and no callback fires twice. Call `session.recover()` yourself only to force a catch-up; never read PubNub history for a session directly. `recover()` rejects only when both the history replay and the service's record are unavailable; the record read also gives up after 10 s. Recoveries run one at a time. A network blip does not end the session. If the service stops accepting the session's credentials and the one refresh that earns is refused, the session fails locally with `session_access_revoked`; a rate-limited refresh is waited out and retried, not counted as refused. A scheduled token refresh that is rate limited (HTTP 429) is waited out per `Retry-After`; so is a refresh after the service denied the session's credentials, which retries after `Retry-After` until it succeeds or is refused; only a refusal fails the session with `session_access_revoked`. Losing the provider process does: the session fails (`route_lost` or `route_unhealthy`), and there is no resume across processes, so open a new session and resend.
+
+### Provider (session handlers)
+
+An instance serves sessions when `startAgentInstance()` is given `onExchange`. `blocks run` starts the card's task handler only, so a session provider calls `startAgentInstance()` from its own entry script:
+
+```typescript
+import 'dotenv/config';
+import { readFileSync } from 'node:fs';
+import { startAgentInstance, type AgentCard, type HandlerResult } from '@blocks-network/sdk';
+
+const card = JSON.parse(readFileSync(new URL('./agent-card.json', import.meta.url), 'utf-8')) as AgentCard;
+const history = new Map<string, string[]>(); // per-session state, keyed by sessionId
+
+const instance = await startAgentInstance({
+  agentName: card.identity.agentName,
+  card,
+  maxSessions: 4,
+  onSessionOpen: (ctx) => {
+    history.set(ctx.sessionId, []);
+  },
+  onExchange: async (ctx, exchange): Promise<HandlerResult> => {
+    const text = exchange.requestParts.find((p) => typeof p.text === 'string')?.text ?? '';
+    history.get(ctx.sessionId)?.push(text);
+    exchange.reportStatus('Thinking...');
+    return { artifacts: [{ data: `Turn ${history.get(ctx.sessionId)?.length}: ${text}`, mimeType: 'text/plain' }] };
+  },
+  onSessionClose: (ctx) => {
+    history.delete(ctx.sessionId);
+  },
+});
+
+process.on('SIGINT', () => {
+  instance.stop();
+  process.exit(0);
+});
+```
+
+**onSessionOpen(ctx)** -- runs once before the session becomes ready. A throw, or not returning within 2 minutes, fails the session with `provider_error`.
+
+**onExchange(ctx, exchange)** → `HandlerResult` -- runs once per exchange, one at a time per session; sessions run concurrently with each other. Return completes the exchange and throw fails it with `handler_error`; once the exchange is canceled it settles `canceled`, whatever the handler then returns or throws. The return value is the same `HandlerResult` a task handler returns. The SDK drops, without calling your handler, an `exchangeId` that is in flight, queued, or among the session's last 256 settled, so a consumer's re-sent exchange does not run twice.
+
+**onSessionClose(ctx, reason)** -- runs once when a session whose `onSessionOpen` returned ends, for any reason (`consumer_closed`, `provider_closed`, `idle_timeout`, `max_lifetime`, `route_lost`, `provider_error` and the other failure codes). Errors are logged, not sent. If the service refuses the instance's route credentials and a refresh fails, the instance ends every session on that route with `route_lost` and registers a new route. Release per-session state here.
+
+**maxSessions** -- sessions one instance serves at once, 1 to 256; defaults to `concurrency`. Sessions and tasks are budgeted separately, so an idle session holds no task slot. An open beyond the limit fails with `provider_at_capacity`.
+
+**SessionContext** (`ctx`) -- `sessionId`, `agentName`, `orgId` (`null` when the caller has no org), `ownerId`, `callerClaims`, and `close()` to end the session from the provider side (`reason: 'provider_closed'`).
+
+**ExchangeContext** (`exchange`) -- `exchangeId`, `requestParts`, `reportStatus(message)` (progress, at most one a second; a pending status goes out before the outcome), `publishArtifact(data, { mimeType?, fileName?, outputId? })`, `downloadInputArtifact(part)`, `cancelSignal` and `isCancelled`. Check `cancelSignal` in long-running work: a consumer `cancel()` and a session close both trigger it.
+
+An instance that registers `onExchange` still serves tasks through `handler`. If sessions are not enabled for the agent's org, the instance logs it once and serves tasks only.
+
+### Session errors
+
+Every error below extends `SessionError` (`.code`) and is exported from `@blocks-network/sdk`. Branch with `instanceof`.
+
+| Class | `code` | Thrown by | Meaning |
+|---|---|---|---|
+| `SessionsDisabledError` | `SESSIONS_DISABLED` | any session call | Sessions are not enabled yet for your organization or for the agent's organization |
+| `SessionPaidAgentError` | `SESSION_PAID_AGENT_UNSUPPORTED` | `openSession()`, `call()` | The agent is paid; sessions serve free agents only |
+| `SessionNoRouteError` | `SESSION_NO_ROUTE` | `openSession()`, `call()` | No running instance of the agent is serving sessions with capacity. There is no queue: start the agent or retry later |
+| `SessionNotFoundError` | `SESSION_NOT_FOUND` | `openSession()`, `call()` | The `idempotencyKey` names a session that has ended; open again under a new key |
+| `SessionBackpressureError` | `session_backpressure` | `send()` | 8 exchanges already pending |
+| `SessionFailedError` | `route_lost`, `route_unhealthy`, `provider_error`, `provider_at_capacity`, `session_access_revoked` | `openSession()`, `call()` | The session failed: the provider process went away or stopped receiving, the provider failed, the instance was full, or access was revoked |
+| `SessionError` | `session_not_ready` | `send()` | The session is still opening, closing, or ended |
+| `SessionError` | `session_already_open` | `openSession()`, `call()` | The `idempotencyKey` names a session already past `open` (held by another client, or ended), or one this client is still opening or holding; a replay still `open` is not refused. Open again under a new key |
+| `SessionError` | `session_canceled`, `session_closed` | `openSession()`, `call()` | The session ended before it was ready, including a ready timeout or `client.destroy()` |
+
+`handler_error` and `publish_failed` are never thrown: they arrive as `ExchangeOutcome.error`. A session that fails after it is ready reports `failed` through `onStateChange`, and its pending exchanges settle `failed` with the same code.
 
 ---
 
@@ -442,7 +570,7 @@ const value: unknown = downloaded.mimeType === 'application/json' ? JSON.parse(t
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminalState` and `.streamId`. |
 | `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`process.exit(1)`). Non-fatal connect failures (network, 5xx, `404 not-published`, and the `403 PermissionDenied` a public agent answers when the key owner may not run it) do not block startup: the process stays up without a control subscription until restarted with a credential that stands. |
-| `RateLimitedError` | `AgentAuth` connect/refresh, `ConsumerAuth` token calls | Retryable, never fatal — the API key is over its per-key rate limit (HTTP 429 `RATE_LIMITED`). `retryAfterMs` is the backend's `Retry-After`. The SDK makes no API-key call until it passes, and the runtime retries a rate-limited connect on its own. A busy key is never reported as `API_KEY_INVALID`. |
+| `RateLimitedError` | `AgentAuth` connect, `ConsumerAuth` token calls | Retryable, never fatal — the API key is over its per-key rate limit (HTTP 429 `RATE_LIMITED`). `retryAfterMs` is the backend's `Retry-After`. The SDK makes no API-key call until it passes. The runtime retries a rate-limited connect on its own, after `Retry-After` plus up to 10% jitter, or 30 s doubling to 10 minutes without one. `ConsumerAuth`'s proactive refresh keeps going through a rate limit on the same schedule and never reaches `AuthRefreshFailedError` or `onAuthError` because of it; a reactive refresh inside the wait records `AuthRefreshFailedError` with the `RateLimitedError` as its cause. A busy key is never reported as `API_KEY_INVALID`. |
 | `AuthRequiredError` | `TaskClient.sendMessage` | The agent needs an integration connection the caller has not connected or approved; no task was created. Carries `integration`, `reason`, `connectUrl`; open `connectUrl` for the user, then retry. Extends `RpcError`. |
 | `ConnectionRequiredError` | `ctx.connections.getToken` | The task's user must connect or approve the integration. Carries `integration`, `reason`, `connectUrl`. |
 | `ConnectionAccessError` | `ctx.connections.getToken` | Any other token failure (task ended, integration not declared or disabled, feature off). Carries `status`, `code`. |

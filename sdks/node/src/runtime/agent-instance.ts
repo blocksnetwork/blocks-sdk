@@ -61,7 +61,7 @@ import {
   type PnEnvironment,
 } from './cdm-config.js';
 import { AgentAuth, AgentAuthFatalError } from './agent-auth.js';
-import { RateLimitedError, rateLimitBackoffMs } from './rate-limit.js';
+import { RateLimitedError, connectRetryDelayMs } from './rate-limit.js';
 import {
   CURRENT_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
@@ -319,9 +319,6 @@ const log = (
   message: string,
   meta?: Record<string, unknown>,
 ): void => baseLog('[AgentInstance]', level, message, meta);
-
-/** Spread on a rate-limited connect retry, so instances sharing a key do not retry in step. */
-const CONNECT_RETRY_JITTER_MS = 1_000;
 
 /**
  * If `err` is a fatal auth error (forced offline / revoked API key), log it and
@@ -2427,9 +2424,7 @@ export const startAgentInstance = async (
       const message = err instanceof Error ? err.message : String(err);
       if (err instanceof RateLimitedError) {
         if (stopped) return;
-        const retryInMs =
-          rateLimitBackoffMs(rateLimitedConnects++, err.retryAfterMs) +
-          Math.random() * CONNECT_RETRY_JITTER_MS;
+        const retryInMs = connectRetryDelayMs(rateLimitedConnects++, err.retryAfterMs);
         log('warn', `agent connect rate limited: ${agentName}; retrying`, {
           event: 'agent_connect_rate_limited',
           agentName,

@@ -1,6 +1,6 @@
 import { AgentAuthHttpError } from '../agent-auth.js';
 import type { JsonValue } from '../pubnub-types.js';
-import { retryAfterFrom } from '../rate-limit.js';
+import { BlocksHttpError, retryAfterFrom } from '../rate-limit.js';
 import type { CheckpointBatch } from './provider-checkpoints.js';
 import { isRefusalStatus } from './session-http.js';
 
@@ -14,15 +14,14 @@ export const TASK_ONLY_CODES: ReadonlySet<string> = new Set([
   SESSION_PAID_AGENT_UNSUPPORTED,
 ]);
 
-export class ProviderApiError extends Error {
+export class ProviderApiError extends BlocksHttpError {
   constructor(
-    readonly status: number,
+    status: number,
     readonly code: string | undefined,
     message: string,
-    /** The response's `Retry-After`, when it had one. */
-    readonly retryAfterMs?: number,
+    retryAfterMs?: number,
   ) {
-    super(message);
+    super(status, message, retryAfterMs);
     this.name = 'ProviderApiError';
   }
 }

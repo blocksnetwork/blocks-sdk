@@ -1,0 +1,63 @@
+{
+  "identity": {
+    "agentName": "connections_google_node",
+    "displayName": "connections Google (Node)",
+    "description": "Acts as the task's user in Google through an integration connection, and lists their recent Drive files.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": [
+      "request"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "No input needed.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {},
+        "schema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "The signed-in Google account and up to five recent Drive file names.",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "main",
+      "name": "Main",
+      "description": "Reads the user's Google account and recent Drive files"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1
+  },
+  "connections": [
+    {
+      "integration": "google",
+      "scopes": [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/drive.metadata.readonly"
+      ],
+      "required": true
+    }
+  ]
+}

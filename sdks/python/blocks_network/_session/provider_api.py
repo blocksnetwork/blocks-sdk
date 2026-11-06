@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 from urllib.parse import quote
 
+from .._rate_limit import BlocksHttpError
 from ..agent_auth import AgentAuthHttpError, _HttpError
 from .errors import SESSION_PAID_AGENT_UNSUPPORTED, SESSIONS_DISABLED
 from .token_schedule import is_refusal_status
@@ -16,14 +17,16 @@ from .token_schedule import is_refusal_status
 
 TASK_ONLY_CODES = frozenset({SESSIONS_DISABLED, SESSION_PAID_AGENT_UNSUPPORTED})
 
-# (method, url, JSON body) -> (status, parsed body); raises only when no response arrived.
-RequestFn = Callable[[str, str, Optional[Dict[str, Any]]], Tuple[int, Any]]
+# (method, url, JSON body) -> (status, parsed body, Retry-After seconds); raises only when no
+# response arrived.
+RequestFn = Callable[[str, str, Optional[Dict[str, Any]]], Tuple[int, Any, Optional[float]]]
 
 
-class ProviderApiError(Exception):
-    def __init__(self, status: int, code: Optional[str], message: str) -> None:
-        super().__init__(message)
-        self.status = status
+class ProviderApiError(BlocksHttpError):
+    def __init__(
+        self, status: int, code: Optional[str], message: str, retry_after: Optional[float] = None
+    ) -> None:
+        super().__init__(status, message, retry_after)
         self.code = code
 
 
@@ -164,19 +167,21 @@ class ProviderSessionApi:
             raise ValueError("checkpoint response is not the acknowledgement of this batch")
 
     def _request(self, method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Any:
-        status, parsed = self._request_fn(method, f"{self._base_url}{path}", body)
+        status, parsed, retry_after = self._request_fn(method, f"{self._base_url}{path}", body)
         if 200 <= status < 300:
             return parsed
         fields = parsed if isinstance(parsed, dict) else {}
         code = fields.get("code") if _is_text(fields.get("code")) else None
         message = fields.get("error") if _is_text(fields.get("error")) else f"HTTP {status}"
-        raise ProviderApiError(status, code, f"{method} {path} failed: {message}")
+        raise ProviderApiError(status, code, f"{method} {path} failed: {message}", retry_after)
 
 
 def agent_auth_request(agent_auth: Any) -> RequestFn:
     """A :data:`RequestFn` over ``AgentAuth.authenticated_request``, which raises on non-2xx."""
 
-    def request(method: str, url: str, body: Optional[Dict[str, Any]]) -> Tuple[int, Any]:
+    def request(
+        method: str, url: str, body: Optional[Dict[str, Any]]
+    ) -> Tuple[int, Any, Optional[float]]:
         data = None if body is None else json.dumps(body).encode("utf-8")
         headers = None if body is None else {"Content-Type": "application/json"}
         try:
@@ -184,7 +189,7 @@ def agent_auth_request(agent_auth: Any) -> RequestFn:
                 url, method=method, body=data, headers=headers
             )
         except _HttpError as exc:
-            return exc.status, exc.body
-        return status, parsed
+            return exc.status, exc.body, exc.retry_after
+        return status, parsed, None
 
     return request

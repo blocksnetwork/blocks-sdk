@@ -425,6 +425,35 @@ describe('recovery cutoffs', () => {
     expect(endingSeen).toEqual([true]);
   });
 
+  it('applies a local end requested during recovery though a later recovery step throws', () => {
+    const outcomes: { exchangeId: string; state: string }[] = [];
+    const receiver: ConsumerSessionReceiver = new ConsumerSessionReceiver({
+      parties: { sessionId: 's-1', counterpartUuid: PROVIDER, backendUuid: BACKEND },
+      state: 'ready',
+      recover: async () => {},
+      events: {
+        onOutcome: ({ exchangeId, state }) => {
+          outcomes.push({ exchangeId, state });
+          receiver.terminate('closed');
+        },
+      },
+    });
+    receiver.trackExchange('ex-1');
+    receiver.trackExchange('ex-2');
+    receiver.beginRecovery();
+    // Parsing rejects refs that are not a list; here one stands in for any fault.
+    const faulty = { exchangeId: 'ex-2', state: 'completed', error: null, artifactRefs: null };
+    const snapshot = { ...record('ready'), exchanges: [...record('ready').exchanges, faulty] };
+
+    expect(() => receiver.finishRecovery(snapshot as never)).toThrow(TypeError);
+
+    expect(receiver.state).toBe('closed');
+    expect(outcomes).toEqual([
+      { exchangeId: 'ex-1', state: 'completed' },
+      { exchangeId: 'ex-2', state: 'canceled' },
+    ]);
+  });
+
   it('drops an outcome held behind a gap when the session ends', () => {
     const { receiver, outcomes } = settling();
     receiver.receive(PROVIDER, { ...progress(2), type: 'exchange_outcome', state: 'completed' });

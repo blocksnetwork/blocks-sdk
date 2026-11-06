@@ -1,0 +1,67 @@
+{
+  "identity": {
+    "agentName": "connections_node",
+    "displayName": "connections (Node)",
+    "description": "Acts as the task's user in Google, Microsoft 365 and Salesforce through integration connections, and reports who it is signed in as in each.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": ["request"]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "No input needed.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {},
+        "schema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "One line per integration: the signed-in account, or what the user has to do.",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "main",
+      "name": "Main",
+      "description": "Reports the user's account in each connected service"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1
+  },
+  "connections": [
+    {
+      "integration": "google",
+      "scopes": ["openid", "https://www.googleapis.com/auth/userinfo.email"],
+      "required": false
+    },
+    {
+      "integration": "microsoft",
+      "scopes": ["openid", "email", "profile", "offline_access", "User.Read"],
+      "required": false
+    },
+    {
+      "integration": "salesforce",
+      "scopes": ["api", "refresh_token"],
+      "required": false
+    }
+  ]
+}

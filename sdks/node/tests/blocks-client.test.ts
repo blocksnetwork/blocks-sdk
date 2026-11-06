@@ -798,7 +798,7 @@ describe('Session transport failures', () => {
 
 describe('Session token rotation', () => {
   const TOKEN_URL = 'https://api.test/api/v1/sessions/ses1/token';
-  let tokenResponses: Array<() => Response>;
+  let tokenResponses: Array<() => Response | Promise<Response>>;
 
   const tokenCalls = () => fetchMock.mock.calls.filter(([url]) => url === TOKEN_URL);
   const deny = (pn = latest()) => {
@@ -854,6 +854,25 @@ describe('Session token rotation', () => {
     await vi.advanceTimersByTimeAsync(48 * 60_000);
     expect(tokenCalls()).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(5_000);
+    expect(tokenCalls()).toHaveLength(2);
+    expect(latest().setToken).toHaveBeenLastCalledWith('fresh');
+  });
+
+  it('waits out the Retry-After of a rate-limited rotation before retrying', async () => {
+    await openWithFakeTimers();
+    tokenResponses.push(
+      () =>
+        new Response(JSON.stringify({ error: 'slow down' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '90' },
+        }),
+    );
+
+    await vi.advanceTimersByTimeAsync(48 * 60_000);
+    expect(tokenCalls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(90_000 - 1);
+    expect(tokenCalls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(tokenCalls()).toHaveLength(2);
     expect(latest().setToken).toHaveBeenLastCalledWith('fresh');
   });
@@ -915,6 +934,153 @@ describe('Session token rotation', () => {
       error: 'session_access_revoked',
     });
     expect(latest().destroy).toHaveBeenCalled();
+  });
+
+  it('holds proactive rotation while a rate-limited denial refresh waits', async () => {
+    await openWithFakeTimers();
+    tokenResponses.push(
+      () =>
+        new Response(JSON.stringify({ error: 'slow down' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '20' },
+        }),
+    );
+
+    await vi.advanceTimersByTimeAsync(48 * 60_000 - 10_000);
+    deny();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tokenCalls()).toHaveLength(1);
+
+    // Rotation was due 10 s in; the denial's 20 s wait still holds.
+    await vi.advanceTimersByTimeAsync(20_000 - 1);
+    expect(tokenCalls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tokenCalls()).toHaveLength(2);
+    expect(latest().setToken).toHaveBeenLastCalledWith('fresh');
+  });
+
+  it('resumes the subscription when a rotation lands during a rate-limited denial wait', async () => {
+    const session = await openWithFakeTimers();
+    const pn = latest();
+    let landRotation!: (r: Response) => void;
+    tokenResponses.push(
+      () => new Promise<Response>((resolve) => (landRotation = resolve)),
+      () =>
+        new Response(JSON.stringify({ error: 'slow down' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '600' },
+        }),
+    );
+
+    // A rotation is in flight when the denial's own refresh is held for 600 s.
+    await vi.advanceTimersByTimeAsync(48 * 60_000);
+    deny();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tokenCalls()).toHaveLength(2);
+    expect(pn.reconnect).not.toHaveBeenCalled();
+
+    landRotation(json(200, { pamToken: 'rotated', ttlMinutes: 60 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pn.setToken).toHaveBeenLastCalledWith('rotated');
+    expect(pn.reconnect).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(tokenCalls()).toHaveLength(2);
+    expect(session.state).toBe('ready');
+  });
+
+  it('leaves the retries to a rate-limited denial wait when an in-flight rotation fails', async () => {
+    await openWithFakeTimers();
+    let landRotation!: (r: Response) => void;
+    tokenResponses.push(
+      () => new Promise<Response>((resolve) => (landRotation = resolve)),
+      () =>
+        new Response(JSON.stringify({ error: 'slow down' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '20' },
+        }),
+    );
+
+    await vi.advanceTimersByTimeAsync(48 * 60_000);
+    deny();
+    await vi.advanceTimersByTimeAsync(0);
+    landRotation(json(503, { error: 'unavailable' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tokenCalls()).toHaveLength(2);
+
+    // Rotation's own 5 s retry would land inside the 20 s hold.
+    await vi.advanceTimersByTimeAsync(20_000 - 1);
+    expect(tokenCalls()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tokenCalls()).toHaveLength(3);
+  });
+
+  it('ignores a denial refresh that fails after a rotation already answered the denial', async () => {
+    const session = await openWithFakeTimers();
+    const pn = latest();
+    let answerDenial!: (r: Response) => void;
+    tokenResponses.push(
+      () => new Promise<Response>((resolve) => (answerDenial = resolve)),
+      () => json(200, { pamToken: 'rotated', ttlMinutes: 60 }),
+    );
+
+    await vi.advanceTimersByTimeAsync(48 * 60_000 - 1);
+    deny();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(pn.setToken).toHaveBeenLastCalledWith('rotated');
+    expect(pn.reconnect).toHaveBeenCalledTimes(1);
+
+    answerDenial(json(503, { error: 'unavailable' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(session.state).toBe('ready');
+  });
+
+  it('sends no denial retry once the session closes during the wait', async () => {
+    const session = await openWithFakeTimers();
+    tokenResponses.push(
+      () =>
+        new Response(JSON.stringify({ error: 'slow down' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '20' },
+        }),
+    );
+
+    deny();
+    await vi.advanceTimersByTimeAsync(0);
+    const closing = session.close();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await closing;
+    const calls = tokenCalls().length;
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(tokenCalls()).toHaveLength(calls);
+  });
+
+  it('waits out a rate-limited refresh after a denial instead of revoking', async () => {
+    const session = await openWithFakeTimers();
+    const pn = latest();
+    tokenResponses.push(
+      () =>
+        new Response(JSON.stringify({ error: 'slow down' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '20' },
+        }),
+    );
+
+    deny();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tokenCalls()).toHaveLength(1);
+    expect(session.state).toBe('ready');
+
+    deny();
+    await vi.advanceTimersByTimeAsync(20_000 - 1);
+    expect(tokenCalls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(tokenCalls()).toHaveLength(2);
+    expect(pn.setToken).toHaveBeenLastCalledWith('fresh');
+    expect(pn.reconnect).toHaveBeenCalledTimes(1);
+    expect(session.state).toBe('ready');
   });
 
   it('fails the session when the refreshed token is denied before it reconnects', async () => {

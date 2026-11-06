@@ -388,7 +388,6 @@ func TestValidateUniqueIDsPass(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // contentType four-rule acceptance / rejection / class invariants
-// (mirrors tests/schemas/agent-card-contentType.test.ts).
 // ---------------------------------------------------------------------------
 
 func cardWithInput(t *testing.T, dir string, input map[string]interface{}) string {

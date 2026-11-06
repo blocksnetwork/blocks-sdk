@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 from ._rate_limit import (
     HTTP_TOO_MANY_REQUESTS,
     RateLimitedError,
-    RateLimitGate,
-    retry_after_of,
+    RateLimitHold,
+    retry_after_from,
 )
 from .protocol_version import CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER
 from .tls import https_context
@@ -134,7 +134,7 @@ class AgentAuth:
         self._refresh_token: Optional[str] = None
         self._registration_payload: Optional[RegistrationPayload] = None
         self._lock = threading.Lock()
-        self._rate_limit = RateLimitGate()
+        self._rate_limit = RateLimitHold()
 
     # -- Public API ---------------------------------------------------------
 
@@ -333,7 +333,7 @@ class AgentAuth:
         if exc.status != HTTP_TOO_MANY_REQUESTS:
             return
         err = RateLimitedError(f"{what} rate limited (HTTP 429)", exc.retry_after)
-        self._rate_limit.hold(err)
+        self._rate_limit.record(err)
         raise err from exc
 
     # -- HTTP helpers -------------------------------------------------------
@@ -396,7 +396,7 @@ class AgentAuth:
             except (json.JSONDecodeError, ValueError):
                 pass
 
-            raise _HttpError(exc.code, error_body, retry_after_of(exc.headers)) from exc
+            raise _HttpError(exc.code, error_body, retry_after_from(exc.headers)) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Request failed: {exc.reason}") from exc
 

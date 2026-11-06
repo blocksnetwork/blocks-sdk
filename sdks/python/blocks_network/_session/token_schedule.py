@@ -3,7 +3,7 @@ which HTTP statuses are final refusals for every session request."""
 
 from __future__ import annotations
 
-from .._rate_limit import RateLimitedError
+from .._rate_limit import retry_after_of
 
 TOKEN_REFRESH_AT = 0.8
 TOKEN_RETRY_MIN_S = 5.0
@@ -17,7 +17,5 @@ def is_refusal_status(status: int) -> bool:
 
 
 def rate_limited_wait_s(err: BaseException) -> float:
-    """The wait a rate-limited failure asked for, or 0: a retry backs off at least this long."""
-    if isinstance(err, RateLimitedError) and err.retry_after is not None:
-        return err.retry_after
-    return 0.0
+    """The wait a failure's ``Retry-After`` asked for, or 0: a retry backs off at least this long."""
+    return retry_after_of(err) or 0.0

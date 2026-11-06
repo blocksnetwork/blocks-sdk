@@ -20,7 +20,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pytest
 
 from blocks_network import (
+    AuthRefreshFailedError,
     BlocksClient,
+    RateLimitedError,
     SessionBackpressureError,
     SessionError,
     SessionFailedError,
@@ -154,19 +156,21 @@ class Backend:
                 "headers": {k.lower(): v for k, v in request.header_items()},
             }
         )
+        headers: Dict[str, str] = {}
         if url == OPEN_URL:
             status, payload = self.open()
         elif url == SESSION_URL and method == "GET":
             status, payload = self.snapshot()
         elif url == TOKEN_URL:
-            status, payload = (
+            status, payload, *rest = (
                 self.tokens.pop(0)() if self.tokens else (200, {"pamToken": "fresh", "ttlMinutes": 60})
             )
+            headers = rest[0] if rest else {}
         else:
             status, payload = 204, None
         raw = b"" if payload is None else json.dumps(payload).encode()
         if status >= 400:
-            raise urllib.error.HTTPError(url, status, "refused", {}, io.BytesIO(raw))  # type: ignore[arg-type]
+            raise urllib.error.HTTPError(url, status, "refused", headers, io.BytesIO(raw))  # type: ignore[arg-type]
         return _Response(status, raw)
 
     def calls(self, url: str, method: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -204,11 +208,12 @@ class FakePubNub:
         self.listeners: List[Any] = []
         self.tokens: List[str] = []
         self.subscribes: List[List[str]] = []
+        # The channels subscribed now: a denial drops them all, as pubnub-python does.
+        self.active: set = set()
         self.published: List[Dict[str, Any]] = []
         self.publish_impl: Callable[[Dict[str, Any]], None] = lambda _: None
         self.history_impl: Callable[[Dict[str, Any]], List[Any]] = lambda _: []
         self.history_calls: List[Dict[str, Any]] = []
-        self.reconnects = 0
         self.stops = 0
         self.connected = False
 
@@ -222,16 +227,17 @@ class FakePubNub:
         self.listeners.remove(listener)
 
     def unsubscribe_all(self) -> None:
-        pass
-
-    def reconnect(self) -> None:
-        self.reconnects += 1
+        self.active.clear()
 
     def stop(self) -> None:
         self.stops += 1
 
     def subscribe(self) -> _Builder:
-        return _Builder(lambda p: self.subscribes.append(p["channels"]))
+        def run(params: Dict[str, Any]) -> None:
+            self.subscribes.append(params["channels"])
+            self.active.update(params["channels"])
+
+        return _Builder(run)
 
     def publish(self) -> _Builder:
         def run(params: Dict[str, Any]) -> None:
@@ -257,6 +263,8 @@ class FakePubNub:
         return [p["message"] for p in self.published]
 
     def status(self, category: str) -> None:
+        if category == "PNAccessDeniedCategory":
+            self.active.clear()
         for listener in list(self.listeners):
             listener.status(self, SimpleNamespace(category=SimpleNamespace(name=category)))
 
@@ -1157,7 +1165,7 @@ class TestTransportFailures:
         assert len(h.pn.published) == 2
 
     def test_publishes_no_queued_exchange_while_a_held_artifact_is_handed_over(
-        self, h: Harness
+        self, h: Harness, caplog: pytest.LogCaptureFixture
     ) -> None:
         session = h.open_ready()
         exchange, exchange_id = h.send(session)
@@ -1181,7 +1189,8 @@ class TestTransportFailures:
         spawn(lambda: h.from_backend(type="session_closed", reason="idle_timeout"))
         in_callback.wait(2)
         stalled.set()
-        wait_until(lambda: session._publishes.empty())
+        # The worker refuses the queued exchange; settling it then waits on the held callback.
+        wait_until(lambda: "exchange publish failed" in caplog.text)
         callback_may_return.set()
         wait_until(lambda: session.state == "closed")
         session._publisher.join(1)
@@ -1241,6 +1250,45 @@ class TestTokenRotation:
         assert self.token_calls(h) == 2
         assert h.pn.tokens[-1] == "fresh"
 
+    @pytest.mark.parametrize("held_by", ["retry-after", "rate-limited-credential-refresh"])
+    def test_waits_out_a_rate_limited_rotation_and_rotates_after(
+        self, h: Harness, held_by: str
+    ) -> None:
+        if held_by == "retry-after":
+            h.backend.tokens.append(lambda: (429, {"error": "later"}, {"Retry-After": "90"}))
+        else:
+            h.backend.tokens.append(lambda: (401, {"error": "expired"}))
+            last_error: List[Optional[BaseException]] = [None]
+            refreshes = iter([False, True])
+
+            def on_auth_failure() -> bool:
+                refreshed = next(refreshes)
+                if refreshed:
+                    last_error[0] = None
+                else:
+                    held = RateLimitedError("refresh held off", 90.0)
+                    last_error[0] = AuthRefreshFailedError(held)
+                    last_error[0].__cause__ = held
+                return refreshed
+
+            h.auth = SimpleNamespace(
+                get_auth_header=lambda: "Bearer consumer-jwt",
+                on_auth_failure=on_auth_failure,
+                get_last_auth_error=lambda: last_error[0],
+            )
+        h.backend.open = lambda: (201, {**OPENED, "ttlMinutes": 10})
+        session = h.open_ready()
+
+        # Rotation at 8 of 10 minutes leaves 120 s, room for the 90 s wait.
+        h.scheduler.advance(8 * 60_000)
+        assert self.token_calls(h) == 1
+        h.scheduler.advance(90_000 - 1)
+        assert self.token_calls(h) == 1
+        h.scheduler.advance(1)
+        assert self.token_calls(h) == 2
+        assert h.pn.tokens[-1] == "fresh"
+        assert session.state == "ready"
+
     def test_stops_retrying_a_failing_rotation_once_the_token_has_expired(self, h: Harness) -> None:
         session = h.open_ready()
         h.backend.tokens.extend([lambda: (503, {"error": "unavailable"})] * 50)
@@ -1278,8 +1326,103 @@ class TestTokenRotation:
 
         assert self.token_calls(h) == 1
         assert h.pn.tokens[-1] == "fresh"
-        assert h.pn.reconnects == 1
+        assert h.pn.active == {OPENED["sessionChannel"]}
         assert session.state == "ready"
+
+    def test_holds_proactive_rotation_while_a_rate_limited_denial_refresh_waits(
+        self, h: Harness
+    ) -> None:
+        h.open_ready()
+        h.backend.tokens.append(lambda: (429, {"error": "later"}, {"Retry-After": "20"}))
+
+        h.scheduler.advance(48 * 60_000 - 10_000)
+        h.pn.status("PNAccessDeniedCategory")
+        h.scheduler.advance(0)
+        assert self.token_calls(h) == 1
+
+        # Rotation was due 10 s in; the denial's 20 s wait still holds.
+        h.scheduler.advance(20_000 - 1)
+        assert self.token_calls(h) == 1
+        h.scheduler.advance(1)
+        assert self.token_calls(h) == 2
+        assert h.pn.tokens[-1] == "fresh"
+
+    def test_waits_out_a_rate_limited_denial_refresh_instead_of_revoking(
+        self, h: Harness
+    ) -> None:
+        session = h.open_ready()
+        h.backend.tokens.append(lambda: (429, {"error": "later"}, {"Retry-After": "20"}))
+
+        h.pn.status("PNAccessDeniedCategory")
+        h.scheduler.advance(0)
+        assert self.token_calls(h) == 1
+        assert session.state == "ready"
+
+        h.pn.status("PNAccessDeniedCategory")
+        h.scheduler.advance(20_000 - 1)
+        assert self.token_calls(h) == 1
+        h.scheduler.advance(1)
+
+        assert self.token_calls(h) == 2
+        assert h.pn.tokens[-1] == "fresh"
+        assert h.pn.active == {OPENED["sessionChannel"]}
+        assert session.state == "ready"
+
+    def test_a_customer_token_endpoint_429_on_a_denial_refresh_revokes_the_session(
+        self, h: Harness
+    ) -> None:
+        from blocks_network.consumer_auth import _ConsumerAuthHttpError
+
+        # Only the Blocks backend's 429 is a rate limit; a token proxy's 429 is a failed refresh.
+        proxy_429 = _ConsumerAuthHttpError(429, {"error": "busy"})
+        proxy_429.__cause__ = urllib.error.HTTPError(
+            "https://proxy.example/token", 429, "Too Many Requests", {}, None
+        )
+        failed = RuntimeError("Consumer auth request failed: HTTP 429")
+        failed.__cause__ = proxy_429
+        recorded = AuthRefreshFailedError(failed)
+        recorded.__cause__ = failed
+        last_error: List[Optional[BaseException]] = [None]
+
+        def on_auth_failure() -> bool:
+            last_error[0] = recorded
+            return False
+
+        h.auth = SimpleNamespace(
+            get_auth_header=lambda: "Bearer consumer-jwt",
+            on_auth_failure=on_auth_failure,
+            get_last_auth_error=lambda: last_error[0],
+        )
+        session = h.open_ready()
+        h.backend.tokens.append(lambda: (401, {"error": "expired"}))
+
+        h.pn.status("PNAccessDeniedCategory")
+        h.scheduler.advance(0)
+
+        assert session.state == "failed"
+        wait_until(lambda: h.pn.stops == 1)
+
+    def test_a_session_released_as_it_resumes_after_a_denial_keeps_no_subscription(
+        self, h: Harness, monkeypatch
+    ) -> None:
+        from blocks_network._session.session import Session
+
+        resubscribe = Session._resubscribe
+
+        def released_first(self) -> None:
+            # The release lands between the token being applied and the resubscribe.
+            self._release()
+            resubscribe(self)
+
+        monkeypatch.setattr(Session, "_resubscribe", released_first)
+        h.open_ready()
+
+        h.pn.status("PNAccessDeniedCategory")
+        h.scheduler.advance(0)
+
+        assert self.token_calls(h) == 1
+        wait_until(lambda: h.pn.stops == 1)
+        assert h.pn.active == set()
 
     @pytest.mark.parametrize(
         "answer",

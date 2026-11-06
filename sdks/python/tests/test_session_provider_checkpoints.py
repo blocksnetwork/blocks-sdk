@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import threading
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 import pytest
@@ -257,6 +257,7 @@ class _Backend:
         self.stale_jwt = ""
         self.refresh_status = 0
         self.refuses_every_jwt = False
+        self.checkpoint_retry_after: Optional[float] = None
         self.issued = 1
         self.calls: List[str] = []
 
@@ -277,6 +278,9 @@ class _Backend:
         stale = (headers or {}).get("Authorization") == f"Bearer {self.stale_jwt}"
         if self.agent_deleted or self.refuses_every_jwt or stale:
             raise _HttpError(401, {"error": "Unauthorized"})
+        if self.checkpoint_retry_after is not None:
+            retry_after, self.checkpoint_retry_after = self.checkpoint_retry_after, None
+            raise _HttpError(429, {"code": "RATE_LIMITED", "error": "slow down"}, retry_after)
         batch = json.loads(body)
         return {"routeId": batch["routeId"], "idempotencyKey": batch["idempotencyKey"]}, 200
 
@@ -364,6 +368,25 @@ def test_a_rate_limited_refresh_keeps_the_route_and_holds_checkpoints(over_http)
     # loop's own wait, so no third post goes out within the 30 s hold.
     assert backend.calls.count("/api/v1/auth/agent/refresh") == 1
     assert backend.calls.count("/api/v1/provider/checkpoints") == 2
+    assert over_http.lost == []
+
+
+def test_posts_no_checkpoint_until_a_direct_429_s_retry_after_passes(
+    over_http, monkeypatch
+) -> None:
+    from blocks_network._session import provider_checkpoints
+
+    monkeypatch.setattr(
+        provider_checkpoints.time, "monotonic", lambda: over_http.scheduler.now_ms / 1000
+    )
+    over_http.backend.checkpoint_retry_after = 20.0
+    over_http.ticks(1)
+    assert over_http.backend.calls.count("/api/v1/provider/checkpoints") == 1
+
+    over_http.ticks(9)
+    assert over_http.backend.calls.count("/api/v1/provider/checkpoints") == 1
+    over_http.ticks(1)
+    assert over_http.backend.calls.count("/api/v1/provider/checkpoints") == 2
     assert over_http.lost == []
 
 

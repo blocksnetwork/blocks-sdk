@@ -30,8 +30,9 @@ from typing import Any, Callable, Dict, Optional, TypedDict, Union
 from ._rate_limit import (
     HTTP_TOO_MANY_REQUESTS,
     RateLimitedError,
-    RateLimitGate,
-    retry_after_of,
+    RateLimitHold,
+    rate_limit_backoff_s,
+    retry_after_from,
 )
 from .tls import https_context
 from .write_affinity import capture_affinity, inject_affinity
@@ -47,8 +48,7 @@ _ERROR_CODE_API_KEY_INVALID = "API_KEY_INVALID"
 
 
 def _backoff_s(attempt: int) -> float:
-    # Rate-limited attempts are unbounded, so cap the exponent before a float overflows.
-    return min(_BACKOFF_BASE * (2 ** min(attempt, 16)), _BACKOFF_MAX)
+    return min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_MAX)
 
 
 # Proactive refresh fires at this fraction of TTL
@@ -176,7 +176,9 @@ class ConsumerAuth:
         self._expires_at: float = 0.0
         self._destroyed: bool = False
         self._last_auth_error: Optional[AuthRefreshFailedError] = None
-        self._rate_limit = RateLimitGate()
+        self._rate_limit = RateLimitHold()
+        # Set by destroy(), so a rate-limited wait of up to an hour does not outlive the client.
+        self._destroyed_event = threading.Event()
 
         # Proactive refresh timer (daemon thread)
         self._timer: Optional[threading.Timer] = None
@@ -321,6 +323,7 @@ class ConsumerAuth:
         """Stop the refresh timer. Token remains readable for active sessions."""
         with self._lock:
             self._destroyed = True
+        self._destroyed_event.set()
         self._cancel_timer()
 
     # -- Private: token acquisition -----------------------------------------
@@ -340,7 +343,7 @@ class ConsumerAuth:
             raise RuntimeError("No token acquisition mode configured")
         except _ConsumerAuthHttpError as exc:
             raise RuntimeError(
-                f"Consumer auth request failed: HTTP {exc.status}"
+                f"Consumer auth request failed: HTTP {exc.http_status}"
             ) from exc
 
     def _acquire_api_key(self) -> TokenResult:
@@ -360,7 +363,7 @@ class ConsumerAuth:
                 return self._refresh_via_endpoint(refresh_tok)
             return self._bootstrap_api_key()
         except RateLimitedError as err:
-            self._rate_limit.hold(err)
+            self._rate_limit.record(err)
             raise
 
     def _bootstrap_api_key(self) -> TokenResult:
@@ -403,7 +406,7 @@ class ConsumerAuth:
                 ) from exc
 
             raise RuntimeError(
-                f"Consumer auth request failed: {body.get('error', f'HTTP {exc.status}')}"
+                f"Consumer auth request failed: {body.get('error', f'HTTP {exc.http_status}')}"
             ) from exc
 
         result = TokenResult(
@@ -506,13 +509,14 @@ class ConsumerAuth:
                 self._schedule_refresh(result.expires_in)
                 return
             except RateLimitedError as err:
-                delay = max(_backoff_s(rate_limited_attempt), err.retry_after or 0.0)
+                delay = rate_limit_backoff_s(rate_limited_attempt, err.retry_after)
                 rate_limited_attempt += 1
                 logger.warning(
                     "[ConsumerAuth] proactive refresh rate limited; retrying in %.1fs: %s",
                     delay, err,
                 )
-                time.sleep(delay)
+                if self._destroyed_event.wait(delay):
+                    return
             except Exception as err:
                 if attempt == _MAX_RETRIES - 1:
                     # Permanent failure
@@ -588,7 +592,7 @@ class ConsumerAuth:
             # Only the Blocks backend's 429 is the API-key rate limit, not a customer proxy's.
             if use_affinity and exc.code == HTTP_TOO_MANY_REQUESTS:
                 raise RateLimitedError(
-                    "Consumer auth request rate limited (HTTP 429)", retry_after_of(exc.headers)
+                    "Consumer auth request rate limited (HTTP 429)", retry_after_from(exc.headers)
                 ) from exc
             raise _ConsumerAuthHttpError(exc.code, error_body) from exc
         except urllib.error.URLError as exc:
@@ -598,9 +602,13 @@ class ConsumerAuth:
 
 
 class _ConsumerAuthHttpError(Exception):
-    """Internal exception carrying HTTP status and parsed body."""
+    """Internal exception carrying HTTP status and parsed body.
+
+    The status is ``http_status``, not ``status``: a customer token endpoint's 429 is not the
+    Blocks rate limit, and ``is_rate_limited`` matches any ``status == 429`` in a cause chain.
+    """
 
     def __init__(self, status: int, body: Any = None) -> None:
         super().__init__(f"HTTP {status}")
-        self.status = status
+        self.http_status = status
         self.body = body

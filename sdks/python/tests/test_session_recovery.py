@@ -53,11 +53,18 @@ def _snapshot(state: str = "ready", *exchanges: SnapshotExchange, **fields: Any)
 
 
 class _Consumer:
-    def __init__(self, recover: Any = lambda: None, on_artifact: Any = lambda _: None) -> None:
+    def __init__(
+        self,
+        recover: Any = lambda: None,
+        on_artifact: Any = lambda _: None,
+        on_outcome: Any = None,
+    ) -> None:
         self.scheduler = ManualScheduler()
         self.progress: List[str] = []
         self.outcomes: List[ExchangeOutcome] = []
         self.states: List[str] = []
+        # Each state change with the number of outcomes reported before it.
+        self.settled_at_state: List[tuple] = []
         self.receiver = ConsumerReceiver(
             counterparts=consumer_counterparts(
                 session_id=SESSION, provider_uuid=PROVIDER, backend_uuid=BACKEND
@@ -67,10 +74,14 @@ class _Consumer:
             state="ready",
             on_progress=lambda p: self.progress.append(p.message),
             on_artifact=on_artifact,
-            on_outcome=self.outcomes.append,
-            on_state_change=self.states.append,
+            on_outcome=on_outcome or self.outcomes.append,
+            on_state_change=self._state_changed,
         )
         self.receiver.track_exchange("ex-1")
+
+    def _state_changed(self, state: str) -> None:
+        self.states.append(state)
+        self.settled_at_state.append((state, len(self.outcomes)))
 
 
 def _artifact(seq: int) -> Dict[str, Any]:
@@ -140,7 +151,6 @@ class TestRecoveryCutoffs:
         c.receiver.finish_recovery(_snapshot("ready", SnapshotExchange("ex-1", "completed")))
 
         assert [(o.state, o.artifacts) for o in c.outcomes] == [("completed", [INLINE])]
-
 
     def test_leaves_a_gap_a_live_message_opens_during_the_replay_to_its_own_window(self) -> None:
         c = _Consumer()
@@ -334,6 +344,37 @@ class TestTerminalHandOver:
         assert c.receiver.state == "failed"
         assert [(o.state, o.error) for o in c.outcomes] == [("failed", "session_access_revoked")]
 
+    def test_a_local_end_requested_during_recovery_applies_though_a_later_step_raises(
+        self,
+    ) -> None:
+        def end_on_first_outcome(outcome: ExchangeOutcome) -> None:
+            c.outcomes.append(outcome)
+            c.receiver.terminate("closed")
+
+        c = _Consumer(on_outcome=end_on_first_outcome)
+        c.receiver.track_exchange("ex-2")
+        c.receiver.begin_recovery()
+        # parse_snapshot rejects refs that are not a list; here one stands in for any fault.
+        faulty = SnapshotExchange("ex-2", "completed", artifact_refs=None)  # type: ignore[arg-type]
+
+        with pytest.raises(TypeError):
+            c.receiver.finish_recovery(
+                _snapshot("ready", SnapshotExchange("ex-1", "completed"), faulty)
+            )
+
+        assert (c.receiver.state, c.receiver.is_ending) == ("closed", True)
+        assert [(o.exchange_id, o.state) for o in c.outcomes] == [
+            ("ex-1", "completed"),
+            ("ex-2", "canceled"),
+        ]
+
+    def test_settles_every_exchange_before_reporting_the_terminal_state(self) -> None:
+        c = _Consumer()
+
+        c.receiver.terminate("closed")
+
+        assert c.settled_at_state == [("closed", 1)]
+
     def test_drops_an_outcome_held_behind_a_gap_when_the_session_ends(self) -> None:
         c = _Consumer()
         c.receiver.deliver(
@@ -353,6 +394,27 @@ class TestTerminalHandOver:
 
         assert (c.receiver.state, c.receiver.error) == ("failed", "route_lost")
         assert [(o.state, o.error) for o in c.outcomes] == [("failed", "route_lost")]
+
+
+class TestNonStringWireText:
+    @pytest.mark.parametrize("value", [[], {"code": 1}, 7])
+    def test_a_non_string_error_or_reason_reads_as_absent(self, value: Any) -> None:
+        c = _Consumer()
+        c.receiver.track_exchange("ex-2")
+        c.receiver.deliver(
+            PROVIDER,
+            _message(
+                "exchange_outcome", 1, exchangeId="ex-2", state="failed", error=value, reason=value
+            ),
+        )
+
+        c.receiver.deliver(BACKEND, _message("session_failed", 0, error=value))
+
+        assert [(o.exchange_id, o.error, o.reason) for o in c.outcomes] == [
+            ("ex-2", None, None),
+            ("ex-1", None, None),
+        ]
+        assert (c.receiver.state, c.receiver.error) == ("failed", None)
 
 
 class TestRecordedOutcomes:

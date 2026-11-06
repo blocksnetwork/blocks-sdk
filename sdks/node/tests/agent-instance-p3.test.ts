@@ -375,8 +375,8 @@ describe('Phase 3 Agent Instance Runtime', () => {
 
       await vi.advanceTimersByTimeAsync(29_999);
       expect(connectAgent).toHaveBeenCalledTimes(1);
-      // The Retry-After plus at most the 1 s jitter.
-      await vi.advanceTimersByTimeAsync(1_001);
+      // The Retry-After plus at most 10% jitter.
+      await vi.advanceTimersByTimeAsync(3_001);
       expect(connectAgent).toHaveBeenCalledTimes(2);
       expect(mockPn.subscribe).toHaveBeenCalledWith({
         channels: ['agent.dddddddd-4444-4444-4444-444444444444.control'],

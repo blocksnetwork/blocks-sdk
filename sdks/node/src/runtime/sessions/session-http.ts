@@ -1,7 +1,7 @@
 import { preflightAuthOrThrow, type AuthProvider } from '../auth-provider.js';
 import { createLogger } from '../logger.js';
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from '../protocol-version.js';
-import { isRateLimited, retryAfterFrom } from '../rate-limit.js';
+import { BlocksHttpError, isRateLimited, retryAfterFrom } from '../rate-limit.js';
 import { stripProtectedHeaders } from '../rpc-client.js';
 import { captureAffinity, injectAffinity } from '../write-affinity.js';
 import { withinDeadline } from './deadlines.js';
@@ -206,14 +206,9 @@ function parseManagedAnswer(status: number, body: unknown): ManagedAnswer {
 }
 
 /** A session endpoint answered with an HTTP error that carries no session code. */
-export class SessionHttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-    /** The response's `Retry-After`, when it had one. */
-    readonly retryAfterMs?: number,
-  ) {
-    super(message);
+export class SessionHttpError extends BlocksHttpError {
+  constructor(status: number, message: string, retryAfterMs?: number) {
+    super(status, message, retryAfterMs);
     this.name = 'SessionHttpError';
   }
 }

@@ -13,8 +13,11 @@ configuration, and dependencies.
 
 - How to write a handler function that receives tasks and returns artifacts
 - How to stream data to consumers in real time using `createStream()`
+- How to receive streams and files from consumers
+- How to call other services as the task's user with `ctx.connections`
 - How to orchestrate multiple agents from a single handler via `ctx.taskClient`
 - How to build consumer scripts that submit tasks and receive results
+- How to open a session and send many exchanges over it (experimental)
 
 ## Canonical Examples
 
@@ -32,6 +35,13 @@ SDK concept and uses current APIs.
 | [advanced-stream](./advanced-stream/)       | Advanced streams          | Multi-stream, schema-validated events, and shared-affinity broadcast on one task |
 | [lifecycle](./lifecycle/)                   | Task lifecycle            | Built-in cancel + provider-composed pause/resume + consumer-composed retry |
 | [chat-agent](./chat-agent/)                 | Multi-turn chat           | Conversation that remembers context across turns   |
+| [inbound-stream](./inbound-stream/)         | Inbound streaming         | Consumer streams bytes and events to the agent     |
+| [file-echo](./file-echo/)                   | File input and output     | Receive a file input, return a file artifact       |
+| [connections](./connections/)               | Integration connections   | Act as the user in Google, Microsoft and Salesforce |
+| [connections-google](./connections-google/) | Integration connections   | Act as the user in Google: account and Drive files |
+| [connections-microsoft](./connections-microsoft/) | Integration connections | Act as the user in Microsoft 365: account and OneDrive |
+| [connections-salesforce](./connections-salesforce/) | Integration connections | Act as the user in Salesforce: identity and Accounts |
+| [session-echo](./session-echo/)             | Sessions (experimental)   | Open one session, send many exchanges over it      |
 
 ## Advanced Examples
 

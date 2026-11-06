@@ -173,6 +173,7 @@ class ConsumerReceiver:
         """Stop tracking an exchange settled outside the channel, such as one whose publish failed."""
         with self._lock:
             self._artifacts_by_unsettled.pop(exchange_id, None)
+            self._recorded_later.pop(exchange_id, None)
 
     def begin_closing(self) -> None:
         """Enter ``closing`` once the consumer has asked to close; a later ready no longer applies."""
@@ -216,7 +217,9 @@ class ConsumerReceiver:
             self._on_exchange_artifact(message)
         failed = state == wire.STATE_FAILED
         self._error = error if failed else None
-        self._set_state(state)
+        # Exchanges settle before the state change is reported, so a state callback finds
+        # them settled; the state itself is terminal first, so a settle callback cannot send.
+        self._state = state
         for exchange_id in list(self._artifacts_by_unsettled):
             if exchange_id not in self._artifacts_by_unsettled:
                 continue
@@ -227,6 +230,7 @@ class ConsumerReceiver:
                 self._settle(exchange_id, wire.OUTCOME_FAILED, error=error)
             else:
                 self._settle(exchange_id, wire.OUTCOME_CANCELED)
+        invoke(self._on_state_change, state)
 
     def begin_recovery(self) -> None:
         """Start a recovery: until :meth:`finish_recovery`, a terminal message is deferred.
@@ -281,18 +285,22 @@ class ConsumerReceiver:
         ending = bool(recovery.deferred) or (
             record is not None and record.state in wire.TERMINAL_STATES
         )
+        # A requested local end applies even if a step raises, or the session would refuse
+        # sends without ever ending.
         try:
-            self._skip_through(self._order.held_cutoffs() if ending else recovery.cutoffs)
+            try:
+                self._skip_through(self._order.held_cutoffs() if ending else recovery.cutoffs)
+            finally:
+                self._recovery = None
+            if record is not None:
+                self._apply_recorded_outcomes(record)
+            for message in recovery.deferred:
+                self._dispatch(message)
+            if record is not None:
+                self._apply_recorded_state(record)
         finally:
-            self._recovery = None
-        if record is not None:
-            self._apply_recorded_outcomes(record)
-        for message in recovery.deferred:
-            self._dispatch(message)
-        if record is not None:
-            self._apply_recorded_state(record)
-        if recovery.local_end is not None:
-            self._end(*recovery.local_end)
+            if recovery.local_end is not None:
+                self._end(*recovery.local_end)
 
     def _skip_through(self, cutoffs: Dict[str, int]) -> None:
         for publisher, through in cutoffs.items():
@@ -418,7 +426,7 @@ class ConsumerReceiver:
         self._end(wire.STATE_CLOSED)
 
     def _on_session_failed(self, message: Message) -> None:
-        self._end(wire.STATE_FAILED, message.get("error"))
+        self._end(wire.STATE_FAILED, _text(message, "error"))
 
     def _on_exchange_progress(self, message: Message) -> None:
         exchange_id = _exchange_id(message)
@@ -460,8 +468,8 @@ class ConsumerReceiver:
             self._settle(
                 exchange_id,
                 message.get("state"),
-                error=message.get("error"),
-                reason=message.get("reason"),
+                error=_text(message, "error"),
+                reason=_text(message, "reason"),
             )
 
     def _settle(

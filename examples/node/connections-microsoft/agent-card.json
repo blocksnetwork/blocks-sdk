@@ -1,0 +1,66 @@
+{
+  "identity": {
+    "agentName": "connections_microsoft_node",
+    "displayName": "connections Microsoft 365 (Node)",
+    "description": "Acts as the task's user in Microsoft 365 through an integration connection, and lists files in their OneDrive.",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": [
+      "request"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "No input needed.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {},
+        "schema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "The signed-in Microsoft account and up to five OneDrive item names.",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "main",
+      "name": "Main",
+      "description": "Reads the user's Microsoft account and OneDrive files"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 1,
+    "expectedInstances": 1
+  },
+  "connections": [
+    {
+      "integration": "microsoft",
+      "scopes": [
+        "openid",
+        "email",
+        "profile",
+        "offline_access",
+        "User.Read",
+        "Files.Read"
+      ],
+      "required": true
+    }
+  ]
+}

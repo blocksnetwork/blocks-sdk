@@ -14,9 +14,9 @@ from tests.session_provider_fakes import manifest_body, route_grant_body
 def answering(body: Any, status: int = 200, base_url: str = "http://backend.test"):
     calls: List[Tuple[str, str, Optional[Dict[str, Any]]]] = []
 
-    def request(method: str, url: str, sent: Optional[Dict[str, Any]]) -> Tuple[int, Any]:
+    def request(method: str, url: str, sent: Optional[Dict[str, Any]]) -> Tuple[int, Any, None]:
         calls.append((method, url, sent))
-        return status, body
+        return status, body, None
 
     return ProviderSessionApi(base_url, request), calls
 

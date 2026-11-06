@@ -37,6 +37,8 @@ Load only the material needed for the request:
   `isCancelled`) and Pipe Tasks (Provider Handler) for the handler side;
   Task Lifecycle Methods and `onCancelRequested` under TaskClient &
   TaskSession for the consumer side.
+- **Sessions or multi-turn interaction in Node (experimental):** [Node
+  Reference] → Sessions (experimental).
 - **Python:** read [Python Reference] only when the user requests Python or the
   existing project is Python. Preserve the language of existing projects.
 - **End-to-end development or deployment questions:** read [Agent Development
@@ -146,10 +148,15 @@ user the exact command to run.
 - Consume event streams with `stream.events()` and byte streams with
   `stream.bytes()`. Use low-level `stream.inbound` only when raw envelope
   metadata is required.
-- Sessions (`BlocksClient`, `call`, `openSession`, `onExchange`) are an
-  experimental preview in the Node SDK that the service does not yet enable
-  for customers. Do not write code against them or present them as available;
-  use `TaskClient` and task handlers. See the SDK contract.
+- Sessions (`BlocksClient`, `openSession`, `send`, `onExchange`) are
+  experimental and Node-only: one session carries many exchanges, for chat and
+  other multi-turn work. They serve free agents only and are refused with
+  `SESSIONS_DISABLED` until enabled for the org.
+  Use them when the user asks for sessions or multi-turn interaction in Node,
+  and say they are experimental; otherwise, and always in Python, use
+  `TaskClient` and task handlers. A session provider starts from its own
+  script calling `startAgentInstance()`, since `blocks run` starts task
+  handlers only. See the [Node Reference] Sessions section.
 - To call another service as the task's user, declare it in the card's
   `connections` and get a per-task access token in the handler with
   `ctx.connections.getToken(name)` (Python `ctx.connections.get_token(name)`).
@@ -158,7 +165,7 @@ user the exact command to run.
   makes every task fail with `ConnectionsUnavailable`, so declare one only for
   a deployment whose organization admins have **Manage → Integrations**. See
   the language references.
-- Close task sessions and destroy consumer clients when finished so transports
+- Close task sessions and sessions, and destroy consumer clients, when finished so transports
   unsubscribe cleanly.
 
 ## Common workflows
