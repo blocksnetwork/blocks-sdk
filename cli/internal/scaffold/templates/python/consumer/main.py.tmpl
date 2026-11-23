@@ -103,6 +103,7 @@ def main() -> None:
     session.on_progress(on_progress)
     session.on_artifact(on_artifact)
 
+    terminal = None
     try:
         terminal = session.wait_for_terminal(timeout=60)
         print("[done]", describe_terminal(terminal))
@@ -111,7 +112,17 @@ def main() -> None:
         session.close()
         client.destroy()
         sys.exit(1)
+    except Exception as err:
+        # The task started, then it or an agent it called was refused access to one of your accounts.
+        if type(err).__name__ != "RelayedAuthRequiredError":
+            raise
+        print(
+            f"[failed] {err}. Open this agent in your Blocks dashboard and send the task there "
+            "to approve it, then run this script again.",
+            file=sys.stderr,
+        )
 
+    # A failed task can still have produced output, so list it either way.
     try:
         for ref in session.list_artifacts():
             try:
@@ -123,7 +134,7 @@ def main() -> None:
         session.close()
         client.destroy()
 
-    if terminal.state != "completed":
+    if terminal is None or terminal.state != "completed":
         sys.exit(1)
 
 

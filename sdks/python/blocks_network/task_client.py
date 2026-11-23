@@ -204,6 +204,14 @@ class TaskSubscription:
 # ============================================================================
 
 
+def _latest_terminal(entries: List[TaskEventEntry], state: Optional[str]) -> Optional[Dict[str, Any]]:
+    """History's most recent terminal event in ``state``, with its error fields; ``None`` when it has none."""
+    for entry in reversed(entries):
+        if entry.event.type == "terminal" and entry.event.state == state:
+            return entry.event.raw
+    return None
+
+
 def _route_subscribe_error(
     error: Exception,
     callback_type: str,
@@ -1278,6 +1286,7 @@ class TaskClient:
                     queued=result.get("queued"),
                     push_config_id=result.get("pushConfigId"),
                     state=history_terminal_state,
+                    terminal_event=_latest_terminal(_preloaded_event_entries, history_terminal_state),
                     skip_subscription=True,
                     preloaded_streams=preloaded_streams,
                     preloaded_artifacts=preloaded_artifacts,
@@ -1536,6 +1545,7 @@ class TaskClient:
                     auto_drain=auto_drain,
                     drain_window_s=drain_window_s,
                     state=effective_state,
+                    terminal_event=_latest_terminal(preloaded_event_entries, effective_state),
                     skip_subscription=True,
                     preloaded_streams=preloaded_streams,
                     preloaded_artifacts=preloaded_artifacts,

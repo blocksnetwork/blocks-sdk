@@ -19,6 +19,7 @@ Node SDK or npm.
 | `blocks logout` | Clear the selected profile's cached org keys and strip `BLOCKS_API_KEY` from the project `.env`. Keeps the profile's deployment target and says so, so a later `blocks login` returns to it; use `blocks profile remove` to forget the deployment. Does not revoke the key on the server. A `.env` that exists but cannot be read or rewritten fails the logout (`logout incomplete — Blocks credentials remain on disk`); no `.env` at all is a normal success. |
 | `blocks profile` | Manage deployment profiles — `list`, `use <name>`, `rename <old> <new>`, `remove <name>` |
 | `blocks whoami` | Display the active profile's identity, where its key is stored, and any `BLOCKS_API_KEY` in `.env` or the environment that outranks it. `--json` carries `profile`, `org_name`, `org_id`, `key_id`, `expires_at`, `days_remaining` and `expired` (the last three only when the key expires), `credentials_path` (absolute), and `key_override` and `backend_url_override` only while an override is in force. Optional keys are left out rather than empty |
+| `blocks connector` | Blocks Enterprise only, with PubNub Connectors turned on: create, list, edit and revoke PubNub Connectors, and manage the PubNub accounts and keysets behind them. See [Blocks Enterprise: PubNub Connectors](#blocks-enterprise-pubnub-connectors) |
 | `blocks upgrade` | Upgrade the CLI to the latest release |
 
 `blocks run` is the canonical way to start any agent. It detects the
@@ -120,6 +121,67 @@ no listing or pricing flags. `blocks publish` asks for both:
   `DashboardBaseURL` (while the profile is still the deployment targeted), then
   the deployment origin. A
   URL the CLI will not hand to a browser is printed with a note and not opened.
+
+### Blocks Enterprise: PubNub Connectors
+
+On a Blocks Enterprise deployment with PubNub Connectors turned on, `blocks connector`
+creates a Connector: an agent that hands its callers access to a PubNub keyset.
+You need the PubNub Connectors permission in the organization your login belongs to.
+The commands refuse with a one-line explanation anywhere else.
+
+`blocks connector create [agent-name]` reuses whatever is already set up, in this order:
+
+1. `--keyset <id or label>` uses a keyset already linked to the deployment. No PubNub
+   account is needed.
+2. `--pubnub-keyset <PubNub keyset id>` links that keyset from the PubNub account
+   connected to your organization, or reuses it when it is already linked. If several
+   accounts are connected, `--account <id or name>` picks one.
+3. With neither flag, a terminal gets a picker over the connected account's keysets,
+   marked `(linked)` or `(not linked)`. With no usable account connection but linked
+   keysets, it offers those first.
+
+The browser opens only in a terminal, when a keyset still has to be linked and no active
+PubNub account connection exists in your organization (or on `blocks connector account
+connect`). The CLI prints the dashboard link, waits for the connection you make there,
+and never sees the PubNub sign-in.
+
+```text
+$ blocks connector create live_scores
+Using PubNub account "Acme PubNub", connected by Ana Lee.
+? PubNub keyset  >  Acme Live / Production   sub-c-1234...   (not linked)
+Linked "Acme Live / Production": Access Manager on, Message Persistence on, Presence on.
+? Kind  >  Subscribe
+Channel Template: live.{show}
+Display name (enter to skip): Live scores
+Description (enter to skip):
+Created Connector live_scores (Subscribe on live.{show}; all values: live.*)
+Open: https://acme.blocks.example/agents/live_scores
+
+$ blocks connector create scores_history --keyset "Acme Live / Production" --kind history \
+    --channel-template 'live.{show}' --history-max 50
+Created Connector scores_history (History on live.{show})
+```
+
+A keyset without Access Manager lets every caller read all of its channels, so `create`
+prints that notice and sends consent only after you answer yes (the default is no) or pass
+`--consent`.
+
+Other commands: `blocks connector list [--all]`, `edit <agent-name>`, `revoke <agent-name>`,
+`account connect|list|disconnect`, and `keyset available|link|list|validate|disable`.
+`list` commands take `--json`. `--all` includes revoked Connectors, disabled keysets and other
+users' dead account connections. `keyset disable` revokes every Connector on the keyset, in every
+organization.
+
+Passing `--kind` skips the wizard's optional questions (display name, description, history
+limit, custom message type); only values the Connector cannot do without are still asked.
+
+`edit` changes only the flags you pass. `--channel-template` and `--raw-channel`/`--raw-pattern`
+switch how the Connector is addressed. The raw flags replace the whole raw selector, so pass every
+channel and pattern the Connector should keep.
+
+For scripts: `--keyset`, `--consent`, `--yes` (never prompt; `revoke`, `keyset disable` and
+`account disconnect` need it to run without a terminal) and `--json`. With no terminal, a missing value is an error that
+names its flag, and the browser is never opened.
 
 ## Profiles & deployments
 
@@ -487,6 +549,9 @@ that answer them up front:
 - `blocks invite revoke --reason "…"` — record why access is withdrawn (required
   from 2027-04-01)
 - `blocks init --yes` — use all defaults without prompting
+- `blocks connector create --keyset … --kind … --channel-template … [--consent]` — create a
+  Connector without prompts; `blocks connector revoke --yes`, `keyset disable --yes` and
+  `account disconnect --yes` confirm a removal
 - `blocks publish --listing … --billing-mode … --accept-terms` — answer the
   registry prompts. On a deployment with no marketplace, billing is off, so
   `--billing-mode paid` is rejected with an error naming the value that does

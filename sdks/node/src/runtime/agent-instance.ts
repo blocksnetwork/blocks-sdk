@@ -15,6 +15,8 @@
  * - Consumer session API (TaskSession)
  */
 
+import { taskClientForParent } from './parent-task-client.js';
+import { authRequiredTerminalFields } from './auth-required-terminal.js';
 import PubNub from 'pubnub';
 import { StreamClient } from '../stream/index.js';
 import { buildArtifactRef, shouldInlineArtifact, decodeInlineArtifact, type ArtifactRef } from './artifacts.js';
@@ -1214,7 +1216,7 @@ export const startAgentInstance = async (
       },
       hasStream: !!task.hasStream,
       cancelSignal: controller.signal,
-      taskClient: consumerTaskClient,
+      taskClient: taskClientForParent(consumerTaskClient, task.taskId),
       consumerPublicKey: task.consumerPublicKey,
       get connections(): ConnectionsClient {
         if (!agentAuth || !baseUrl) {
@@ -2113,6 +2115,7 @@ export const startAgentInstance = async (
           taskId: msg.taskId,
           state: 'failed',
           error: errMsg,
+          ...authRequiredTerminalFields(e),
         });
         if (opts.onError) await opts.onError(msg.taskId, e as Error);
         log('error', errMsg, { taskId: msg.taskId });

@@ -48,8 +48,10 @@ func TestWebappShowsConnectLinkForConnectionRefusal(t *testing.T) {
 		t.Fatalf("GenerateApp: %v", err)
 	}
 	harness := functionSource(t, out.AppJS, "connectUrlOf") + "\n" +
-		functionSource(t, out.AppJS, "showConnectLink") + `
+		functionSource(t, out.AppJS, "showConnectLink") + "\n" +
+		functionSource(t, out.AppJS, "blocksErrorMessage") + `
 global.document = { createElement: (tag) => ({ tag }) };
+global.BlocksAuth = { BlocksAuthError: class {} };
 const connect = 'https://app.blocks.ai/connect/org-1/google?agent=demo';
 const cases = {
   sdkError: { name: 'AuthRequiredError', integration: 'google', connectUrl: connect, message: '[RPC] x' },
@@ -59,13 +61,14 @@ const cases = {
   scriptUrlInData: { data: { code: 'AuthRequired', details: { integration: 'google', connectUrl: 'javascript:alert(1)' } } },
   notAUrl: { name: 'AuthRequiredError', integration: 'google', connectUrl: 'not a url' },
   otherError: { message: 'boom', data: { code: 'InsufficientBalance', details: { connectUrl: connect } } },
+  relayed: { name: 'RelayedAuthRequiredError', integration: 'google', connectUrl: connect, message: 'x' },
 };
 const results = {};
 for (const [name, err] of Object.entries(cases)) {
   const parts = [];
   const shown = showConnectLink(err, { append: (...p) => parts.push(...p) });
   const link = parts.find((p) => typeof p === 'object');
-  results[name] = { shown, link: link || null, text: parts.filter((p) => typeof p === 'string').join('') };
+  results[name] = { shown, link: link || null, text: parts.filter((p) => typeof p === 'string').join(''), message: blocksErrorMessage(err) };
 }
 console.log(JSON.stringify(results));
 `
@@ -76,9 +79,10 @@ console.log(JSON.stringify(results));
 	}
 	type link struct{ Tag, Href, Target, Rel, TextContent string }
 	var got map[string]struct {
-		Shown bool
-		Link  *link
-		Text  string
+		Shown   bool
+		Link    *link
+		Text    string
+		Message string
 	}
 	if err := json.Unmarshal(stdout, &got); err != nil {
 		t.Fatalf("decode %q: %v", stdout, err)
@@ -100,9 +104,13 @@ console.log(JSON.stringify(results));
 	if r := got["noService"]; r.Link == nil || r.Link.TextContent != "Connect the service" {
 		t.Errorf("noService: link = %+v, want one labelled \"Connect the service\"", r.Link)
 	}
-	for _, name := range []string{"scriptUrl", "scriptUrlInData", "notAUrl", "otherError"} {
+	for _, name := range []string{"scriptUrl", "scriptUrlInData", "notAUrl", "otherError", "relayed"} {
 		if got[name].Shown {
 			t.Errorf("%s: showed a Connect link, want the plain error message", name)
 		}
+	}
+	// A refusal relayed from a called agent carries that agent's link: the page names the service, not the link.
+	if m := got["relayed"].Message; !strings.Contains(m, "your google account") || !strings.Contains(m, "Blocks dashboard") || strings.Contains(m, "https://") {
+		t.Errorf("relayed: message = %q, want one naming the service and the dashboard, with no link", m)
 	}
 }

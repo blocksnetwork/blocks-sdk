@@ -152,6 +152,35 @@ describe('connect_task', () => {
     expect(session.asyncCloseMock).toHaveBeenCalledOnce();
   });
 
+  it('reports a task that failed needing its user\'s approval as failed, not as a timeout', async () => {
+    const session = makeFakeSession({
+      streams: [
+        makeStreamRef({
+          streamId: 's6',
+          format: 'events',
+          localDirection: 'inbound',
+          events: [{ tick: 1 }],
+        }),
+      ],
+      terminalRejects: Object.assign(new Error('Integration connection required'), {
+        name: 'RelayedAuthRequiredError',
+        integration: 'salesforce',
+      }),
+    });
+    const client = makeFakeClient({ task: { taskId: 't6', state: 'failed' }, session });
+    const { deps } = makeFakeDeps({ client });
+
+    const res = await connectTask({ taskId: 't6' }, deps);
+
+    expect(res.isError).toBeUndefined();
+    expect(res.content[0].text).toContain('Task t6 failed');
+    // What the task streamed before it was refused is still returned.
+    expect(res.content[0].text).toContain('"tick":1');
+    expect(res.content[0].text).toContain('must connect or approve salesforce');
+    expect(res.content[0].text).not.toContain('timed out');
+    expect(session.asyncCloseMock).toHaveBeenCalledOnce();
+  });
+
   it('routes paid tasks through the paid TaskClient', async () => {
     const client = makeFakeClient({
       task: { taskId: 't6', state: 'running', billingMode: 'paid' },

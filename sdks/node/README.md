@@ -336,6 +336,14 @@ Wait for a terminal event. Returns a `Promise<TerminalEvent>`. Resolves
 immediately for already-terminal sessions (pre-closed idempotent hits,
 terminal `connect()`).
 
+It rejects with `RelayedAuthRequiredError` when the task failed because its
+user must connect or approve an integration. The error carries `integration`,
+`reason` and `connectUrl`. Those come from the agent that was called, not from
+Blocks: check that `connectUrl` is your deployment's own connect page before
+you show it. In an agent handler, let the error escape so it reaches the
+caller. To read the event instead, use `onTerminal` with
+`authRequiredFromTerminal(event)`.
+
 ```typescript
 import { TaskClient, textPart } from '@blocks-network/sdk';
 

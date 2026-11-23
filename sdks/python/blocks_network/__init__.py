@@ -42,6 +42,7 @@ Public API exports:
     BLOCKS_MAX_UPLOAD_BYTES - Platform upload ceiling in bytes; the service rejects larger files.
     BillingModeMismatchError - Raised when the backend rejects SendMessage with a BillingModeMismatch.
     AuthRequiredError       - Raised when a task needs the caller to connect an integration (``connect_url``).
+    RelayedAuthRequiredError - Raised by ``wait_for_terminal`` when a called agent's task failed needing that; unverified.
     RpcError                - Base structured error for JSON-RPC error responses.
     AnonTaskAccessDenied    - Raised when the anon-task-read-token endpoint returns 403.
     get_agent               - Look up an agent registry entry by name.
@@ -100,6 +101,7 @@ from .connections import (
 )
 from .credential_cache import CredentialCache
 from .pubnub_client import create_pubnub_client
+from .auth_required_terminal import RelayedAuthRequiredError, auth_required_from_terminal
 from .rpc_client import AuthRequiredError, BillingModeMismatchError, RpcError
 from .stream.stream_client import StreamError
 from .stream.types import InboundMessage
@@ -198,6 +200,8 @@ __all__ = [
     "BLOCKS_MAX_UPLOAD_BYTES",
     "BillingModeMismatchError",
     "AuthRequiredError",
+    "RelayedAuthRequiredError",
+    "auth_required_from_terminal",
     "RpcError",
     "AnonTaskAccessDenied",
     "get_agent",

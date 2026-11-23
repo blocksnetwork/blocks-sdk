@@ -208,6 +208,31 @@ describe('send_task', () => {
     expect(session.closeMock).toHaveBeenCalledOnce();
   });
 
+  it('reports a task that failed needing its user\'s approval as failed, naming the service and no link', async () => {
+    const session = makeFakeSession({
+      taskId: 't_refused',
+      artifacts: [
+        { fileName: 'partial.txt', mimeType: 'text/plain', data: new TextEncoder().encode('found 3 rows') },
+      ],
+      terminalRejects: Object.assign(new Error('Integration connection required'), {
+        name: 'RelayedAuthRequiredError',
+        integration: 'salesforce',
+        connectUrl: 'https://app.example/connect/org-1/salesforce',
+      }),
+    });
+    const { deps } = makeFakeDeps({ client: makeFakeClient({ session }) });
+
+    const res = await sendTask({ agentName: 'alice', message: 'hi' }, deps);
+
+    expect(res.isError).toBeUndefined();
+    expect(res.content[0].text).toContain('Task t_refused failed');
+    // What the task produced before it was refused is still returned.
+    expect(res.content[0].text).toContain('found 3 rows');
+    expect(res.content[0].text).toContain('must connect or approve salesforce');
+    expect(res.content[0].text).not.toContain('https://');
+    expect(session.closeMock).toHaveBeenCalledOnce();
+  });
+
   it('appends an "Error:" line for failed terminals', async () => {
     const session = makeFakeSession({
       terminal: { state: 'failed', error: 'boom' },

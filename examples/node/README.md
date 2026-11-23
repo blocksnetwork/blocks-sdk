@@ -41,6 +41,7 @@ SDK concept and uses current APIs.
 | [connections-google](./connections-google/) | Integration connections   | Act as the user in Google: account and Drive files |
 | [connections-microsoft](./connections-microsoft/) | Integration connections | Act as the user in Microsoft 365: account and OneDrive |
 | [connections-salesforce](./connections-salesforce/) | Integration connections | Act as the user in Salesforce: identity and Accounts |
+| [connections-chain](./connections-chain/) | Integration connections | Call the Salesforce agent as the user who sent the task |
 | [session-echo](./session-echo/)             | Sessions (experimental)   | Open one session, send many exchanges over it      |
 
 ## Advanced Examples

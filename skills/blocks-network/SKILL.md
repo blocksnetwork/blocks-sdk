@@ -165,6 +165,15 @@ user the exact command to run.
   makes every task fail with `ConnectionsUnavailable`, so declare one only for
   a deployment whose organization admins have **Manage → Integrations**. See
   the language references.
+- To call another agent as the task's user from inside a handler, call it
+  through `ctx.taskClient` (Python `ctx.task_client`), never a client the agent
+  builds itself: only that client names this task, so where the deployment
+  turns delegated identity on, the called agent uses this user's connections.
+  Do not catch a refusal that asks for the user's approval
+  (`AuthRequiredError`, `RelayedAuthRequiredError`,
+  `ConnectionRequiredError`): let it escape the handler, so the task fails
+  with the refusal attached and the user's client can offer Connect. See
+  Agent-to-Agent (Orchestrator) in the language references.
 - Close task sessions and sessions, and destroy consumer clients, when finished so transports
   unsubscribe cleanly.
 

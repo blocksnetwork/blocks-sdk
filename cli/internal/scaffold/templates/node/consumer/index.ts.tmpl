@@ -88,9 +88,20 @@ async function main() {
   // waitForTerminal (not onTerminal) resolves immediately for tasks that
   // are already terminal by the time we subscribe, so fast / idempotent
   // hits don't hang.
-  const terminal = await session.waitForTerminal(60_000);
+  let completed = false;
   try {
-    console.log('[done]', describeTerminal(terminal));
+    try {
+      const terminal = await session.waitForTerminal(60_000);
+      completed = terminal.state === 'completed';
+      console.log('[done]', describeTerminal(terminal));
+    } catch (err) {
+      // The task started, then it or an agent it called was refused access to one of your accounts.
+      if (!(err instanceof Error) || err.name !== 'RelayedAuthRequiredError') throw err;
+      console.error(
+        `[failed] ${err.message}. Open this agent in your Blocks dashboard and send the task there to approve it, then run this script again.`,
+      );
+    }
+    // A failed task can still have produced output, so list it either way.
     for (const ref of session.listArtifacts()) {
       try {
         const downloaded = await session.downloadArtifact(ref);
@@ -104,7 +115,7 @@ async function main() {
     client.destroy();
   }
 
-  process.exit(terminal.state === 'completed' ? 0 : 1);
+  process.exit(completed ? 0 : 1);
 }
 
 main().catch((err) => {

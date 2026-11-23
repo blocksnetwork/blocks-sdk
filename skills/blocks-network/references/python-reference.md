@@ -159,6 +159,15 @@ close its session before the handler returns. `download_artifact()` returns
 `data` as `bytes`: decode it (or pass it straight to `json.loads`), because
 `str(data)` yields `"b'{...}'"`.
 
+When the deployment has delegated identity turned on, a task created through
+`ctx.task_client` acts for the user who sent this one: the called agent's
+`ctx.connections` uses that user's grant, once they approve that agent for
+this chain. When they have not, the call fails: `send_message` raises
+`AuthRequiredError`, and `wait_for_terminal()` raises
+`RelayedAuthRequiredError` when an agent further down was refused. Do not
+catch either. Let it escape the handler: the SDK fails this task with the
+refusal attached, and the user's client offers Connect.
+
 ```python
 from __future__ import annotations
 
@@ -281,6 +290,8 @@ Sessions -- one durable interaction of many exchanges, replacing one task per tu
 
 **TaskSession** -- properties: `task_id`, `owner_id`, `org_id`, `read_token`, `status_channel`, `state`, `is_closed`. Event listeners: `on_progress(cb)`, `on_artifact(cb)`, `on_terminal(cb)`, `on_cancel_requested(cb)`, `on_event(cb)`, `on_error(cb)`, `on_stream(cb)`. Blocking wait: `wait_for_terminal(timeout=60)` -- blocks until terminal event, returns `TaskEvent`; resolves immediately for already-terminal sessions. Typed event properties: `event.message`, `event.progress`, `event.state`, `event.artifact_ref`. History helpers: `list_events()` (all valid task events parsed by `connect()` history), `list_event_entries()` (the same events paired with publish timetokens), `list_artifacts()`, `download_artifact(ref)` (returns `DownloadedArtifact` with `data: bytes`, `mime_type`, `file_name`; decode text with `downloaded.data.decode("utf-8")`, not `str(downloaded.data)`), `save_artifacts(directory)`. Stream helpers: `list_streams()`, `wait_for_stream(stream_id?, timeout?)`, `wait_for_stream_where(predicate, timeout?)`, `open_all_streams(**opts)` (active-session eager-open — returns `List[StreamClient]` for every readable ref, skipping outbound-only and already-ended refs). Card lookup: `client.get_agent_card(agent_name)` (forwards the client's credential, which a Blocks Enterprise deployment requires to return a card at all; raises `AuthRefreshFailedError` if a configured credential cannot be produced, so `None` only ever means "no such agent"). Control: `cancel()`, `terminate()`, `close()`. Context managers: `with client:` calls `destroy()`, `with session:` calls `close()`.
 
+**`wait_for_terminal()` and a task that needs approval.** It returns the terminal event for every outcome but one: when the task failed because its user must connect or approve an integration, it raises `RelayedAuthRequiredError` (see the errors table).
+
 **At-most-once `on_terminal`.** `session.on_terminal`, `session.wait_for_terminal()`, `subscribe_to_task`'s `on_terminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner force-cancel + agent's delayed terminal).
 
 **`on_cancel_requested(cb)`** — backend-published acknowledgment of a cooperative cancel on `u.{org_id}.{task_id}`. Fires zero or once per session; suppressed once a terminal has been delivered. Event shape surfaced to the callback: `{"type": "cancel_requested", "taskId": ..., "ts": ...}`. (The wire payload also carries `protocolVersion` per the SDK task-event schema, but it is not surfaced to the callback.) Use to render an in-flight "cancel requested" UI signal before any terminal arrives. **Late registration:** callbacks registered after the wire event arrived still receive a synthetic replay of the first event, mirroring `on_terminal`'s sticky behavior — but only while no terminal has been delivered (a post-terminal registration gets nothing, preserving causality).
@@ -307,6 +318,7 @@ Sessions -- one durable interaction of many exchanges, replacing one task per tu
 |---|---|---|
 | `RpcError` | any SDK call that contacts the backend | A non-2xx HTTP response from the Blocks REST API. Carries `status`, `code`, `details`. |
 | `AuthRequiredError` | `TaskClient.send_message` | The agent needs an integration connection the caller has not connected or approved; no task was created. Carries `integration`, `reason`, `connect_url`; open `connect_url` for the user, then retry. Subclasses `RpcError`. |
+| `RelayedAuthRequiredError` | `session.wait_for_terminal()` | The task started, then failed because an agent it called (or the agent itself) needs the user to connect or approve an integration. Carries `integration`, `reason`, `connect_url`. Not an `AuthRequiredError`: the fields come from the called agent, so check that `connect_url` is your deployment's own connect page before showing it. In a handler, let it escape. |
 | `BillingModeMismatchError` | `TaskClient.send_message`, `TaskClient.connect` | The `billing_mode` passed to `TaskClient.create()` does not match the target agent's registered mode. Carries `expected` / `got`. |
 | `AnonTaskAccessDeniedError` | `TaskClient.connect` (anon role) | A 403 from `/api/v1/auth/anon-task-read-token` — the anon-readable channel rejected the fingerprint. |
 | `StreamUnavailableError` | `StreamRef.open()` | The owning session is already terminal; live stream data is gone (artifacts persist). Carries `.terminal_state` and `.stream_id`. |

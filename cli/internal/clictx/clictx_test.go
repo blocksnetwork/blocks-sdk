@@ -1268,3 +1268,19 @@ func TestANetworkProfileDoesNotClaimTheLinkerDefaultDeployment(t *testing.T) {
 		}
 	})
 }
+
+func TestOrgIDIsTheOrgOfTheKeyBeingSent(t *testing.T) {
+	seedProfiles(t, "umbrella.blocks.ai", map[string]profiles.Profile{
+		"umbrella.blocks.ai": enterpriseProfile(),
+	})
+	Resolve(nil)
+	if got := OrgID(); got != "org-1" {
+		t.Fatalf("OrgID() = %q, want org-1", got)
+	}
+
+	Reset()
+	Resolve(&Overrides{EnvCredential: "bk_not_cached"})
+	if got := OrgID(); got != "" {
+		t.Fatalf("OrgID() for an uncached key = %q, want empty", got)
+	}
+}
