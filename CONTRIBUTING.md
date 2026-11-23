@@ -10,7 +10,7 @@ surfaces consistent with each other.
 
 1. Fork and clone the repository.
 2. Run `make setup` to install all dependencies.
-3. Create a feature branch from `main`.
+3. Create a feature branch from `master`.
 4. Make your changes with tests.
 5. Run `make test` and `make lint` to verify.
 6. Open a pull request.
