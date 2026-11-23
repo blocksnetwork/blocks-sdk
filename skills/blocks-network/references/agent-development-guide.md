@@ -662,7 +662,11 @@ async function callSubAgent(ctx: TaskContext, ownerId: string, text: string): Pr
     requestParts: [textPart(text, 'request')], // partId = the sub-agent's io.inputs[].id
   });
   try {
-    const terminal = await session.waitForTerminal(SUB_AGENT_TIMEOUT_MS).catch(() => null);
+    const terminal = await session.waitForTerminal(SUB_AGENT_TIMEOUT_MS).catch((err) => {
+      // The user must approve the sub-agent: pass it up, so their client can offer Connect.
+      if (err instanceof Error && err.name === 'RelayedAuthRequiredError') throw err;
+      return null;
+    });
     if (!terminal) {
       await session.cancel().catch(() => {}); // timed out: stop the sub-task
       return null;

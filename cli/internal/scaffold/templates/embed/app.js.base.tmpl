@@ -28,6 +28,11 @@
     if (err && err.data && err.data.code === 'InsufficientBalance') {
       return 'This agent requires funds to use. Add a balance in your Blocks dashboard.';
     }
+    // A refusal relayed from a called agent: its link is that agent's word, which this page cannot check.
+    if (err && err.name === 'RelayedAuthRequiredError') {
+      const service = typeof err.integration === 'string' && err.integration ? err.integration : 'the service';
+      return 'An agent this task called needs access to your ' + service + ' account. Open this agent in your Blocks dashboard and send the task there to approve it, then send again here.';
+    }
     return 'Unexpected error: ' + (err && err.message ? err.message : String(err));
   }
 

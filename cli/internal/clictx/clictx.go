@@ -648,6 +648,24 @@ func Org() string {
 // carries the key login stored there.
 func OrgKnown() bool { return Org() != "" }
 
+// OrgID is the id of the org whose cached key is sent, or "" for a key the profile never stored.
+func OrgID() string {
+	s := cur
+	if !s.profileIsTarget() {
+		return ""
+	}
+	key := EffectiveCredential().Key
+	if key == "" {
+		return ""
+	}
+	for id, k := range s.profile.Orgs {
+		if k.ApiKey == key {
+			return id
+		}
+	}
+	return ""
+}
+
 func orgOfCachedKey(p *profiles.Profile, credential string) string {
 	for _, k := range p.Orgs {
 		if k.ApiKey == credential {

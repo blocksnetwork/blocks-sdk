@@ -69,6 +69,7 @@ export type {
 
 // RPC error types (typed errors surfaced from JSON-RPC error envelopes)
 export { RpcError, BillingModeMismatchError, AuthRequiredError } from './runtime/rpc-client.js';
+export { authRequiredFromTerminal, RelayedAuthRequiredError } from './runtime/auth-required-terminal.js';
 
 // Integration connections
 export {

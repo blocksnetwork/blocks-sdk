@@ -59,6 +59,8 @@ from .stream_context import (
     run_on_activate,
 )
 from .stream_registry import StreamRegistry
+from .auth_required_terminal import auth_required_terminal_fields
+from .parent_task_client import task_client_for_parent
 from .task_client import TaskClient
 from .consumer_auth import ConsumerAuth
 from .types import (
@@ -1701,7 +1703,7 @@ def start_agent_instance(
             download_input_artifact=_download_input,
             publish_artifact=_publish_artifact_mid,
             cancel_event=cancel_evt,
-            task_client=task_client,
+            task_client=task_client_for_parent(task_client, task.task_id),
             _expired_tasks=expired_tasks,
             _agent_auth=_task_agent_auth,
             _base_url=_task_base_url,
@@ -2192,6 +2194,7 @@ def start_agent_instance(
                             "taskId": task_msg.task_id,
                             "state": "failed",
                             "error": err_msg,
+                            **auth_required_terminal_fields(exc),
                         })
                         if options.on_error:
                             try:

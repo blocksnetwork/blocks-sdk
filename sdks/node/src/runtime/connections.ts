@@ -1,3 +1,4 @@
+import { AUTH_REQUIRED_CODE } from './auth-required-terminal.js';
 import type { AgentAuth } from './agent-auth.js';
 
 export interface ConnectionToken {
@@ -93,7 +94,7 @@ export function createConnectionsClient(opts: {
         };
       };
 
-      if (response.status === 403 && errorBody.code === 'AuthRequired' && errorBody.details) {
+      if (response.status === 403 && errorBody.code === AUTH_REQUIRED_CODE && errorBody.details) {
         const { integration: errIntegration, reason, connectUrl } = errorBody.details;
         if (typeof errIntegration === 'string' && typeof reason === 'string' && typeof connectUrl === 'string') {
           throw new ConnectionRequiredError(errIntegration, reason, connectUrl);

@@ -20,6 +20,7 @@ import { callRpc, type RpcClientConfig } from './rpc-client.js';
 import { downloadArtifact, type ArtifactRef, type DownloadedArtifact } from './artifacts.js';
 import { log as baseLog } from './logger.js';
 import { TerminalDeliveryTracker } from './terminal-delivery-tracker.js';
+import { authRequiredFromTerminal } from './auth-required-terminal.js';
 
 const log = (
   level: 'debug' | 'info' | 'warn' | 'error',
@@ -70,6 +71,10 @@ export interface TerminalEvent {
   state: 'completed' | 'failed' | 'canceled';
   reason?: string;
   error?: string;
+  /** Machine-readable failure code. `AuthRequired`: the task's user must connect or approve an integration. */
+  errorCode?: string;
+  /** For `errorCode: 'AuthRequired'`: `{ integration, reason, connectUrl }`. */
+  errorDetails?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -217,6 +222,8 @@ export class TaskSession {
   /** Whether this is a skipSubscription session (terminal connect). */
   private readonly skipSubscriptionMode: boolean;
 
+  private readonly historyTerminal?: TerminalEvent;
+
   constructor(opts: {
     taskId: string;
     ownerId: string;
@@ -250,6 +257,8 @@ export class TaskSession {
     preClosed?: boolean;
     /** The terminal state of the task (e.g., "completed", "failed", "canceled"). */
     state?: string;
+    /** The task's terminal event read from history, handed to observers in place of a synthetic one. */
+    terminalEvent?: TerminalEvent;
     /** Skip PubNub subscription but keep client alive for downloadArtifact().
      *  Used by connect() for terminal tasks. */
     skipSubscription?: boolean;
@@ -283,6 +292,7 @@ export class TaskSession {
     this.autoDrain = opts.autoDrain ?? true;
     this.drainWindowMs = opts.drainWindowMs ?? 30000;
     this.state = opts.state;
+    this.historyTerminal = opts.terminalEvent;
     this.skipSubscriptionMode = opts.skipSubscription ?? false;
     this.subscribeKey = opts.sdkOptions.subscribeKey;
     this.publishKey = opts.sdkOptions.publishKey ?? '';
@@ -666,11 +676,7 @@ export class TaskSession {
       // completed task) but no wire event has arrived. Synthesize one and
       // pump it through the tracker so any future wire-level duplicate is
       // suppressed.
-      const synth: TerminalEvent = {
-        type: 'terminal',
-        taskId: this.taskId,
-        state: this.state as 'completed' | 'failed' | 'canceled',
-      };
+      const synth = this.alreadyTerminalEvent();
       this.terminalTracker.tryDeliver(synth, (e) => {
         try { cb(e); } catch (err) {
           this.routeCallbackError(err, 'onTerminal', e);
@@ -932,9 +938,30 @@ export class TaskSession {
    * Resolves immediately if the session is already in a terminal state
    * (pre-closed idempotent hit or terminal connect()).
    *
+   * Rejects with `RelayedAuthRequiredError` when the task failed because its user must connect or approve an
+   * integration (`errorCode: 'AuthRequired'`).
+   *
    * @param timeoutMs Optional timeout in milliseconds. Rejects with Error on timeout.
    */
   async waitForTerminal(timeoutMs?: number): Promise<TerminalEvent> {
+    const event = await this.nextTerminal(timeoutMs);
+    const authRequired = authRequiredFromTerminal(event);
+    if (authRequired) throw authRequired;
+    return event;
+  }
+
+  /** History's terminal event for a session built already terminal, or a bare one when history had none. */
+  private alreadyTerminalEvent(): TerminalEvent {
+    return (
+      this.historyTerminal ?? {
+        type: 'terminal',
+        taskId: this.taskId,
+        state: this.state as 'completed' | 'failed' | 'canceled',
+      }
+    );
+  }
+
+  private async nextTerminal(timeoutMs?: number): Promise<TerminalEvent> {
     // peek() is the source of truth for "has a terminal
     // been delivered through this session?" — covers both wire-arrived
     // and synthetic terminals.
@@ -945,11 +972,7 @@ export class TaskSession {
     // has not yet been observed by any callback or waiter. Synthesize and
     // record so any subsequent wire-level duplicate is suppressed.
     if (this.state && TERMINAL_STATES.has(this.state)) {
-      const synth: TerminalEvent = {
-        type: 'terminal',
-        taskId: this.taskId,
-        state: this.state as 'completed' | 'failed' | 'canceled',
-      };
+      const synth = this.alreadyTerminalEvent();
       this.terminalTracker.tryDeliver(synth, () => {});
       return synth;
     }

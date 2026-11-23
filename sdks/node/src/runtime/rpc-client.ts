@@ -9,6 +9,7 @@
  */
 
 import type { AgentAuth } from './agent-auth.js';
+import { AUTH_REQUIRED_CODE } from './auth-required-terminal.js';
 import type { AuthProvider } from './auth-provider.js';
 import { preflightAuthOrThrow } from './auth-provider.js';
 import { CURRENT_PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER } from './protocol-version.js';
@@ -262,7 +263,7 @@ function tryMapAuthRequired(
 ): AuthRequiredError | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as { code?: unknown; details?: unknown };
-  if (d.code !== 'AuthRequired') return null;
+  if (d.code !== AUTH_REQUIRED_CODE) return null;
   const details = d.details;
   if (!details || typeof details !== 'object') return null;
   const det = details as { integration?: unknown; reason?: unknown; connectUrl?: unknown };

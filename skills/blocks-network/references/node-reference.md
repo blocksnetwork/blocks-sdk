@@ -135,6 +135,15 @@ returning. `downloadArtifact()` returns `data` as a plain `Uint8Array`, not
 a `Buffer` (unlike `ctx.downloadInputArtifact()`): decode it with
 `TextDecoder`, because `String(data)` yields `"123,34,..."`.
 
+When the deployment has delegated identity turned on, a task created through
+`ctx.taskClient` acts for the user who sent this one: the called agent's
+`ctx.connections` uses that user's grant, once they approve that agent for
+this chain. When they have not, the call fails: `sendMessage` throws
+`AuthRequiredError`, and `waitForTerminal()` throws
+`RelayedAuthRequiredError` when an agent further down was refused. Do not
+catch either. Let it escape the handler: the SDK fails this task with the
+refusal attached, and the user's client offers Connect.
+
 ```typescript
 import { textPart } from '@blocks-network/sdk';
 import type { HandlerResult, StartTaskMessage, TaskContext } from '@blocks-network/sdk';
@@ -162,7 +171,11 @@ async function callSubAgent(ctx: TaskContext, ownerId: string, text: string): Pr
     requestParts: [textPart(text, 'request')], // partId = the sub-agent's io.inputs[].id
   });
   try {
-    const terminal = await session.waitForTerminal(SUB_AGENT_TIMEOUT_MS).catch(() => null);
+    const terminal = await session.waitForTerminal(SUB_AGENT_TIMEOUT_MS).catch((err) => {
+      // The user must approve the sub-agent: pass it up, so their client can offer Connect.
+      if (err instanceof Error && err.name === 'RelayedAuthRequiredError') throw err;
+      return null;
+    });
     if (!terminal) {
       await session.cancel().catch(() => {}); // timed out: stop the sub-task
       return null;
@@ -543,6 +556,8 @@ const text = new TextDecoder().decode(downloaded.data);
 const value: unknown = downloaded.mimeType === 'application/json' ? JSON.parse(text) : text;
 ```
 
+**`waitForTerminal()` and a task that needs approval.** It returns the terminal event for every outcome but one: when the task failed because its user must connect or approve an integration, it throws `RelayedAuthRequiredError` (see the errors table).
+
 **At-most-once `onTerminal`.** `session.onTerminal`, `session.waitForTerminal()`, `TaskClient.subscribeToTask`'s `onTerminal`, and the synthetic re-emit on registration against an already-terminal session each fire at most once per task. First-terminal-wins; subsequent wire-level terminals are silently dropped (e.g. scanner force-cancel + agent's delayed terminal).
 
 **`onCancelRequested`** — backend-published acknowledgment of a cooperative cancel on `u.{orgId}.{taskId}`. Fires zero or once per session; suppressed once a terminal has been delivered. Event shape surfaced to the callback: `{ type: 'cancel_requested', taskId, ts }`. (The wire payload also carries `protocolVersion` per the SDK task-event schema, but it is not surfaced to the callback.) Use to render an in-flight "cancel requested" UI signal before any terminal arrives. **Late registration:** callbacks registered after the wire event arrived still receive a synthetic replay of the first event, mirroring `onTerminal`'s sticky behavior — but only while no terminal has been delivered (a post-terminal registration gets nothing, preserving causality).
@@ -572,6 +587,7 @@ const value: unknown = downloaded.mimeType === 'application/json' ? JSON.parse(t
 | `AgentAuthFatalError` | `AgentAuth` connect/refresh path | Fatal, non-retryable — the API key was revoked/disabled (`API_KEY_INVALID`) or an administrator forced the agent offline (`AGENT_FORCED_OFFLINE`). The runtime terminates the process (`process.exit(1)`). Non-fatal connect failures (network, 5xx, `404 not-published`, and the `403 PermissionDenied` a public agent answers when the key owner may not run it) do not block startup: the process stays up without a control subscription until restarted with a credential that stands. |
 | `RateLimitedError` | `AgentAuth` connect, `ConsumerAuth` token calls | Retryable, never fatal — the API key is over its per-key rate limit (HTTP 429 `RATE_LIMITED`). `retryAfterMs` is the backend's `Retry-After`. The SDK makes no API-key call until it passes. The runtime retries a rate-limited connect on its own, after `Retry-After` plus up to 10% jitter, or 30 s doubling to 10 minutes without one. `ConsumerAuth`'s proactive refresh keeps going through a rate limit on the same schedule and never reaches `AuthRefreshFailedError` or `onAuthError` because of it; a reactive refresh inside the wait records `AuthRefreshFailedError` with the `RateLimitedError` as its cause. A busy key is never reported as `API_KEY_INVALID`. |
 | `AuthRequiredError` | `TaskClient.sendMessage` | The agent needs an integration connection the caller has not connected or approved; no task was created. Carries `integration`, `reason`, `connectUrl`; open `connectUrl` for the user, then retry. Extends `RpcError`. |
+| `RelayedAuthRequiredError` | `session.waitForTerminal()` | The task started, then failed because an agent it called (or the agent itself) needs the user to connect or approve an integration. Carries `integration`, `reason`, `connectUrl`. Not an `AuthRequiredError`: the fields come from the called agent, so check that `connectUrl` is your deployment's own connect page before showing it. In a handler, let it escape. |
 | `ConnectionRequiredError` | `ctx.connections.getToken` | The task's user must connect or approve the integration. Carries `integration`, `reason`, `connectUrl`. |
 | `ConnectionAccessError` | `ctx.connections.getToken` | Any other token failure (task ended, integration not declared or disabled, feature off). Carries `status`, `code`. |
 

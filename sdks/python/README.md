@@ -323,6 +323,14 @@ for the common "submit and wait" pattern. Resolves immediately for
 already-terminal sessions (pre-closed idempotent hits, terminal
 `connect()`).
 
+It raises `RelayedAuthRequiredError` when the task failed because its user
+must connect or approve an integration. The error carries `integration`,
+`reason` and `connect_url`. Those come from the agent that was called, not
+from Blocks: check that `connect_url` is your deployment's own connect page
+before you show it. In an agent handler, let the error escape so it reaches
+the caller. To read the event instead, use `on_terminal` with
+`auth_required_from_terminal(event)`.
+
 ```python
 from blocks_network import TaskClient, text_part
 

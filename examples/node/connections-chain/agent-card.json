@@ -1,0 +1,52 @@
+{
+  "identity": {
+    "agentName": "connections_chain_node",
+    "displayName": "Connections chain (Node)",
+    "description": "Calls the Salesforce connections agent on your behalf, so it reads your Salesforce, not the developer's",
+    "version": "1.0.0",
+    "provider": {
+      "organization": "PubNub"
+    }
+  },
+  "capabilities": {
+    "taskKinds": [
+      "request"
+    ]
+  },
+  "io": {
+    "inputs": [
+      {
+        "id": "request",
+        "description": "No input needed.",
+        "contentType": "application/json",
+        "required": false,
+        "example": {},
+        "schema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "outputs": [
+      {
+        "id": "result",
+        "description": "The Salesforce agent's answer, or a link to approve it for this chain",
+        "contentType": "text/plain",
+        "guaranteed": true
+      }
+    ]
+  },
+  "tags": [
+    {
+      "id": "connections-chain",
+      "name": "Connections chain",
+      "description": "An agent that calls another agent as the user who sent the task"
+    }
+  ],
+  "runtime": {
+    "handler": "./handler.ts",
+    "handlerExport": "default",
+    "concurrency": 2,
+    "maxRunningTimeSec": 60
+  }
+}

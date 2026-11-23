@@ -14,7 +14,7 @@ import { buildPubNubClientDefaults } from './pubnub-client.js';
 import { callRpc, type RpcClientConfig } from './rpc-client.js';
 import { taskChannel } from './channel-manager.js';
 import { TaskSession, type CallbackErrorContext } from './task-session.js';
-import type { TaskEvent as SessionTaskEvent, TaskEventEntry } from './task-session.js';
+import type { TaskEvent as SessionTaskEvent, TaskEventEntry, TerminalEvent } from './task-session.js';
 import { TerminalDeliveryTracker } from './terminal-delivery-tracker.js';
 import type { AgentAuth } from './agent-auth.js';
 import type { AuthProvider } from './auth-provider.js';
@@ -294,12 +294,15 @@ function parseHistoryMessages(
    * `taskFanout` DB write).
    */
   terminalState?: 'completed' | 'failed' | 'canceled';
+  /** The event `terminalState` was read from, with its error fields. */
+  terminalEvent?: TerminalEvent;
 } {
   const streams = new Map<string, StreamRef>();
   const artifacts: ArtifactRef[] = [];
   const events: TaskEventEntry[] = [];
   let highWaterMark = '0';
   let terminalState: 'completed' | 'failed' | 'canceled' | undefined;
+  let terminalEvent: TerminalEvent | undefined;
   let terminalTimetoken = '0';
 
   for (const msg of messages) {
@@ -326,6 +329,7 @@ function parseHistoryMessages(
         const state = event.state as string | undefined;
         if (state === 'completed' || state === 'failed' || state === 'canceled') {
           terminalState = state;
+          terminalEvent = event as TerminalEvent;
           terminalTimetoken = tt;
         }
       }
@@ -386,7 +390,7 @@ function parseHistoryMessages(
     }
   }
 
-  return { streams, artifacts, events, highWaterMark, terminalState };
+  return { streams, artifacts, events, highWaterMark, terminalState, terminalEvent };
 }
 
 // ============================================================================
@@ -1155,6 +1159,7 @@ export class TaskClient {
       let preloadedArtifacts: ArtifactRef[] = [];
       let highWaterMark = '0';
       let historyTerminalState: 'completed' | 'failed' | 'canceled' | undefined;
+      let historyTerminalEvent: TerminalEvent | undefined;
 
       if (fetcher?.fetchMessages) {
         const messages = await fetchAllHistory(fetcher, resolvedChannel);
@@ -1163,6 +1168,7 @@ export class TaskClient {
         preloadedArtifacts = parsed.artifacts;
         highWaterMark = parsed.highWaterMark;
         historyTerminalState = parsed.terminalState;
+        historyTerminalEvent = parsed.terminalEvent;
       }
 
       // Fast handler already finished: return a pre-populated terminal session.
@@ -1184,6 +1190,7 @@ export class TaskClient {
           autoDrain: params.autoDrain,
           drainWindowMs: params.drainWindowMs,
           state: historyTerminalState,
+          terminalEvent: historyTerminalEvent,
           skipSubscription: true,
           preloadedStreams,
           preloadedArtifacts,
@@ -1422,6 +1429,7 @@ export class TaskClient {
       let preloadedEventEntries: TaskEventEntry[] = [];
       let highWaterMark = '0';
       let historyTerminalState: string | undefined;
+      let historyTerminalEvent: TerminalEvent | undefined;
 
       if (fetcher?.fetchMessages) {
         const messages = await fetchAllHistory(fetcher, channel);
@@ -1431,6 +1439,7 @@ export class TaskClient {
         preloadedEventEntries = parsed.events;
         highWaterMark = parsed.highWaterMark;
         historyTerminalState = parsed.terminalState;
+        historyTerminalEvent = parsed.terminalEvent;
       }
 
       // Prefer the history-derived terminal state when the RPC hasn't
@@ -1458,6 +1467,7 @@ export class TaskClient {
           autoDrain,
           drainWindowMs,
           state: effectiveState,
+          terminalEvent: historyTerminalEvent,
           skipSubscription: true,
           preloadedStreams,
           preloadedArtifacts,

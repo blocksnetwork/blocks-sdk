@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from .stream import StreamClient, StreamDescriptor, invert_direction
+from .auth_required_terminal import auth_required_from_terminal
 from .terminal_delivery_tracker import TerminalDeliveryTracker
 
 from .channel_manager import task_channel
@@ -29,7 +30,8 @@ class TaskEvent:
     """A parsed task event from the task channel."""
 
     def __init__(self, data: Dict[str, Any]) -> None:
-        self._data = data
+        # The terminal tracker hands back the TaskEvent it stored: keep one layer, so ``raw`` stays a dict.
+        self._data = data._data if isinstance(data, TaskEvent) else data
 
     @property
     def type(self) -> str:
@@ -146,6 +148,7 @@ class TaskSession:
         pre_closed_state: Optional[str] = None,
         # P1-2: connect() support
         state: Optional[str] = None,
+        terminal_event: Optional[Dict[str, Any]] = None,
         skip_subscription: bool = False,
         preloaded_streams: Optional[Dict[str, StreamRef]] = None,
         preloaded_artifacts: Optional[List[ArtifactRef]] = None,
@@ -154,6 +157,7 @@ class TaskSession:
         external_subscription: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._task_id = task_id
+        self._history_terminal = terminal_event
         self._owner_id = owner_id
         self._read_token = read_token
         self._agent_name = agent_name
@@ -664,11 +668,7 @@ class TaskSession:
                 # Session was constructed already-terminal but no wire event
                 # has arrived. Synthesize one and pump it through the tracker
                 # so any future wire-level duplicate is suppressed.
-                synth = TaskEvent({
-                    "type": "terminal",
-                    "taskId": self._task_id,
-                    "state": terminal_state,
-                })
+                synth = self._already_terminal_event(terminal_state)
 
                 def _deliver(e: TaskEvent) -> None:
                     try:
@@ -678,6 +678,14 @@ class TaskSession:
 
                 self._terminal_tracker.try_deliver(synth, _deliver)
         return lambda: self._terminal_cbs.remove(cb) if cb in self._terminal_cbs else None
+
+    def _already_terminal_event(self, terminal_state: str) -> TaskEvent:
+        """History's terminal event for a session built already terminal, or a bare one when history had none."""
+        return TaskEvent(self._history_terminal or {
+            "type": "terminal",
+            "taskId": self._task_id,
+            "state": terminal_state,
+        })
 
     def wait_for_terminal(self, timeout: float = 60) -> TaskEvent:
         """Block until a terminal event arrives and return it.
@@ -689,13 +697,23 @@ class TaskSession:
             terminal = session.wait_for_terminal(timeout=30)
             print(terminal.raw["state"])  # "completed" | "failed" | ...
 
-        For already-terminal sessions (pre-closed idempotent hits or
-        terminal connect() sessions), resolves immediately with a
-        synthetic terminal event.
+        For already-terminal sessions, resolves immediately with the
+        terminal event read from history, or a synthetic one when no
+        history was read (pre-closed idempotent hits).
 
         Raises ``TimeoutError`` if no terminal event arrives within
         *timeout* seconds.
+
+        Raises ``RelayedAuthRequiredError`` when the task failed because its
+        user must connect or approve an integration.
         """
+        event = self._next_terminal(timeout)
+        auth_required = auth_required_from_terminal(event)
+        if auth_required is not None:
+            raise auth_required
+        return event
+
+    def _next_terminal(self, timeout: float) -> TaskEvent:
         # peek() is the source of truth for "has a terminal
         # been delivered through this session?" -- covers wire-arrived and
         # synthetic terminals.
@@ -709,11 +727,7 @@ class TaskSession:
         # suppressed.
         terminal_state = self._pre_closed_state or self._state
         if terminal_state and terminal_state in TERMINAL_STATES:
-            synth = TaskEvent({
-                "type": "terminal",
-                "taskId": self._task_id,
-                "state": terminal_state,
-            })
+            synth = self._already_terminal_event(terminal_state)
             self._terminal_tracker.try_deliver(synth, lambda _e: None)
             return synth
 

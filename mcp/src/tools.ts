@@ -355,12 +355,10 @@ export async function sendTask(
   });
 
   try {
-    const terminal = await session.waitForTerminal(timeout);
-    const output = [`Task ${session.taskId} ${terminal.state}`, ...progressLines];
+    const outcome = await waitForOutcome(session, timeout);
+    const output = [`Task ${session.taskId} ${outcome.state}`, ...progressLines];
     await appendArtifacts(session, session.listArtifacts(), output);
-    if (terminal.state === 'failed') {
-      output.push(`Error: ${terminal.error ?? terminal.reason ?? 'unknown'}`);
-    }
+    if (outcome.errorLine) output.push(outcome.errorLine);
     session.close();
     return { content: [{ type: 'text', text: output.join('\n') }] };
   } catch (err) {
@@ -371,6 +369,36 @@ export async function sendTask(
       isError: true,
     };
   }
+}
+
+/**
+ * How the task ended, with the "Error:" line of a failed one. The SDK throws for a task that failed needing its
+ * user's approval; that is a failed task here too, so its artifacts and streams are still reported.
+ */
+async function waitForOutcome(
+  session: TaskSessionLike,
+  timeoutMs: number,
+): Promise<{ state: string; errorLine: string | null }> {
+  try {
+    const terminal = await session.waitForTerminal(timeoutMs);
+    return {
+      state: terminal.state,
+      errorLine:
+        terminal.state === 'failed' ? `Error: ${terminal.error ?? terminal.reason ?? 'unknown'}` : null,
+    };
+  } catch (err) {
+    const approval = approvalNeededLine(err);
+    if (!approval) throw err;
+    return { state: 'failed', errorLine: approval };
+  }
+}
+
+/** No link: the SDK's RelayedAuthRequiredError carries one written by the called agent. */
+function approvalNeededLine(err: unknown): string | null {
+  if (!(err instanceof Error) || err.name !== 'RelayedAuthRequiredError') return null;
+  const { integration } = err as { integration?: unknown };
+  const service = typeof integration === 'string' && integration ? integration : 'an integration';
+  return `Error: ${err.message}. The task's user must connect or approve ${service} for this agent in the Blocks dashboard, then send the task again.`;
 }
 
 // ============================================================================
@@ -663,9 +691,9 @@ export async function connectTask(
   session.onStream(drainStream);
 
   try {
-    const terminal = await session.waitForTerminal(timeout);
+    const outcome = await waitForOutcome(session, timeout);
     await Promise.allSettled(streamDrains);
-    const out: string[] = [`Task ${params.taskId} ${terminal.state}`, ...progressLines];
+    const out: string[] = [`Task ${params.taskId} ${outcome.state}`, ...progressLines];
 
     for (const s of streamOutputs) {
       if (s.chunks.length > 0) {
@@ -673,9 +701,7 @@ export async function connectTask(
       }
     }
     await appendArtifacts(session, session.listArtifacts(), out);
-    if (terminal.state === 'failed') {
-      out.push(`Error: ${terminal.error ?? terminal.reason ?? 'unknown'}`);
-    }
+    if (outcome.errorLine) out.push(outcome.errorLine);
     await session.asyncClose();
     return { content: [{ type: 'text', text: out.join('\n') }] };
   } catch (err) {

@@ -724,6 +724,41 @@ describe('P1-2: connect()', () => {
     expect(session.isClosed).toBe(true);
   });
 
+  it("hands over history's terminal event for a finished task, so a refusal relayed through it still raises", async () => {
+    setupConnectMocks({ taskState: 'failed' });
+    const refused = {
+      type: 'terminal',
+      taskId: 'task-1',
+      state: 'failed',
+      error: 'Integration connection required',
+      errorCode: 'AuthRequired',
+      errorDetails: {
+        integration: 'salesforce',
+        reason: 'not_approved',
+        connectUrl: 'https://app.example/connect/org-1/salesforce?agent=b',
+      },
+    };
+    const mock = createMockPubNub();
+    mock.pubnub.fetchMessages.mockResolvedValue({
+      channels: { 'u.org1.task-1': [{ message: refused, timetoken: '0000000120' }] },
+    });
+    const client = new TaskClient({
+      billingMode: 'free',
+      subscribeKey: 'sub-key',
+      authProvider: new StaticAuthProvider('jwt-token'),
+      baseUrl: 'https://api.test',
+      createSessionPubNub: () => mock.pubnub,
+    });
+
+    const session = await client.connect({ taskId: 'task-1' });
+
+    await expect(session.waitForTerminal()).rejects.toMatchObject(refused.errorDetails);
+    const seen: unknown[] = [];
+    session.onTerminal((event) => seen.push(event));
+    expect(seen).toEqual([refused]);
+    session.close();
+  });
+
   it.each([
     [1700000000500000, '1700000000500000'],
     [Number.MAX_SAFE_INTEGER, '9007199254740991'],
