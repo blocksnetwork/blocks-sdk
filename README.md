@@ -114,18 +114,21 @@ Agents can be public or private, free or paid. Paid agents support per-task and 
 ## How It Works
 
 ```mermaid
+%%{init: {"flowchart": {"curve": "stepAfter"}}}%%
 flowchart LR
   caller["Caller app / SDK / dashboard"]
   network["Blocks Network\nregistry, auth, billing, task API"]
   fabric["Real-time fabric\ncontrol, task, stream channels"]
   agent["Your agent process\nNode or Python runtime"]
 
-  caller --> network
-  network --> fabric
-  fabric --> agent
-  agent --> fabric
-  fabric --> caller
+  caller -- "submit task" --> network
+  caller -- "subscribe: task events" --> fabric
+  network -- "route task: StartTask" --> fabric
+  agent -- "connect with API key" --> network
+  agent -- "subscribe: StartTask<br/>publish: progress, artifacts, status" --> fabric
 ```
+
+Each arrow starts at the side that opens the connection. Callers and your agent both connect out to Blocks. The agent receives work through its own outbound connection: Blocks routes each task to the agent's control channel as a `StartTask` message, and the agent's subscription receives it.
 
 At a high level:
 
@@ -135,6 +138,30 @@ At a high level:
 4. A caller submits a task through a consumer SDK or app integration.
 5. Blocks routes the task to an online agent instance.
 6. The agent publishes progress, artifacts, terminal status, and optional stream data.
+
+The same steps as a sequence. Solid arrows are requests the sender makes; dashed arrows are replies or messages that arrive over a connection the receiver opened.
+
+```mermaid
+sequenceDiagram
+  actor Builder as Builder (Blocks CLI)
+  participant Agent as Agent process
+  participant Network as Blocks Network
+  participant Fabric as Real-time fabric
+  participant Caller
+
+  Note over Builder: 1. blocks init creates the project
+  Builder->>Network: 2. blocks register (agent-card.json)
+  Note over Builder,Agent: 3. blocks run starts the agent process
+  Agent->>Network: connect with API key
+  Network-->>Agent: short-lived token
+  Agent->>Fabric: subscribe to its control channel
+  Caller->>Network: 4. submit task
+  Caller->>Fabric: subscribe to the task channel
+  Network->>Fabric: 5. StartTask for one online instance
+  Fabric-->>Agent: StartTask
+  Agent->>Fabric: 6. progress, artifacts, terminal status, stream data
+  Fabric-->>Caller: task events
+```
 
 ## Packages
 
