@@ -2,6 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // Type-level tests: the only place the package's public types are checked against tests/.
+    typecheck: { enabled: true, tsconfig: './tsconfig.typecheck.json', include: ['**/*.test-d.ts'] },
     env: {
       // startAgentInstance() requires BLOCKS_API_KEY since the
       // publish/connect split.  Provide a dummy value so unit tests

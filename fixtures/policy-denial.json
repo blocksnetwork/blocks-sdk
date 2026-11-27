@@ -1,0 +1,542 @@
+{
+  "about": "Terminals for policyDenialFromTerminal (Node) and policy_denial_from_terminal (Python). A denial is a failed terminal whose error is policy_rejected or policy_unavailable and whose errorDetails has a stage of input or response. expected is null or { code, stage, reason?, policyIds }. Both SDKs read this file.",
+  "cases": [
+    {
+      "name": "input rejection with reason and ids",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "Refunds above $500 are not allowed.",
+          "policyIds": [
+            "pv_org",
+            "pv_agent"
+          ]
+        }
+      },
+      "expected": {
+        "code": "policy_rejected",
+        "stage": "input",
+        "reason": "Refunds above $500 are not allowed.",
+        "policyIds": [
+          "pv_org",
+          "pv_agent"
+        ]
+      }
+    },
+    {
+      "name": "response rejection",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "response",
+          "reason": "No discounts.",
+          "policyIds": [
+            "pv_org"
+          ]
+        }
+      },
+      "expected": {
+        "code": "policy_rejected",
+        "stage": "response",
+        "reason": "No discounts.",
+        "policyIds": [
+          "pv_org"
+        ]
+      }
+    },
+    {
+      "name": "rejection without a reason (fallback message)",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": [
+            "pv_org"
+          ]
+        }
+      },
+      "expected": {
+        "code": "policy_rejected",
+        "stage": "input",
+        "policyIds": [
+          "pv_org"
+        ]
+      }
+    },
+    {
+      "name": "rejection without policyIds (lost check)",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "No."
+        }
+      },
+      "expected": {
+        "code": "policy_rejected",
+        "stage": "input",
+        "reason": "No.",
+        "policyIds": []
+      }
+    },
+    {
+      "name": "unavailable check",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_unavailable",
+        "errorDetails": {
+          "stage": "response",
+          "policyIds": [
+            "pv_org"
+          ]
+        }
+      },
+      "expected": {
+        "code": "policy_unavailable",
+        "stage": "response",
+        "policyIds": [
+          "pv_org"
+        ]
+      }
+    },
+    {
+      "name": "unavailable check ignores a reason",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_unavailable",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "made up",
+          "policyIds": []
+        }
+      },
+      "expected": {
+        "code": "policy_unavailable",
+        "stage": "input",
+        "policyIds": []
+      }
+    },
+    {
+      "name": "limits are inclusive: 200-char reason, 16 ids, 64-char id",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "policyIds": [
+            "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16"
+          ]
+        }
+      },
+      "expected": {
+        "code": "policy_rejected",
+        "stage": "input",
+        "reason": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "policyIds": [
+          "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "15",
+          "16"
+        ]
+      }
+    },
+    {
+      "name": "another error code with policy-shaped details",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "retry_exhausted",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "legacy terminal: text in error, code in errorCode",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "Rejected by policy: No.",
+        "errorCode": "PolicyRejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "No.",
+          "policyIds": [
+            "pv_org"
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "task completed",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "completed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "task canceled",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "canceled",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "policy code in error without details (an agent terminal the gate stripped)",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected"
+      },
+      "expected": null
+    },
+    {
+      "name": "details not an object",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": [
+          "input"
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "missing stage",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "reason": "No.",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "unknown stage",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "output",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "reason not a string",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": 7,
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "reason null",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": null,
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "reason empty",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "reason over 200 characters",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "policyIds not an array",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": "pv_org"
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "policyIds null",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": null
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "policyId not a string",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": [
+            "pv_org",
+            3
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "policyId empty",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": [
+            ""
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "policyId over 64 characters",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": [
+            "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "more than 16 policyIds",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16",
+            "17"
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "malformed policyIds on an unavailable check",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_unavailable",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": [
+            1
+          ]
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "reason of 200 code points (astral) accepted",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "policyIds": [
+            "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          ]
+        }
+      },
+      "expected": {
+        "code": "policy_rejected",
+        "stage": "input",
+        "reason": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        "policyIds": [
+          "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        ]
+      }
+    },
+    {
+      "name": "reason of 201 code points (astral)",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "reason": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "policyIds": []
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "policyId of 65 code points (astral)",
+      "event": {
+        "type": "terminal",
+        "taskId": "t_42",
+        "state": "failed",
+        "error": "policy_rejected",
+        "errorDetails": {
+          "stage": "input",
+          "policyIds": [
+            "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          ]
+        }
+      },
+      "expected": null
+    }
+  ]
+}

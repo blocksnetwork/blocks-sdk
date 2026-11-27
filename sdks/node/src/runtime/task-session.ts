@@ -70,10 +70,17 @@ export interface TerminalEvent {
   taskId: string;
   state: 'completed' | 'failed' | 'canceled';
   reason?: string;
+  /**
+   * Why the task failed. `policy_rejected` / `policy_unavailable`: the policy gate stopped the task; read it with
+   * `policyDenialFromTerminal`.
+   */
   error?: string;
   /** Machine-readable failure code. `AuthRequired`: the task's user must connect or approve an integration. */
   errorCode?: string;
-  /** For `errorCode: 'AuthRequired'`: `{ integration, reason, connectUrl }`. */
+  /**
+   * For `errorCode: 'AuthRequired'`: `{ integration, reason, connectUrl }`.
+   * For `error: 'policy_rejected'` / `'policy_unavailable'`: `{ stage, reason?, policyIds? }`.
+   */
   errorDetails?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -90,6 +97,19 @@ export interface CancelRequestedEvent {
   type: 'cancel_requested';
   taskId: string;
   ts: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Backend-published record that the policy gate checked the task or an answer against these policy versions.
+ *
+ * @experimental Part of the policy gate preview; the shape may change before general availability.
+ */
+export interface PolicyAppliedEvent {
+  type: 'policy_applied';
+  taskId: string;
+  policyIds: string[];
+  ts?: number;
   [key: string]: unknown;
 }
 

@@ -70,6 +70,8 @@ export type {
 // RPC error types (typed errors surfaced from JSON-RPC error envelopes)
 export { RpcError, BillingModeMismatchError, AuthRequiredError } from './runtime/rpc-client.js';
 export { authRequiredFromTerminal, RelayedAuthRequiredError } from './runtime/auth-required-terminal.js';
+export { policyDenialFromTerminal } from './runtime/policy-denial-terminal.js';
+export type { PolicyDenial } from './runtime/policy-denial-terminal.js';
 
 // Integration connections
 export {
@@ -88,6 +90,7 @@ export type {
   ArtifactEvent,
   TerminalEvent,
   CancelRequestedEvent,
+  PolicyAppliedEvent,
   Unsubscribe,
   CallbackErrorContext,
 } from './runtime/task-session.js';

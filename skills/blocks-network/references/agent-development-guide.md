@@ -290,7 +290,7 @@ For full timeline reconstruction after reconnecting, use
 `session.listEventEntries()` / `session.list_event_entries()` to read all valid
 task events paired with their publish timetokens. The Node and Python references
 show timestamp conversion. `listEvents()` / `list_events()` remain available for
-payload-only history.
+payload-only history. Task history may also contain `policy_applied` (ids of the policy versions a gate checked; Node `PolicyAppliedEvent`, Python `event.policy_ids`); ignore it unless you need it.
 
 ---
 
