@@ -12,10 +12,11 @@ import logging
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .stream import StreamClient, StreamDescriptor, invert_direction
 from .auth_required_terminal import auth_required_from_terminal
+from .policy_denial_terminal import policy_ids_of
 from .terminal_delivery_tracker import TerminalDeliveryTracker
 
 from .channel_manager import task_channel
@@ -78,6 +79,16 @@ class TaskEvent:
         if isinstance(raw, ArtifactRef):
             return raw
         return None
+
+    @property
+    def policy_ids(self) -> Optional[Tuple[str, ...]]:
+        """Policy version ids a ``policy_applied`` record names (experimental: the policy gate is a preview).
+
+        ``None`` on any other event type, or when ``policyIds`` is not a list of at most 16 strings of 1-64 characters.
+        """
+        if self._data.get("type") != "policy_applied":
+            return None
+        return policy_ids_of(self._data.get("policyIds"))
 
     @property
     def raw(self) -> Dict[str, Any]:

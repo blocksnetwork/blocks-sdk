@@ -174,6 +174,10 @@ user the exact command to run.
   `ConnectionRequiredError`): let it escape the handler, so the task fails
   with the refusal attached and the user's client can offer Connect. See
   Agent-to-Agent (Orchestrator) in the language references.
+- A task the policy gate stops fails with `error` `policy_rejected` or
+  `policy_unavailable` and the reason in `errorDetails.reason` (experimental).
+  `waitForTerminal()` still resolves; read the denial with
+  `policyDenialFromTerminal(terminal)` (Python `policy_denial_from_terminal`).
 - Close task sessions and sessions, and destroy consumer clients, when finished so transports
   unsubscribe cleanly.
 
